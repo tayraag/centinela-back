@@ -1,0 +1,26 @@
+# Binarios compilados de Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+bin/
+el-centinela
+
+# Archivos de testing y dependencias
+*.test
+*.out
+vendor/
+
+# Archivos de entorno
+.env
+.env.local
+.env.*
+
+# Archivos específicos del Sistema Operativo y Editores
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
