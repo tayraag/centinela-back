@@ -1,0 +1,21 @@
+version: '0.0'
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: centinela-postgres
+    restart: always
+    environment:
+      POSTGRES_USER: centinela_admin
+      POSTGRES_PASSWORD: centinela_password
+      POSTGRES_DB: centinela_db
+    ports:
+      # Exponemos el puerto estándar 5432
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      # Inyectamos el script inicial para los UUIDv7
+      - ./scripts/init.sql:/docker-entrypoint-initdb.d/init.sql
+
+volumes:
+  postgres_data:
