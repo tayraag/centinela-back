@@ -32,7 +32,7 @@ type Usuario struct {
 	
 	Rol                string    `gorm:"type:varchar(50);not null" json:"rol"` // ADMIN u OPERATOR[cite: 11, 13]
 	Activo             bool      `gorm:"default:true" json:"activo"`
-	CambioContrasena   bool      `gorm:"default:true" json:"cambioContrasena"`
+	DebeCambiarContrasena   bool      `gorm:"default:true" json:"cambioContrasena"`
 	
 	// Campos 2FA (RF-01)
 	TotpVinculado      bool      `gorm:"default:false" json:"totpVinculado"`
@@ -50,9 +50,12 @@ type SesionActiva struct {
 	ID              uuid.UUID `gorm:"type:uuid;primaryKey;default:uuid_generate_v7()" json:"id"`
 	UsuarioID       uuid.UUID `gorm:"type:uuid;not null;index" json:"usuarioId"`
 	
-	JtiToken        string    `gorm:"type:varchar(255);uniqueIndex;not null" json:"jtiToken"`
+	JtiToken        string    `gorm:"type:varchar(255);uniqueIndex;not null" json:"-"`
+	TokenHash       string    `gorm:"type:varchar(64);uniqueIndex;not null" json:"-"`
+	Proposito       string    `gorm:"type:varchar(30);not null;index" json:"-"`
 	Activa          bool      `gorm:"default:true" json:"activa"`
-	CodigoTemporal  string    `gorm:"type:varchar(10)" json:"codigoTemporal"`
+	Consumida       bool      `gorm:"default:false" json:"-"`
+	RecordarSesion  bool      `gorm:"default:false" json:"-"`
 	Estado2fa       bool      `gorm:"default:false" json:"estado2fa"` // Control intermedio del login[cite: 11]
 	
 	FechaExpiracion time.Time `gorm:"not null" json:"fechaExpiracion"`

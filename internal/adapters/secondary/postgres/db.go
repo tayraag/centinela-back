@@ -3,6 +3,7 @@ package postgres
 import (
 	"fmt"
 	"log"
+	"os"
 
 	"el-centinela/internal/core/domain" // Importamos nuestros modelos
 
@@ -13,8 +14,10 @@ import (
 
 // InitDB abre la conexión a PostgreSQL y crea las tablas automáticamente
 func InitDB() (*gorm.DB, error) {
-	// 1. Definimos los datos de conexión (que coinciden con nuestro docker-compose.yml)
-	dsn := "host=localhost user=centinela_admin password=centinela_password dbname=centinela_db port=5432 sslmode=disable TimeZone=America/Argentina/Buenos_Aires"
+	dsn := os.Getenv("DATABASE_URL")
+	if dsn == "" {
+		return nil, fmt.Errorf("DATABASE_URL es obligatorio")
+	}
 
 	// 2. Abrimos la conexión con GORM
 	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
@@ -22,6 +25,13 @@ func InitDB() (*gorm.DB, error) {
 	})
 	if err != nil {
 		return nil, fmt.Errorf("error al conectar con PostgreSQL: %w", err)
+	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		return nil, fmt.Errorf("error al obtener el cliente PostgreSQL: %w", err)
+	}
+	if err := sqlDB.Ping(); err != nil {
+		return nil, fmt.Errorf("error al verificar PostgreSQL: %w", err)
 	}
 
 	log.Println("✅ Conexión exitosa a PostgreSQL")
