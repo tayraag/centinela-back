@@ -10,9 +10,10 @@ services:
       POSTGRES_PASSWORD: centinela_password
       POSTGRES_DB: centinela_db
     ports:
-      # Exponemos el puerto estándar 5432
-      - "5432:5432"
+      # tengo colision con 5432 asique le pongo 5433. Chequear en el futuro
+      - "5433:5432"
     volumes:
+      # linea magica que hace que la bd persista en el disco aunque apagues todo
       - postgres_data:/var/lib/postgresql/data
       # Inyectamos el script inicial para los UUIDv7
       - ./scripts/init.sql:/docker-entrypoint-initdb.d/init.sql
