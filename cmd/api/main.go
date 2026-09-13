@@ -40,12 +40,16 @@ func main() {
 
 	// 3. Inicializar adaptadores secundarios (repositorios)
 	authRepo := postgres.NewAuthRepository(db)
+	userRepo := postgres.NewUserRepository(db)
 
 	// 4. Inicializar servicios de dominio (inyección de dependencias)
 	authService := services.NewAuthService(authRepo)
+	userService := services.NewUserService(userRepo, authRepo)
 
 	// 5. Inicializar handlers HTTP
 	authHandler := httpHandlers.NewAuthHandler(authService)
+	userHandler := httpHandlers.NewUserHandler(userService)
+	accountHandler := httpHandlers.NewAccountHandler(userService)
 
 	// 6. Configurar el Router HTTP (Gin)
 	// Usamos gin.New() para tener control total sobre los middlewares.
@@ -57,6 +61,9 @@ func main() {
 	// 7. Definir las rutas
 	api := router.Group("/api")
 	{
+		// ==========================================
+		// Rutas de Autenticación (RF-01)
+		// ==========================================
 		auth := api.Group("/auth")
 		{
 			// Rutas públicas (sin autenticación)
@@ -76,6 +83,48 @@ func main() {
 				middleware.RequireRole("ADMIN"),
 				authHandler.SolicitarRevinculacion,
 			)
+		}
+
+		// ==========================================
+		// Rutas de Gestión de Usuarios (RF-09) — solo ADMIN
+		// ==========================================
+		admin := api.Group("/", middleware.RequireAuth(), middleware.RequireRole("ADMIN"))
+		{
+			// Roles disponibles (para el selector del formulario)
+			admin.GET("/roles", userHandler.ObtenerRoles)
+
+			// CRUD de usuarios
+			users := admin.Group("/users")
+			{
+				users.GET("", userHandler.ListarUsuarios)
+				users.POST("", userHandler.CrearUsuario)
+				users.GET("/:id", userHandler.ObtenerUsuario)
+				users.PUT("/:id", userHandler.ActualizarUsuario)
+				users.DELETE("/:id", userHandler.EliminarUsuario)
+
+				// Permisos de instancias del usuario
+				users.PUT("/:id/instances", userHandler.AsignarPermisos)
+
+				// Actividad del usuario (auditoría filtrada)
+				users.GET("/:id/activity", userHandler.ListarActividad)
+
+				// Acciones de seguridad del usuario
+				users.POST("/:id/2fa/reset", userHandler.ResetearTotp)
+				users.POST("/:id/password/reset", userHandler.ResetearContrasena)
+			}
+		}
+
+		// ==========================================
+		// Rutas de Perfil Propio (RF-09) — cualquier usuario autenticado
+		// ==========================================
+		account := api.Group("/account", middleware.RequireAuth())
+		{
+			account.GET("/profile", accountHandler.ObtenerPerfil)
+			account.PUT("/profile", accountHandler.ActualizarPerfil)
+			account.PUT("/password", accountHandler.CambiarContrasena)
+
+			// Logout: cierra la sesión actual
+			account.DELETE("/sessions/current", accountHandler.CerrarSesionActual)
 		}
 	}
 

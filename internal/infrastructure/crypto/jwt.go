@@ -18,9 +18,10 @@ const (
 
 // JWTClaims contiene los claims personalizados del token JWT.
 type JWTClaims struct {
-	Rol            string `json:"rol"`
-	Tipo           string `json:"tipo"`            // "pre-auth" | "access" | "refresh"
-	Verificado2FA  bool   `json:"2fa_verificado"`
+	Rol           string    `json:"rol"`
+	Tipo          string    `json:"tipo"`            // "pre-auth" | "access" | "refresh"
+	Verificado2FA bool      `json:"2fa_verificado"`
+	OrgID         string    `json:"org_id"`          // UUID de la organización del usuario
 	jwt.RegisteredClaims
 }
 

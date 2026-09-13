@@ -14,8 +14,9 @@ import (
 
 // LoginResult es la respuesta del paso de login (pre-2FA).
 type LoginResult struct {
-	JWTTemporal   string `json:"jwtTemporal"`
-	TotpVinculado bool   `json:"totpVinculado"`
+	JWTTemporal              string `json:"jwtTemporal"`
+	TotpVinculado            bool   `json:"totpVinculado"`
+	CambioContrasenaRequerido bool  `json:"cambioContrasenaRequerido"` // true si el usuario debe cambiar su contraseña antes de continuar
 }
 
 // QRResult contiene el QR de vinculación TOTP y el secreto manual como fallback.

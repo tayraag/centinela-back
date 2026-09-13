@@ -77,6 +77,7 @@ func (s *authServiceImpl) Login(ctx context.Context, email, contrasena string) (
 		Rol:           usuario.Rol,
 		Tipo:          crypto.TipoPreAuth,
 		Verificado2FA: false,
+		OrgID:         usuario.OrganizacionID.String(),
 	}
 	claims.Subject = usuario.ID.String()
 	claims.ID = jti
@@ -86,11 +87,12 @@ func (s *authServiceImpl) Login(ctx context.Context, email, contrasena string) (
 		return nil, fmt.Errorf("error al emitir token temporal: %w", err)
 	}
 
-	log.Printf("[AUTH] login ok | user=%s | rol=%s | totp_vinculado=%v | jti=%s", usuario.EmailUsuario, usuario.Rol, usuario.TotpVinculado, jti)
+	log.Printf("[AUTH] login ok | user=%s | rol=%s | totp_vinculado=%v | cambio_pass=%v | jti=%s", usuario.EmailUsuario, usuario.Rol, usuario.TotpVinculado, usuario.CambioContrasena, jti)
 
 	return &ports.LoginResult{
-		JWTTemporal:   jwtTemporal,
-		TotpVinculado: usuario.TotpVinculado,
+		JWTTemporal:              jwtTemporal,
+		TotpVinculado:            usuario.TotpVinculado,
+		CambioContrasenaRequerido: usuario.CambioContrasena,
 	}, nil
 }
 
@@ -213,6 +215,7 @@ func (s *authServiceImpl) VerificarTotp(ctx context.Context, jtiTemporal, codigo
 		Rol:           usuario.Rol,
 		Tipo:          crypto.TipoAccess,
 		Verificado2FA: true,
+		OrgID:         usuario.OrganizacionID.String(),
 	}
 	accessClaims.Subject = usuario.ID.String()
 	accessClaims.ID = jtiAccess
@@ -229,6 +232,7 @@ func (s *authServiceImpl) VerificarTotp(ctx context.Context, jtiTemporal, codigo
 		Rol:           usuario.Rol,
 		Tipo:          crypto.TipoRefresh,
 		Verificado2FA: true,
+		OrgID:         usuario.OrganizacionID.String(),
 	}
 	refreshClaims.Subject = usuario.ID.String()
 	refreshClaims.ID = jtiRefresh
@@ -307,6 +311,7 @@ func (s *authServiceImpl) RefrescarToken(ctx context.Context, refreshToken strin
 		Rol:           usuario.Rol,
 		Tipo:          crypto.TipoAccess,
 		Verificado2FA: true,
+		OrgID:         usuario.OrganizacionID.String(),
 	}
 	accessClaims.Subject = usuario.ID.String()
 	accessClaims.ID = jtiAccess

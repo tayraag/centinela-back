@@ -424,3 +424,257 @@ centinela-back/
 | GET | `/api/auth/2fa/qr` | `RequirePreAuth` | Generar QR para vincular TOTP |
 | POST | `/api/auth/2fa/verify` | `RequirePreAuth` | Validar código TOTP → access+refresh tokens |
 | POST | `/api/auth/2fa/relink` | `RequireAuth` + `RequireRole("ADMIN")` | Admin resetea 2FA de un usuario |
+| GET | `/api/roles` | `RequireAuth` + `RequireRole("ADMIN")` | Lista roles disponibles (hardcodeado) |
+| GET | `/api/users` | `RequireAuth` + `RequireRole("ADMIN")` | Lista usuarios + summary (?rol, ?activo, ?buscar) |
+| POST | `/api/users` | `RequireAuth` + `RequireRole("ADMIN")` | Crear usuario → devuelve contrasenaTemp |
+| GET | `/api/users/:id` | `RequireAuth` + `RequireRole("ADMIN")` | Detalle con instanciasPermitidas |
+| PUT | `/api/users/:id` | `RequireAuth` + `RequireRole("ADMIN")` | Actualizar nombre/email/rol/estado |
+| DELETE | `/api/users/:id` | `RequireAuth` + `RequireRole("ADMIN")` | Soft-delete + cierra sesiones |
+| PUT | `/api/users/:id/instances` | `RequireAuth` + `RequireRole("ADMIN")` | Reemplazar permisos de instancias |
+| GET | `/api/users/:id/activity` | `RequireAuth` + `RequireRole("ADMIN")` | Auditoría filtrada del usuario |
+| POST | `/api/users/:id/2fa/reset` | `RequireAuth` + `RequireRole("ADMIN")` | Resetear TOTP del usuario |
+| POST | `/api/users/:id/password/reset` | `RequireAuth` + `RequireRole("ADMIN")` | Nueva contraseña temporal |
+| GET | `/api/account/profile` | `RequireAuth` | Perfil propio |
+| PUT | `/api/account/profile` | `RequireAuth` | Actualizar nombre/email propios |
+| PUT | `/api/account/password` | `RequireAuth` | Cambiar contraseña (requiere actual) |
+| DELETE | `/api/account/sessions/current` | `RequireAuth` | Logout (cierra sesión actual) |
+
+---
+
+## 12. Flujo completo de pruebas RF-09 — Gestión de usuarios
+
+> 💡 **Importante en Windows PowerShell**: `curl` es un alias de `Invoke-WebRequest`. Siempre usá `curl.exe` (el curl real) para que los flags `-H`, `-d`, `-X` funcionen correctamente.
+>
+> 💡 **Truco para el body JSON**: Guardá el JSON en un archivo con `Set-Content -Encoding ascii -NoNewline` y pasalo con `-d "@archivo.json"` para evitar problemas de escapado en PowerShell.
+
+---
+
+### Prerequisito: obtener un access token
+
+Seguí los pasos 7.1 → 7.3 del SETUP para obtener un `accessToken`. Guardalo en una variable:
+
+```powershell
+$ACCESS = "<pegar accessToken aquí>"
+```
+
+---
+
+### 12.1 Listar roles disponibles
+
+```powershell
+curl.exe -s http://localhost:8080/api/roles -H "Authorization: Bearer $ACCESS"
+```
+
+**Respuesta esperada (200 OK):**
+```json
+[
+  {"valor":"ADMIN","descripcion":"Acceso total al sistema y gestión de usuarios."},
+  {"valor":"OPERATOR","descripcion":"Acceso restringido a instancias asignadas por un administrador."}
+]
+```
+
+---
+
+### 12.2 Listar usuarios (con summary)
+
+```powershell
+curl.exe -s http://localhost:8080/api/users -H "Authorization: Bearer $ACCESS"
+```
+
+**Respuesta esperada (200 OK):**
+```json
+{
+  "summary": {"total": 1, "admins": 1, "operators": 0},
+  "users": [
+    {
+      "id": "49326b68-...",
+      "nombreCompleto": "Administrador",
+      "nombreUsuario": "admin",
+      "emailUsuario": "admin@elcentinela.local",
+      "rol": "ADMIN",
+      "activo": true,
+      "totpVinculado": true,
+      "fechaUltimoAcceso": null,
+      "fechaCreacion": "2026-09-12T12:08:04Z",
+      "esUsuarioActual": true
+    }
+  ]
+}
+```
+
+Filtros disponibles: `?rol=ADMIN`, `?activo=true`, `?buscar=juan`
+
+---
+
+### 12.3 Crear un usuario operador
+
+```powershell
+Set-Content body_newuser.json '{"nombreCompleto":"Maria Gomez","nombreUsuario":"mgomez","emailUsuario":"mgomez@empresa.com","rol":"OPERATOR"}' -Encoding ascii -NoNewline
+curl.exe -s -X POST http://localhost:8080/api/users -H "Content-Type: application/json" -H "Authorization: Bearer $ACCESS" -d "@body_newuser.json"
+```
+
+**Respuesta esperada (201 Created):**
+```json
+{
+  "id": "1babeab8-...",
+  "rol": "OPERATOR",
+  "activo": true,
+  "contrasenaTemp": "Mu$0Vh$QmOe%"
+}
+```
+
+> 📋 El admin copia `contrasenaTemp` y se la comparte al nuevo usuario por su propio canal seguro.
+
+Guardá el ID del nuevo usuario:
+```powershell
+$UID = "1babeab8-ebe0-4c4f-adbf-14acdac94405"
+```
+
+---
+
+### 12.4 Ver detalle del usuario creado
+
+```powershell
+curl.exe -s "http://localhost:8080/api/users/$UID" -H "Authorization: Bearer $ACCESS"
+```
+
+**Respuesta esperada (200 OK):**
+```json
+{
+  "id": "1babeab8-...",
+  "nombreCompleto": "Maria Gomez",
+  "rol": "OPERATOR",
+  "activo": true,
+  "totpVinculado": false,
+  "cambioContrasenaRequerido": true,
+  "instanciasPermitidas": []
+}
+```
+
+---
+
+### 12.5 Asignar instancias Proxmox al operador
+
+```powershell
+Set-Content body_instances.json '{"vmids":[100,102]}' -Encoding ascii -NoNewline
+curl.exe -s -i -X PUT "http://localhost:8080/api/users/$UID/instances" -H "Content-Type: application/json" -H "Authorization: Bearer $ACCESS" -d "@body_instances.json"
+```
+
+**Respuesta esperada: `HTTP/1.1 204 No Content`** (sin body)
+
+Verificar que se guardaron:
+```powershell
+curl.exe -s "http://localhost:8080/api/users/$UID" -H "Authorization: Bearer $ACCESS"
+# instanciasPermitidas debe ser [100, 102]
+```
+
+---
+
+### 12.6 Actualizar datos del usuario
+
+```powershell
+Set-Content body_update.json '{"rol":"ADMIN"}' -Encoding ascii -NoNewline
+curl.exe -s -X PUT "http://localhost:8080/api/users/$UID" -H "Content-Type: application/json" -H "Authorization: Bearer $ACCESS" -d "@body_update.json"
+```
+
+**Respuesta esperada (200 OK):** devuelve el usuario actualizado con `"rol": "ADMIN"`.
+
+---
+
+### 12.7 Reset de contraseña (admin genera nueva temporal)
+
+```powershell
+curl.exe -s -X POST "http://localhost:8080/api/users/$UID/password/reset" -H "Authorization: Bearer $ACCESS"
+```
+
+**Respuesta esperada (200 OK):**
+```json
+{
+  "message": "Contraseña restablecida. El usuario deberá cambiarla en su próximo acceso.",
+  "contrasenaTemp": "!ApskXZ#uaQ7"
+}
+```
+
+---
+
+### 12.8 Reset de TOTP (admin invalida 2FA del usuario)
+
+```powershell
+curl.exe -s -X POST "http://localhost:8080/api/users/$UID/2fa/reset" -H "Authorization: Bearer $ACCESS"
+```
+
+**Respuesta esperada (200 OK):**
+```json
+{
+  "message": "TOTP reseteado. El usuario deberá vincularlo en su próximo acceso."
+}
+```
+
+---
+
+### 12.9 Perfil propio
+
+```powershell
+curl.exe -s http://localhost:8080/api/account/profile -H "Authorization: Bearer $ACCESS"
+```
+
+**Respuesta esperada (200 OK):** devuelve el perfil completo del usuario autenticado con `instanciasPermitidas`.
+
+---
+
+### 12.10 Cambiar contraseña propia
+
+```powershell
+Set-Content body_pass.json '{"contrasenaActual":"Test1234!","contrasenaNueva":"NuevaClave99@"}' -Encoding ascii -NoNewline
+curl.exe -s -X PUT http://localhost:8080/api/account/password -H "Content-Type: application/json" -H "Authorization: Bearer $ACCESS" -d "@body_pass.json"
+```
+
+**Respuesta esperada (200 OK):**
+```json
+{"message": "Contraseña actualizada correctamente."}
+```
+
+> ⚠️ Si `cambioContrasenaRequerido` era `true`, después de este cambio el flag queda en `false`.
+
+---
+
+### 12.11 Soft-delete de usuario
+
+```powershell
+curl.exe -s -i -X DELETE "http://localhost:8080/api/users/$UID" -H "Authorization: Bearer $ACCESS"
+```
+
+**Respuesta esperada: `HTTP/1.1 204 No Content`**
+
+> El usuario queda con `activo: false` en la BD (no se borra físicamente) y sus sesiones activas se invalidan.
+
+---
+
+### 12.12 Casos de error (verificar comportamiento)
+
+**Auto-eliminarse → 400:**
+```powershell
+curl.exe -s -i -X DELETE "http://localhost:8080/api/users/<TU_PROPIO_UUID>" -H "Authorization: Bearer $ACCESS"
+# HTTP 400 — errorCode: SELF_DELETE_NOT_ALLOWED
+```
+
+**Email duplicado → 409:**
+```powershell
+# Intentar crear otro usuario con el mismo email
+curl.exe -s -X POST http://localhost:8080/api/users -H "Content-Type: application/json" -H "Authorization: Bearer $ACCESS" -d "@body_newuser.json"
+# HTTP 409 — errorCode: USER_CONFLICT
+```
+
+**Sin token → 401:**
+```powershell
+curl.exe -s -i http://localhost:8080/api/users
+# HTTP 401 — errorCode: MISSING_TOKEN
+```
+
+**Operador intentando acceder a ruta de admin → 403:**
+```powershell
+# Con el accessToken de un OPERATOR
+curl.exe -s -i http://localhost:8080/api/users -H "Authorization: Bearer <TOKEN_OPERATOR>"
+# HTTP 403 — errorCode: INSUFFICIENT_ROLE
+```
+

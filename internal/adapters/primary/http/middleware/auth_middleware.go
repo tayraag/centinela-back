@@ -8,6 +8,7 @@ import (
 	"el-centinela/internal/infrastructure/crypto"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 // ContextKey es el tipo para las claves del contexto de Gin.
@@ -20,6 +21,8 @@ const (
 	ContextKeyUserID = "userID"
 	// ContextKeyRol es la clave donde se guarda el rol del usuario en el contexto de Gin.
 	ContextKeyRol = "rol"
+	// ContextKeyOrgID es la clave donde se guarda el OrganizacionID en el contexto de Gin.
+	ContextKeyOrgID = "orgID"
 )
 
 // RequirePreAuth valida que la petición tenga un JWT temporal válido (tipo "pre-auth").
@@ -58,6 +61,9 @@ func RequirePreAuth() gin.HandlerFunc {
 		c.Set(ContextKeyJTI, claims.ID)
 		c.Set(ContextKeyUserID, claims.Subject)
 		c.Set(ContextKeyRol, claims.Rol)
+		if orgID, err := uuid.Parse(claims.OrgID); err == nil {
+			c.Set(ContextKeyOrgID, orgID)
+		}
 		c.Next()
 	}
 }
@@ -104,6 +110,9 @@ func RequireAuth() gin.HandlerFunc {
 		c.Set(ContextKeyJTI, claims.ID)
 		c.Set(ContextKeyUserID, claims.Subject)
 		c.Set(ContextKeyRol, claims.Rol)
+		if orgID, err := uuid.Parse(claims.OrgID); err == nil {
+			c.Set(ContextKeyOrgID, orgID)
+		}
 		c.Next()
 	}
 }
