@@ -25,6 +25,15 @@ func NewAccountHandler(service ports.UserService) *AccountHandler {
 // ==========================================
 
 // ObtenerPerfil devuelve el perfil completo del usuario autenticado.
+//
+// @Summary      Obtener mi perfil
+// @Description  Devuelve el perfil completo del usuario autenticado, incluyendo sus instancias Proxmox permitidas.
+// @Tags         Mi cuenta
+// @Produce      json
+// @Security     BearerAuth
+// @Success      200 {object} ports.UsuarioDetalleDTO
+// @Failure      401 {object} map[string]string
+// @Router       /account/profile [get]
 func (h *AccountHandler) ObtenerPerfil(c *gin.Context) {
 	userID := extraerUserID(c)
 
@@ -44,7 +53,19 @@ func (h *AccountHandler) ObtenerPerfil(c *gin.Context) {
 // ==========================================
 
 // ActualizarPerfil permite al usuario modificar su nombre completo y email.
-// No permite cambiar rol ni organización (eso es exclusivo de admins).
+//
+// @Summary      Actualizar mi perfil
+// @Description  Permite al usuario modificar su propio `nombreCompleto` y/o `emailUsuario`. No permite cambiar rol ni organización.
+// @Tags         Mi cuenta
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        body body ports.ActualizarPerfilInput true "Datos a actualizar"
+// @Success      200 {object} ports.UsuarioResumenDTO
+// @Failure      400 {object} map[string]string
+// @Failure      401 {object} map[string]string
+// @Failure      409 {object} map[string]string "Email ya en uso"
+// @Router       /account/profile [put]
 func (h *AccountHandler) ActualizarPerfil(c *gin.Context) {
 	var input ports.ActualizarPerfilInput
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -72,7 +93,18 @@ func (h *AccountHandler) ActualizarPerfil(c *gin.Context) {
 // ==========================================
 
 // CambiarContrasena valida la contraseña actual y aplica la nueva.
-// Si la contraseña era temporal, también limpia el flag cambioContrasena.
+//
+// @Summary      Cambiar mi contraseña
+// @Description  Valida la contraseña actual y aplica la nueva. Si la contraseña era temporal (`cambioContrasenaRequerido=true`), este cambio limpia ese flag y el usuario puede operar con normalidad.
+// @Tags         Mi cuenta
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        body body ports.CambiarContrasenaInput true "Contraseña actual y nueva"
+// @Success      200 {object} map[string]string
+// @Failure      400 {object} map[string]string "Contraseña actual incorrecta o nueva igual a la actual"
+// @Failure      401 {object} map[string]string
+// @Router       /account/password [put]
 func (h *AccountHandler) CambiarContrasena(c *gin.Context) {
 	var input ports.CambiarContrasenaInput
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -101,7 +133,14 @@ func (h *AccountHandler) CambiarContrasena(c *gin.Context) {
 // ==========================================
 
 // CerrarSesionActual cierra la sesión actual del usuario (equivale a logout).
-// Invalida el JTI del access token en uso.
+//
+// @Summary      Cerrar sesión (logout)
+// @Description  Invalida la sesión actual del usuario. El frontend debe descartar los tokens. Responde 204 sin body.
+// @Tags         Mi cuenta
+// @Security     BearerAuth
+// @Success      204 "Sin contenido"
+// @Failure      401 {object} map[string]string
+// @Router       /account/sessions/current [delete]
 func (h *AccountHandler) CerrarSesionActual(c *gin.Context) {
 	jti, _ := c.Get(middleware.ContextKeyJTI)
 	jtiStr, _ := jti.(string)

@@ -25,24 +25,25 @@ func NewAuthHandler(service ports.AuthService) *AuthHandler {
 // ==========================================
 
 // loginRequest define el body esperado para el endpoint de login.
-type loginRequest struct {
-	Email     string `json:"email" binding:"required,email"`
+type LoginRequest struct {
+	Email      string `json:"email" binding:"required,email"`
 	Contrasena string `json:"contrasena" binding:"required"`
 }
 
 // Login valida credenciales de email+contraseña y retorna un JWT temporal pre-2FA.
+//
 // @Summary      Login de usuario
-// @Description  Recibe email y contraseña, retorna un JWT temporal para el flujo 2FA.
-// @Tags         auth
+// @Description  Valida email y contraseña. Si son correctas emite un JWT temporal (5 min) para continuar el flujo 2FA. El campo `totpVinculado` indica si el usuario debe escanear el QR (false) o ingresar el código TOTP (true). El campo `cambioContrasenaRequerido` indica si la contraseña es temporal y debe cambiarse.
+// @Tags         Autenticación
 // @Accept       json
 // @Produce      json
-// @Param        body body loginRequest true "Credenciales"
+// @Param        body body LoginRequest true "Credenciales de acceso"
 // @Success      200 {object} ports.LoginResult
-// @Failure      400 {object} map[string]string
-// @Failure      401 {object} map[string]string
+// @Failure      400 {object} map[string]string "Formato de petición inválido"
+// @Failure      401 {object} map[string]string "Credenciales incorrectas"
 // @Router       /auth/login [post]
 func (h *AuthHandler) Login(c *gin.Context) {
-	var req loginRequest
+	var req LoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"errorCode": "INVALID_REQUEST",
@@ -68,7 +69,16 @@ func (h *AuthHandler) Login(c *gin.Context) {
 // ==========================================
 
 // ObtenerQR genera el QR de vinculación TOTP para el usuario.
-// Requiere un JWT temporal válido (middleware RequirePreAuth).
+//
+// @Summary      Obtener QR de vinculación 2FA
+// @Description  Genera el secreto TOTP, lo cifra y devuelve el QR en Base64 más el secreto manual. Solo disponible con JWT temporal (pre-auth). Llamar únicamente si `totpVinculado` es false.
+// @Tags         Autenticación 2FA
+// @Produce      json
+// @Security     BearerPreAuth
+// @Success      200 {object} ports.QRResult
+// @Failure      400 {object} map[string]string "TOTP ya vinculado o error interno"
+// @Failure      401 {object} map[string]string "Token pre-auth inválido o expirado"
+// @Router       /auth/2fa/qr [get]
 func (h *AuthHandler) ObtenerQR(c *gin.Context) {
 	jti, _ := c.Get(middleware.ContextKeyJTI)
 	jtiStr, ok := jti.(string)
@@ -102,7 +112,18 @@ type verificarTotpRequest struct {
 }
 
 // VerificarTotp valida el código TOTP y emite access + refresh tokens.
-// Requiere un JWT temporal válido (middleware RequirePreAuth).
+//
+// @Summary      Verificar código TOTP → obtener tokens definitivos
+// @Description  Recibe el código de 6 dígitos del autenticador. Si es correcto emite el `accessToken` (8h) y el `refreshToken` (30 días) con 2FA completado. Funciona tanto para la primera vinculación como para logins posteriores.
+// @Tags         Autenticación 2FA
+// @Accept       json
+// @Produce      json
+// @Security     BearerPreAuth
+// @Param        body body verificarTotpRequest true "Código TOTP de 6 dígitos"
+// @Success      200 {object} ports.TokenResult
+// @Failure      400 {object} map[string]string "Código inválido (no tiene 6 dígitos)"
+// @Failure      401 {object} map[string]string "Código TOTP incorrecto"
+// @Router       /auth/2fa/verify [post]
 func (h *AuthHandler) VerificarTotp(c *gin.Context) {
 	var req verificarTotpRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -145,6 +166,17 @@ type refreshRequest struct {
 }
 
 // RefrescarToken valida un refresh token y emite un nuevo access token.
+//
+// @Summary      Renovar access token
+// @Description  Recibe un refresh token válido y emite un nuevo access token (8h). El refresh token no cambia.
+// @Tags         Autenticación
+// @Accept       json
+// @Produce      json
+// @Param        body body refreshRequest true "Refresh token"
+// @Success      200 {object} ports.TokenResult
+// @Failure      400 {object} map[string]string "Body inválido"
+// @Failure      401 {object} map[string]string "Refresh token inválido o expirado"
+// @Router       /auth/refresh [post]
 func (h *AuthHandler) RefrescarToken(c *gin.Context) {
 	var req refreshRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -177,7 +209,19 @@ type relinkRequest struct {
 }
 
 // SolicitarRevinculacion permite a un administrador resetear el 2FA de otro usuario.
-// Requiere access token con rol ADMIN (middlewares RequireAuth + RequireRole).
+//
+// @Summary      Admin: resetear 2FA de un usuario (endpoint legacy)
+// @Description  Invalida el secreto TOTP del usuario indicado. En su próximo login, el usuario deberá escanear un nuevo QR. Usar en su lugar `POST /users/{id}/2fa/reset`.
+// @Tags         Autenticación 2FA
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        body body relinkRequest true "UUID del usuario a resetear"
+// @Success      204 "Sin contenido"
+// @Failure      400 {object} map[string]string "UUID inválido"
+// @Failure      401 {object} map[string]string "No autenticado"
+// @Failure      403 {object} map[string]string "Sin permisos o reset fallido"
+// @Router       /auth/2fa/relink [post]
 func (h *AuthHandler) SolicitarRevinculacion(c *gin.Context) {
 	var req relinkRequest
 	if err := c.ShouldBindJSON(&req); err != nil {

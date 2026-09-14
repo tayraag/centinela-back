@@ -1,0 +1,1528 @@
+{
+    "swagger": "2.0",
+    "info": {
+        "description": "API REST para el sistema de monitoreo de instancias Proxmox El Centinela.\n**Flujo de autenticación**: Login → `/auth/login` → obtener `jwtTemporal` → `/auth/2fa/verify` → obtener `accessToken` → usar en el botón **Authorize** de esta UI.",
+        "title": "El Centinela API",
+        "contact": {
+            "name": "Soporte El Centinela"
+        },
+        "version": "1.0"
+    },
+    "host": "localhost:8080",
+    "basePath": "/api",
+    "paths": {
+        "/account/password": {
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Valida la contraseña actual y aplica la nueva. Si la contraseña era temporal (`cambioContrasenaRequerido=true`), este cambio limpia ese flag y el usuario puede operar con normalidad.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Mi cuenta"
+                ],
+                "summary": "Cambiar mi contraseña",
+                "parameters": [
+                    {
+                        "description": "Contraseña actual y nueva",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/ports.CambiarContrasenaInput"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Contraseña actual incorrecta o nueva igual a la actual",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/account/profile": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Devuelve el perfil completo del usuario autenticado, incluyendo sus instancias Proxmox permitidas.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Mi cuenta"
+                ],
+                "summary": "Obtener mi perfil",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/ports.UsuarioDetalleDTO"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Permite al usuario modificar su propio `nombreCompleto` y/o `emailUsuario`. No permite cambiar rol ni organización.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Mi cuenta"
+                ],
+                "summary": "Actualizar mi perfil",
+                "parameters": [
+                    {
+                        "description": "Datos a actualizar",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/ports.ActualizarPerfilInput"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/ports.UsuarioResumenDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Email ya en uso",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/account/sessions/current": {
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Invalida la sesión actual del usuario. El frontend debe descartar los tokens. Responde 204 sin body.",
+                "tags": [
+                    "Mi cuenta"
+                ],
+                "summary": "Cerrar sesión (logout)",
+                "responses": {
+                    "204": {
+                        "description": "Sin contenido"
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/2fa/qr": {
+            "get": {
+                "security": [
+                    {
+                        "BearerPreAuth": []
+                    }
+                ],
+                "description": "Genera el secreto TOTP, lo cifra y devuelve el QR en Base64 más el secreto manual. Solo disponible con JWT temporal (pre-auth). Llamar únicamente si `totpVinculado` es false.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Autenticación 2FA"
+                ],
+                "summary": "Obtener QR de vinculación 2FA",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/ports.QRResult"
+                        }
+                    },
+                    "400": {
+                        "description": "TOTP ya vinculado o error interno",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Token pre-auth inválido o expirado",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/2fa/relink": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Invalida el secreto TOTP del usuario indicado. En su próximo login, el usuario deberá escanear un nuevo QR. Usar en su lugar `POST /users/{id}/2fa/reset`.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Autenticación 2FA"
+                ],
+                "summary": "Admin: resetear 2FA de un usuario (endpoint legacy)",
+                "parameters": [
+                    {
+                        "description": "UUID del usuario a resetear",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/http.relinkRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "Sin contenido"
+                    },
+                    "400": {
+                        "description": "UUID inválido",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "No autenticado",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Sin permisos o reset fallido",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/2fa/verify": {
+            "post": {
+                "security": [
+                    {
+                        "BearerPreAuth": []
+                    }
+                ],
+                "description": "Recibe el código de 6 dígitos del autenticador. Si es correcto emite el `accessToken` (8h) y el `refreshToken` (30 días) con 2FA completado. Funciona tanto para la primera vinculación como para logins posteriores.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Autenticación 2FA"
+                ],
+                "summary": "Verificar código TOTP → obtener tokens definitivos",
+                "parameters": [
+                    {
+                        "description": "Código TOTP de 6 dígitos",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/http.verificarTotpRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/ports.TokenResult"
+                        }
+                    },
+                    "400": {
+                        "description": "Código inválido (no tiene 6 dígitos)",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Código TOTP incorrecto",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/login": {
+            "post": {
+                "description": "Valida email y contraseña. Si son correctas emite un JWT temporal (5 min) para continuar el flujo 2FA. El campo `totpVinculado` indica si el usuario debe escanear el QR (false) o ingresar el código TOTP (true). El campo `cambioContrasenaRequerido` indica si la contraseña es temporal y debe cambiarse.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Autenticación"
+                ],
+                "summary": "Login de usuario",
+                "parameters": [
+                    {
+                        "description": "Credenciales de acceso",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/http.LoginRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/ports.LoginResult"
+                        }
+                    },
+                    "400": {
+                        "description": "Formato de petición inválido",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Credenciales incorrectas",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/refresh": {
+            "post": {
+                "description": "Recibe un refresh token válido y emite un nuevo access token (8h). El refresh token no cambia.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Autenticación"
+                ],
+                "summary": "Renovar access token",
+                "parameters": [
+                    {
+                        "description": "Refresh token",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/http.refreshRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/ports.TokenResult"
+                        }
+                    },
+                    "400": {
+                        "description": "Body inválido",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Refresh token inválido o expirado",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/roles": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Devuelve los roles definidos en el sistema (ADMIN y OPERATOR). Útil para poblar selectores en el frontend al crear o editar usuarios.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Usuarios (Admin)"
+                ],
+                "summary": "Listar roles disponibles",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/ports.RolDTO"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/users": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Devuelve todos los usuarios de la organización del admin autenticado, con un resumen (`summary`) de totales por rol. Soporta filtros opcionales: `?rol=ADMIN|OPERATOR`, `?activo=true|false`, `?buscar=texto` (nombre o email).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Usuarios (Admin)"
+                ],
+                "summary": "Listar usuarios de la organización",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Filtrar por rol: ADMIN o OPERATOR",
+                        "name": "rol",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Filtrar por estado: true o false",
+                        "name": "activo",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Buscar por nombre o email (case-insensitive)",
+                        "name": "buscar",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/ports.ListaUsuariosResult"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Crea un nuevo usuario con contraseña temporal generada automáticamente. La respuesta incluye `contrasenaTemp` (solo en este momento, nunca más). El usuario deberá cambiarla en su primer login. No se envian emails (Plan A).",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Usuarios (Admin)"
+                ],
+                "summary": "Crear usuario",
+                "parameters": [
+                    {
+                        "description": "Datos del nuevo usuario",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/ports.CrearUsuarioInput"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/ports.CrearUsuarioResult"
+                        }
+                    },
+                    "400": {
+                        "description": "Datos inválidos",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Email o username ya registrado",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/users/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Devuelve el perfil detallado del usuario incluyendo sus instancias Proxmox permitidas (`instanciasPermitidas`). Solo devuelve usuarios de la misma organización del admin.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Usuarios (Admin)"
+                ],
+                "summary": "Obtener usuario por ID",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "UUID del usuario",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/ports.UsuarioDetalleDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "UUID inválido",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Usuario no encontrado",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Actualiza parcialmente los datos de un usuario. Solo se modifican los campos presentes en el body (semántica PATCH). Campos posibles: `nombreCompleto`, `emailUsuario`, `rol`, `activo`.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Usuarios (Admin)"
+                ],
+                "summary": "Actualizar usuario",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "UUID del usuario",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Campos a actualizar",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/ports.ActualizarUsuarioInput"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/ports.UsuarioResumenDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "Datos inválidos",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Email ya registrado",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Marca al usuario como inactivo (`activo=false`) sin borrarlo físicamente, e invalida todas sus sesiones activas. Un admin no puede eliminarse a sí mismo.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Usuarios (Admin)"
+                ],
+                "summary": "Eliminar usuario (soft-delete)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "UUID del usuario",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "Sin contenido"
+                    },
+                    "400": {
+                        "description": "No puede eliminarse a sí mismo",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/users/{id}/2fa/reset": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Invalida el secreto TOTP del usuario. En su próximo login deberá escanear un nuevo QR para vincular 2FA. También invalida todas sus sesiones activas.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Usuarios (Admin)"
+                ],
+                "summary": "Admin: resetear 2FA del usuario",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "UUID del usuario",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/users/{id}/activity": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Devuelve hasta 100 registros de auditoría del usuario, ordenados del más reciente al más antiguo. Soporta filtros: `?accion=START|STOP|...`, `?desde=2026-01-01`, `?hasta=2026-12-31`.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Usuarios (Admin)"
+                ],
+                "summary": "Actividad auditada del usuario",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "UUID del usuario",
+                        "name": "id",
+                        "in": "path"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filtrar por tipo de acción",
+                        "name": "accion",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Fecha desde (YYYY-MM-DD)",
+                        "name": "desde",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Fecha hasta (YYYY-MM-DD)",
+                        "name": "hasta",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/ports.ActividadDTO"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/users/{id}/instances": {
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Reemplaza atómicamente todos los permisos de instancia del usuario. Envía un array de VMIDs: `{\"vmids\": [100, 102]}`. Para quitar todos los permisos, enviar un array vacío: `{\"vmids\": []}`.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Usuarios (Admin)"
+                ],
+                "summary": "Asignar instancias Proxmox al usuario",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "UUID del usuario",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Lista de VMIDs a asignar",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/http.asignarPermisosRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "Sin contenido"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/users/{id}/password/reset": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Genera una nueva contraseña temporal segura y la aplica. Devuelve `contrasenaTemp` (solo en esta respuesta). El usuario deberá cambiarla en su próximo acceso. Invalida todas sus sesiones.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Usuarios (Admin)"
+                ],
+                "summary": "Admin: resetear contraseña del usuario",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "UUID del usuario",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "definitions": {
+        "http.LoginRequest": {
+            "type": "object",
+            "required": [
+                "contrasena",
+                "email"
+            ],
+            "properties": {
+                "contrasena": {
+                    "type": "string"
+                },
+                "email": {
+                    "type": "string"
+                }
+            }
+        },
+        "http.asignarPermisosRequest": {
+            "type": "object",
+            "required": [
+                "vmids"
+            ],
+            "properties": {
+                "vmids": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                }
+            }
+        },
+        "http.refreshRequest": {
+            "type": "object",
+            "required": [
+                "refreshToken"
+            ],
+            "properties": {
+                "refreshToken": {
+                    "type": "string"
+                }
+            }
+        },
+        "http.relinkRequest": {
+            "type": "object",
+            "required": [
+                "usuarioId"
+            ],
+            "properties": {
+                "usuarioId": {
+                    "type": "string"
+                }
+            }
+        },
+        "http.verificarTotpRequest": {
+            "type": "object",
+            "required": [
+                "codigo"
+            ],
+            "properties": {
+                "codigo": {
+                    "type": "string"
+                }
+            }
+        },
+        "ports.ActividadDTO": {
+            "type": "object",
+            "properties": {
+                "accion": {
+                    "type": "string"
+                },
+                "detalles": {
+                    "type": "string"
+                },
+                "fechaHora": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "instanciaId": {
+                    "type": "string"
+                },
+                "instanciaNombre": {
+                    "type": "string"
+                },
+                "resultado": {
+                    "type": "string"
+                }
+            }
+        },
+        "ports.ActualizarPerfilInput": {
+            "type": "object",
+            "properties": {
+                "emailUsuario": {
+                    "type": "string"
+                },
+                "nombreCompleto": {
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 2
+                }
+            }
+        },
+        "ports.ActualizarUsuarioInput": {
+            "type": "object",
+            "properties": {
+                "activo": {
+                    "description": "puntero para distinguir false de \"no enviado\"",
+                    "type": "boolean"
+                },
+                "emailUsuario": {
+                    "type": "string"
+                },
+                "nombreCompleto": {
+                    "type": "string"
+                },
+                "rol": {
+                    "type": "string",
+                    "enum": [
+                        "ADMIN",
+                        "OPERATOR"
+                    ]
+                }
+            }
+        },
+        "ports.CambiarContrasenaInput": {
+            "type": "object",
+            "required": [
+                "contrasenaActual",
+                "contrasenaNueva"
+            ],
+            "properties": {
+                "contrasenaActual": {
+                    "type": "string"
+                },
+                "contrasenaNueva": {
+                    "type": "string",
+                    "minLength": 8
+                }
+            }
+        },
+        "ports.CrearUsuarioInput": {
+            "type": "object",
+            "required": [
+                "emailUsuario",
+                "nombreCompleto",
+                "nombreUsuario",
+                "rol"
+            ],
+            "properties": {
+                "emailUsuario": {
+                    "type": "string"
+                },
+                "nombreCompleto": {
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 2
+                },
+                "nombreUsuario": {
+                    "type": "string",
+                    "maxLength": 100,
+                    "minLength": 3
+                },
+                "rol": {
+                    "type": "string",
+                    "enum": [
+                        "ADMIN",
+                        "OPERATOR"
+                    ]
+                }
+            }
+        },
+        "ports.CrearUsuarioResult": {
+            "type": "object",
+            "properties": {
+                "activo": {
+                    "type": "boolean"
+                },
+                "contrasenaTemp": {
+                    "description": "Solo devuelto aquí (Plan A sin SMTP)",
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "rol": {
+                    "type": "string"
+                }
+            }
+        },
+        "ports.ListaUsuariosResult": {
+            "type": "object",
+            "properties": {
+                "summary": {
+                    "$ref": "#/definitions/ports.ResumenUsuariosDTO"
+                },
+                "users": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/ports.UsuarioResumenDTO"
+                    }
+                }
+            }
+        },
+        "ports.LoginResult": {
+            "type": "object",
+            "properties": {
+                "cambioContrasenaRequerido": {
+                    "description": "true si el usuario debe cambiar su contraseña antes de continuar",
+                    "type": "boolean"
+                },
+                "jwtTemporal": {
+                    "type": "string"
+                },
+                "totpVinculado": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "ports.QRResult": {
+            "type": "object",
+            "properties": {
+                "qrBase64": {
+                    "type": "string"
+                },
+                "secretoManual": {
+                    "description": "Solo retornado en la vinculación inicial, nunca más",
+                    "type": "string"
+                }
+            }
+        },
+        "ports.ResumenUsuariosDTO": {
+            "type": "object",
+            "properties": {
+                "admins": {
+                    "type": "integer"
+                },
+                "operators": {
+                    "type": "integer"
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
+        },
+        "ports.RolDTO": {
+            "type": "object",
+            "properties": {
+                "descripcion": {
+                    "type": "string"
+                },
+                "valor": {
+                    "type": "string"
+                }
+            }
+        },
+        "ports.TokenResult": {
+            "type": "object",
+            "properties": {
+                "accessToken": {
+                    "type": "string"
+                },
+                "expiresIn": {
+                    "description": "segundos hasta expiración del access token",
+                    "type": "integer"
+                },
+                "refreshToken": {
+                    "type": "string"
+                }
+            }
+        },
+        "ports.UsuarioDetalleDTO": {
+            "type": "object",
+            "properties": {
+                "activo": {
+                    "type": "boolean"
+                },
+                "cambioContrasenaRequerido": {
+                    "type": "boolean"
+                },
+                "emailUsuario": {
+                    "type": "string"
+                },
+                "fechaCreacion": {
+                    "type": "string"
+                },
+                "fechaUltimoAcceso": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "instanciasPermitidas": {
+                    "description": "VMIDs de Proxmox",
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "nombreCompleto": {
+                    "type": "string"
+                },
+                "nombreUsuario": {
+                    "type": "string"
+                },
+                "organizacionId": {
+                    "type": "string"
+                },
+                "rol": {
+                    "type": "string"
+                },
+                "totpVinculado": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "ports.UsuarioResumenDTO": {
+            "type": "object",
+            "properties": {
+                "activo": {
+                    "type": "boolean"
+                },
+                "emailUsuario": {
+                    "type": "string"
+                },
+                "esUsuarioActual": {
+                    "description": "true si coincide con el usuario autenticado",
+                    "type": "boolean"
+                },
+                "fechaCreacion": {
+                    "type": "string"
+                },
+                "fechaUltimoAcceso": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "nombreCompleto": {
+                    "type": "string"
+                },
+                "nombreUsuario": {
+                    "type": "string"
+                },
+                "rol": {
+                    "type": "string"
+                },
+                "totpVinculado": {
+                    "type": "boolean"
+                }
+            }
+        }
+    },
+    "securityDefinitions": {
+        "BearerAuth": {
+            "description": "Token de acceso definitivo. Formato: **Bearer \u0026lt;accessToken\u0026gt;**. Obtené el token completando el flujo: `POST /auth/login` → `POST /auth/2fa/verify`.",
+            "type": "apiKey",
+            "name": "Authorization",
+            "in": "header"
+        },
+        "BearerPreAuth": {
+            "description": "JWT temporal pre-2FA. Formato: **Bearer \u0026lt;jwtTemporal\u0026gt;**. Obtené el token de `POST /auth/login`.",
+            "type": "apiKey",
+            "name": "Authorization",
+            "in": "header"
+        }
+    }
+}

@@ -1,8 +1,10 @@
+// Package main es el punto de entrada de El Centinela Backend.
 package main
 
 import (
 	"log"
 
+	_ "el-centinela/docs"
 	httpHandlers "el-centinela/internal/adapters/primary/http"
 	"el-centinela/internal/adapters/primary/http/middleware"
 	"el-centinela/internal/adapters/secondary/postgres"
@@ -10,8 +12,29 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
+	swaggerFiles "github.com/swaggo/files"
+	ginSwagger "github.com/swaggo/gin-swagger"
 )
 
+// @title          El Centinela API
+// @version        1.0
+// @description    API REST para el sistema de monitoreo de instancias Proxmox El Centinela.
+// @description    **Flujo de autenticación**: Login → `/auth/login` → obtener `jwtTemporal` → `/auth/2fa/verify` → obtener `accessToken` → usar en el botón **Authorize** de esta UI.
+//
+// @contact.name   Soporte El Centinela
+//
+// @host           localhost:8080
+// @BasePath       /api
+//
+// @securityDefinitions.apikey BearerAuth
+// @in             header
+// @name           Authorization
+// @description    Token de acceso definitivo. Formato: **Bearer &lt;accessToken&gt;**. Obtené el token completando el flujo: `POST /auth/login` → `POST /auth/2fa/verify`.
+//
+// @securityDefinitions.apikey BearerPreAuth
+// @in             header
+// @name           Authorization
+// @description    JWT temporal pre-2FA. Formato: **Bearer &lt;jwtTemporal&gt;**. Obtené el token de `POST /auth/login`.
 func main() {
 	// Configurar logger conciso: solo hora, sin fecha
 	log.SetFlags(log.Ltime)
@@ -21,6 +44,7 @@ func main() {
 	// Intentamos múltiples rutas para que funcione tanto con `go run ./cmd/api/`
 	// (desde la raíz) como ejecutando el binario desde cualquier directorio.
 	envCargado := false
+
 	for _, ruta := range []string{".env", "cmd/api/.env"} {
 		if err := godotenv.Load(ruta); err == nil {
 			log.Printf("ℹ️  Variables de entorno cargadas desde: %s", ruta)
@@ -126,10 +150,15 @@ func main() {
 			// Logout: cierra la sesión actual
 			account.DELETE("/sessions/current", accountHandler.CerrarSesionActual)
 		}
+		// ==========================================
+		// Swagger UI (solo en desarrollo)
+		// ==========================================
+		router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 	}
 
 	// 8. Encender el servidor en el puerto 8080
 	log.Println("🛡️ Servidor HTTP escuchando en el puerto 8080...")
+	log.Println("📖 Swagger UI disponible en: http://localhost:8080/swagger/index.html")
 	if err := router.Run(":8080"); err != nil {
 		log.Fatalf("❌ Error al arrancar el servidor: %v", err)
 	}

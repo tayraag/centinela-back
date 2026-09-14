@@ -33,7 +33,16 @@ var rolesDisponibles = []ports.RolDTO{
 // ==========================================
 
 // ObtenerRoles devuelve la lista de roles disponibles en el sistema.
-// Usado por el front para llenar el selector al crear/editar usuarios.
+//
+// @Summary      Listar roles disponibles
+// @Description  Devuelve los roles definidos en el sistema (ADMIN y OPERATOR). Útil para poblar selectores en el frontend al crear o editar usuarios.
+// @Tags         Usuarios (Admin)
+// @Produce      json
+// @Security     BearerAuth
+// @Success      200 {array} ports.RolDTO
+// @Failure      401 {object} map[string]string
+// @Failure      403 {object} map[string]string
+// @Router       /roles [get]
 func (h *UserHandler) ObtenerRoles(c *gin.Context) {
 	c.JSON(http.StatusOK, rolesDisponibles)
 }
@@ -43,7 +52,19 @@ func (h *UserHandler) ObtenerRoles(c *gin.Context) {
 // ==========================================
 
 // ListarUsuarios devuelve el listado de usuarios con estadísticas y filtros opcionales.
-// Query params: ?rol=ADMIN|OPERATOR, ?activo=true|false, ?buscar=texto
+//
+// @Summary      Listar usuarios de la organización
+// @Description  Devuelve todos los usuarios de la organización del admin autenticado, con un resumen (`summary`) de totales por rol. Soporta filtros opcionales: `?rol=ADMIN|OPERATOR`, `?activo=true|false`, `?buscar=texto` (nombre o email).
+// @Tags         Usuarios (Admin)
+// @Produce      json
+// @Security     BearerAuth
+// @Param        rol     query string  false "Filtrar por rol: ADMIN o OPERATOR"
+// @Param        activo  query boolean false "Filtrar por estado: true o false"
+// @Param        buscar  query string  false "Buscar por nombre o email (case-insensitive)"
+// @Success      200 {object} ports.ListaUsuariosResult
+// @Failure      401 {object} map[string]string
+// @Failure      403 {object} map[string]string
+// @Router       /users [get]
 func (h *UserHandler) ListarUsuarios(c *gin.Context) {
 	orgID := extraerOrgID(c)
 	solicitanteID := extraerUserID(c)
@@ -73,7 +94,20 @@ func (h *UserHandler) ListarUsuarios(c *gin.Context) {
 // ==========================================
 
 // CrearUsuario crea un nuevo usuario en la organización del admin autenticado.
-// Devuelve la contraseña temporal en la respuesta (Plan A, sin SMTP).
+//
+// @Summary      Crear usuario
+// @Description  Crea un nuevo usuario con contraseña temporal generada automáticamente. La respuesta incluye `contrasenaTemp` (solo en este momento, nunca más). El usuario deberá cambiarla en su primer login. No se envian emails (Plan A).
+// @Tags         Usuarios (Admin)
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        body body ports.CrearUsuarioInput true "Datos del nuevo usuario"
+// @Success      201 {object} ports.CrearUsuarioResult
+// @Failure      400 {object} map[string]string "Datos inválidos"
+// @Failure      401 {object} map[string]string
+// @Failure      403 {object} map[string]string
+// @Failure      409 {object} map[string]string "Email o username ya registrado"
+// @Router       /users [post]
 func (h *UserHandler) CrearUsuario(c *gin.Context) {
 	var input ports.CrearUsuarioInput
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -101,6 +135,19 @@ func (h *UserHandler) CrearUsuario(c *gin.Context) {
 // ==========================================
 
 // ObtenerUsuario devuelve el perfil completo de un usuario con sus instancias asignadas.
+//
+// @Summary      Obtener usuario por ID
+// @Description  Devuelve el perfil detallado del usuario incluyendo sus instancias Proxmox permitidas (`instanciasPermitidas`). Solo devuelve usuarios de la misma organización del admin.
+// @Tags         Usuarios (Admin)
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id path string true "UUID del usuario"
+// @Success      200 {object} ports.UsuarioDetalleDTO
+// @Failure      400 {object} map[string]string "UUID inválido"
+// @Failure      401 {object} map[string]string
+// @Failure      403 {object} map[string]string
+// @Failure      404 {object} map[string]string "Usuario no encontrado"
+// @Router       /users/{id} [get]
 func (h *UserHandler) ObtenerUsuario(c *gin.Context) {
 	id, ok := parsearUUID(c, "id")
 	if !ok {
@@ -124,7 +171,22 @@ func (h *UserHandler) ObtenerUsuario(c *gin.Context) {
 // ==========================================
 
 // ActualizarUsuario actualiza parcialmente los datos de un usuario.
-// Solo actualiza los campos presentes en el body (semántica PATCH).
+//
+// @Summary      Actualizar usuario
+// @Description  Actualiza parcialmente los datos de un usuario. Solo se modifican los campos presentes en el body (semántica PATCH). Campos posibles: `nombreCompleto`, `emailUsuario`, `rol`, `activo`.
+// @Tags         Usuarios (Admin)
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id   path string true "UUID del usuario"
+// @Param        body body ports.ActualizarUsuarioInput true "Campos a actualizar"
+// @Success      200 {object} ports.UsuarioResumenDTO
+// @Failure      400 {object} map[string]string "Datos inválidos"
+// @Failure      401 {object} map[string]string
+// @Failure      403 {object} map[string]string
+// @Failure      404 {object} map[string]string
+// @Failure      409 {object} map[string]string "Email ya registrado"
+// @Router       /users/{id} [put]
 func (h *UserHandler) ActualizarUsuario(c *gin.Context) {
 	id, ok := parsearUUID(c, "id")
 	if !ok {
@@ -157,6 +219,19 @@ func (h *UserHandler) ActualizarUsuario(c *gin.Context) {
 // ==========================================
 
 // EliminarUsuario realiza un soft-delete del usuario y cierra todas sus sesiones.
+//
+// @Summary      Eliminar usuario (soft-delete)
+// @Description  Marca al usuario como inactivo (`activo=false`) sin borrarlo físicamente, e invalida todas sus sesiones activas. Un admin no puede eliminarse a sí mismo.
+// @Tags         Usuarios (Admin)
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id path string true "UUID del usuario"
+// @Success      204 "Sin contenido"
+// @Failure      400 {object} map[string]string "No puede eliminarse a sí mismo"
+// @Failure      401 {object} map[string]string
+// @Failure      403 {object} map[string]string
+// @Failure      404 {object} map[string]string
+// @Router       /users/{id} [delete]
 func (h *UserHandler) EliminarUsuario(c *gin.Context) {
 	id, ok := parsearUUID(c, "id")
 	if !ok {
@@ -193,6 +268,21 @@ type asignarPermisosRequest struct {
 }
 
 // AsignarPermisos reemplaza todos los permisos de instancia de un usuario operador.
+//
+// @Summary      Asignar instancias Proxmox al usuario
+// @Description  Reemplaza atómicamente todos los permisos de instancia del usuario. Envía un array de VMIDs: `{"vmids": [100, 102]}`. Para quitar todos los permisos, enviar un array vacío: `{"vmids": []}`.
+// @Tags         Usuarios (Admin)
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id   path string true "UUID del usuario"
+// @Param        body body asignarPermisosRequest true "Lista de VMIDs a asignar"
+// @Success      204 "Sin contenido"
+// @Failure      400 {object} map[string]string
+// @Failure      401 {object} map[string]string
+// @Failure      403 {object} map[string]string
+// @Failure      404 {object} map[string]string
+// @Router       /users/{id}/instances [put]
 func (h *UserHandler) AsignarPermisos(c *gin.Context) {
 	id, ok := parsearUUID(c, "id")
 	if !ok {
@@ -224,7 +314,21 @@ func (h *UserHandler) AsignarPermisos(c *gin.Context) {
 // ==========================================
 
 // ListarActividad devuelve el historial de acciones auditadas de un usuario.
-// Query params: ?accion=START|STOP|..., ?desde=2026-01-01, ?hasta=2026-12-31
+//
+// @Summary      Actividad auditada del usuario
+// @Description  Devuelve hasta 100 registros de auditoría del usuario, ordenados del más reciente al más antiguo. Soporta filtros: `?accion=START|STOP|...`, `?desde=2026-01-01`, `?hasta=2026-12-31`.
+// @Tags         Usuarios (Admin)
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id     path  string false "UUID del usuario"
+// @Param        accion query string false "Filtrar por tipo de acción"
+// @Param        desde  query string false "Fecha desde (YYYY-MM-DD)"
+// @Param        hasta  query string false "Fecha hasta (YYYY-MM-DD)"
+// @Success      200 {array} ports.ActividadDTO
+// @Failure      401 {object} map[string]string
+// @Failure      403 {object} map[string]string
+// @Failure      404 {object} map[string]string
+// @Router       /users/{id}/activity [get]
 func (h *UserHandler) ListarActividad(c *gin.Context) {
 	id, ok := parsearUUID(c, "id")
 	if !ok {
@@ -262,6 +366,18 @@ func (h *UserHandler) ListarActividad(c *gin.Context) {
 // ==========================================
 
 // ResetearTotp invalida el 2FA del usuario, forzando revinculación en el próximo login.
+//
+// @Summary      Admin: resetear 2FA del usuario
+// @Description  Invalida el secreto TOTP del usuario. En su próximo login deberá escanear un nuevo QR para vincular 2FA. También invalida todas sus sesiones activas.
+// @Tags         Usuarios (Admin)
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id path string true "UUID del usuario"
+// @Success      200 {object} map[string]string
+// @Failure      401 {object} map[string]string
+// @Failure      403 {object} map[string]string
+// @Failure      404 {object} map[string]string
+// @Router       /users/{id}/2fa/reset [post]
 func (h *UserHandler) ResetearTotp(c *gin.Context) {
 	id, ok := parsearUUID(c, "id")
 	if !ok {
@@ -286,6 +402,18 @@ func (h *UserHandler) ResetearTotp(c *gin.Context) {
 // ==========================================
 
 // ResetearContrasena genera una nueva contraseña temporal para el usuario.
+//
+// @Summary      Admin: resetear contraseña del usuario
+// @Description  Genera una nueva contraseña temporal segura y la aplica. Devuelve `contrasenaTemp` (solo en esta respuesta). El usuario deberá cambiarla en su próximo acceso. Invalida todas sus sesiones.
+// @Tags         Usuarios (Admin)
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id path string true "UUID del usuario"
+// @Success      200 {object} map[string]string
+// @Failure      401 {object} map[string]string
+// @Failure      403 {object} map[string]string
+// @Failure      404 {object} map[string]string
+// @Router       /users/{id}/password/reset [post]
 func (h *UserHandler) ResetearContrasena(c *gin.Context) {
 	id, ok := parsearUUID(c, "id")
 	if !ok {
