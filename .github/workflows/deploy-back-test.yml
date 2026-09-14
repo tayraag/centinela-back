@@ -25,7 +25,8 @@ jobs:
       - name: Deploy to CT 102 (PRUEBAS)
         run: |
           set -e
-          sudo pct push 102 /tmp/centinela-api /opt/centinela-api/centinela-api
+          sudo pct push 102 /tmp/centinela-api /tmp/centinela-api.new
+          sudo pct exec 102 -- mv -f /tmp/centinela-api.new /opt/centinela-api/centinela-api
           sudo pct exec 102 -- chmod 755 /opt/centinela-api/centinela-api
           sudo pct exec 102 -- systemctl restart centinela-api
           sleep 2
