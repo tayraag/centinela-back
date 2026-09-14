@@ -39,25 +39,19 @@ type LoginRequest struct {
 // @Produce      json
 // @Param        body body LoginRequest true "Credenciales de acceso"
 // @Success      200 {object} ports.LoginResult
-// @Failure      400 {object} map[string]string "Formato de petición inválido"
-// @Failure      401 {object} map[string]string "Credenciales incorrectas"
+// @Failure      400 {object} ErrorResponse "Formato de petición inválido"
+// @Failure      401 {object} ErrorResponse "Credenciales incorrectas"
 // @Router       /auth/login [post]
 func (h *AuthHandler) Login(c *gin.Context) {
 	var req LoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"errorCode": "INVALID_REQUEST",
-			"message":   "El formato de la petición es incorrecto. Se requieren email y contrasena.",
-		})
+		SendError(c, http.StatusBadRequest, "INVALID_REQUEST", "El formato de la petición es incorrecto. Se requieren email y contrasena.")
 		return
 	}
 
 	result, err := h.service.Login(c.Request.Context(), req.Email, req.Contrasena)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"errorCode": "AUTH_FAILED",
-			"message":   err.Error(),
-		})
+		SendError(c, http.StatusUnauthorized, "AUTH_FAILED", err.Error())
 		return
 	}
 
@@ -76,26 +70,20 @@ func (h *AuthHandler) Login(c *gin.Context) {
 // @Produce      json
 // @Security     BearerPreAuth
 // @Success      200 {object} ports.QRResult
-// @Failure      400 {object} map[string]string "TOTP ya vinculado o error interno"
-// @Failure      401 {object} map[string]string "Token pre-auth inválido o expirado"
+// @Failure      400 {object} ErrorResponse "TOTP ya vinculado o error interno"
+// @Failure      401 {object} ErrorResponse "Token pre-auth inválido o expirado"
 // @Router       /auth/2fa/qr [get]
 func (h *AuthHandler) ObtenerQR(c *gin.Context) {
 	jti, _ := c.Get(middleware.ContextKeyJTI)
 	jtiStr, ok := jti.(string)
 	if !ok || jtiStr == "" {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"errorCode": "INTERNAL_ERROR",
-			"message":   "No se pudo obtener el identificador de sesión.",
-		})
+		SendError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "No se pudo obtener el identificador de sesión.")
 		return
 	}
 
 	result, err := h.service.ObtenerQRParaVinculacion(c.Request.Context(), jtiStr)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"errorCode": "QR_ERROR",
-			"message":   err.Error(),
-		})
+		SendError(c, http.StatusBadRequest, "QR_ERROR", err.Error())
 		return
 	}
 
@@ -121,35 +109,26 @@ type verificarTotpRequest struct {
 // @Security     BearerPreAuth
 // @Param        body body verificarTotpRequest true "Código TOTP de 6 dígitos"
 // @Success      200 {object} ports.TokenResult
-// @Failure      400 {object} map[string]string "Código inválido (no tiene 6 dígitos)"
-// @Failure      401 {object} map[string]string "Código TOTP incorrecto"
+// @Failure      400 {object} ErrorResponse "Código inválido (no tiene 6 dígitos)"
+// @Failure      401 {object} ErrorResponse "Código TOTP incorrecto"
 // @Router       /auth/2fa/verify [post]
 func (h *AuthHandler) VerificarTotp(c *gin.Context) {
 	var req verificarTotpRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"errorCode": "INVALID_REQUEST",
-			"message":   "El código TOTP debe tener exactamente 6 dígitos.",
-		})
+		SendError(c, http.StatusBadRequest, "INVALID_REQUEST", "El código TOTP debe tener exactamente 6 dígitos.")
 		return
 	}
 
 	jti, _ := c.Get(middleware.ContextKeyJTI)
 	jtiStr, ok := jti.(string)
 	if !ok || jtiStr == "" {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"errorCode": "INTERNAL_ERROR",
-			"message":   "No se pudo obtener el identificador de sesión.",
-		})
+		SendError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "No se pudo obtener el identificador de sesión.")
 		return
 	}
 
 	result, err := h.service.VerificarTotp(c.Request.Context(), jtiStr, req.Codigo)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"errorCode": "TOTP_FAILED",
-			"message":   err.Error(),
-		})
+		SendError(c, http.StatusUnauthorized, "TOTP_FAILED", err.Error())
 		return
 	}
 
@@ -174,25 +153,19 @@ type refreshRequest struct {
 // @Produce      json
 // @Param        body body refreshRequest true "Refresh token"
 // @Success      200 {object} ports.TokenResult
-// @Failure      400 {object} map[string]string "Body inválido"
-// @Failure      401 {object} map[string]string "Refresh token inválido o expirado"
+// @Failure      400 {object} ErrorResponse "Body inválido"
+// @Failure      401 {object} ErrorResponse "Refresh token inválido o expirado"
 // @Router       /auth/refresh [post]
 func (h *AuthHandler) RefrescarToken(c *gin.Context) {
 	var req refreshRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"errorCode": "INVALID_REQUEST",
-			"message":   "Se requiere el campo refreshToken.",
-		})
+		SendError(c, http.StatusBadRequest, "INVALID_REQUEST", "Se requiere el campo refreshToken.")
 		return
 	}
 
 	result, err := h.service.RefrescarToken(c.Request.Context(), req.RefreshToken)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"errorCode": "REFRESH_FAILED",
-			"message":   err.Error(),
-		})
+		SendError(c, http.StatusUnauthorized, "REFRESH_FAILED", err.Error())
 		return
 	}
 
@@ -218,44 +191,32 @@ type relinkRequest struct {
 // @Security     BearerAuth
 // @Param        body body relinkRequest true "UUID del usuario a resetear"
 // @Success      204 "Sin contenido"
-// @Failure      400 {object} map[string]string "UUID inválido"
-// @Failure      401 {object} map[string]string "No autenticado"
-// @Failure      403 {object} map[string]string "Sin permisos o reset fallido"
+// @Failure      400 {object} ErrorResponse "UUID inválido"
+// @Failure      401 {object} ErrorResponse "No autenticado"
+// @Failure      403 {object} ErrorResponse "Sin permisos o reset fallido"
 // @Router       /auth/2fa/relink [post]
 func (h *AuthHandler) SolicitarRevinculacion(c *gin.Context) {
 	var req relinkRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"errorCode": "INVALID_REQUEST",
-			"message":   "Se requiere un usuarioId válido (UUID).",
-		})
+		SendError(c, http.StatusBadRequest, "INVALID_REQUEST", "Se requiere un usuarioId válido (UUID).")
 		return
 	}
 
 	targetID, err := uuid.Parse(req.UsuarioID)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"errorCode": "INVALID_UUID",
-			"message":   "El usuarioId no es un UUID válido.",
-		})
+		SendError(c, http.StatusBadRequest, "INVALID_UUID", "El usuarioId no es un UUID válido.")
 		return
 	}
 
 	jti, _ := c.Get(middleware.ContextKeyJTI)
 	jtiStr, ok := jti.(string)
 	if !ok || jtiStr == "" {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"errorCode": "INTERNAL_ERROR",
-			"message":   "No se pudo obtener el identificador de sesión.",
-		})
+		SendError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "No se pudo obtener el identificador de sesión.")
 		return
 	}
 
 	if err := h.service.SolicitarRevinculacion(c.Request.Context(), jtiStr, targetID); err != nil {
-		c.JSON(http.StatusForbidden, gin.H{
-			"errorCode": "RELINK_FAILED",
-			"message":   err.Error(),
-		})
+		SendError(c, http.StatusForbidden, "RELINK_FAILED", err.Error())
 		return
 	}
 

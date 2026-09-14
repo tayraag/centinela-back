@@ -80,10 +80,7 @@ func (h *UserHandler) ListarUsuarios(c *gin.Context) {
 
 	resultado, err := h.service.ListarUsuarios(c.Request.Context(), orgID, solicitanteID, filtros)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"errorCode": "INTERNAL_ERROR",
-			"message":   "Error al listar usuarios.",
-		})
+		SendError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Error al listar usuarios.")
 		return
 	}
 	c.JSON(http.StatusOK, resultado)
@@ -103,28 +100,22 @@ func (h *UserHandler) ListarUsuarios(c *gin.Context) {
 // @Security     BearerAuth
 // @Param        body body ports.CrearUsuarioInput true "Datos del nuevo usuario"
 // @Success      201 {object} ports.CrearUsuarioResult
-// @Failure      400 {object} map[string]string "Datos inválidos"
+// @Failure      400 {object} ErrorResponse "Datos inválidos"
 // @Failure      401 {object} map[string]string
 // @Failure      403 {object} map[string]string
-// @Failure      409 {object} map[string]string "Email o username ya registrado"
+// @Failure      409 {object} ErrorResponse "Email o username ya registrado"
 // @Router       /users [post]
 func (h *UserHandler) CrearUsuario(c *gin.Context) {
 	var input ports.CrearUsuarioInput
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"errorCode": "INVALID_REQUEST",
-			"message":   "Datos inválidos: se requieren nombreCompleto, nombreUsuario, emailUsuario y rol (ADMIN|OPERATOR).",
-		})
+		SendError(c, http.StatusBadRequest, "INVALID_REQUEST", "Datos inválidos: se requieren nombreCompleto, nombreUsuario, emailUsuario y rol (ADMIN|OPERATOR).")
 		return
 	}
 
 	orgID := extraerOrgID(c)
 	resultado, err := h.service.CrearUsuario(c.Request.Context(), orgID, input)
 	if err != nil {
-		c.JSON(http.StatusConflict, gin.H{
-			"errorCode": "USER_CONFLICT",
-			"message":   err.Error(),
-		})
+		SendError(c, http.StatusConflict, "USER_CONFLICT", err.Error())
 		return
 	}
 	c.JSON(http.StatusCreated, resultado)
@@ -143,10 +134,10 @@ func (h *UserHandler) CrearUsuario(c *gin.Context) {
 // @Security     BearerAuth
 // @Param        id path string true "UUID del usuario"
 // @Success      200 {object} ports.UsuarioDetalleDTO
-// @Failure      400 {object} map[string]string "UUID inválido"
+// @Failure      400 {object} ErrorResponse "UUID inválido"
 // @Failure      401 {object} map[string]string
 // @Failure      403 {object} map[string]string
-// @Failure      404 {object} map[string]string "Usuario no encontrado"
+// @Failure      404 {object} ErrorResponse "Usuario no encontrado"
 // @Router       /users/{id} [get]
 func (h *UserHandler) ObtenerUsuario(c *gin.Context) {
 	id, ok := parsearUUID(c, "id")
@@ -157,10 +148,7 @@ func (h *UserHandler) ObtenerUsuario(c *gin.Context) {
 
 	detalle, err := h.service.ObtenerUsuario(c.Request.Context(), id, orgID)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{
-			"errorCode": "USER_NOT_FOUND",
-			"message":   "Usuario no encontrado.",
-		})
+		SendError(c, http.StatusNotFound, "USER_NOT_FOUND", "Usuario no encontrado.")
 		return
 	}
 	c.JSON(http.StatusOK, detalle)
@@ -181,11 +169,11 @@ func (h *UserHandler) ObtenerUsuario(c *gin.Context) {
 // @Param        id   path string true "UUID del usuario"
 // @Param        body body ports.ActualizarUsuarioInput true "Campos a actualizar"
 // @Success      200 {object} ports.UsuarioResumenDTO
-// @Failure      400 {object} map[string]string "Datos inválidos"
+// @Failure      400 {object} ErrorResponse "Datos inválidos"
 // @Failure      401 {object} map[string]string
 // @Failure      403 {object} map[string]string
 // @Failure      404 {object} map[string]string
-// @Failure      409 {object} map[string]string "Email ya registrado"
+// @Failure      409 {object} ErrorResponse "Email ya registrado"
 // @Router       /users/{id} [put]
 func (h *UserHandler) ActualizarUsuario(c *gin.Context) {
 	id, ok := parsearUUID(c, "id")
@@ -196,19 +184,13 @@ func (h *UserHandler) ActualizarUsuario(c *gin.Context) {
 
 	var input ports.ActualizarUsuarioInput
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"errorCode": "INVALID_REQUEST",
-			"message":   "Datos de actualización inválidos.",
-		})
+		SendError(c, http.StatusBadRequest, "INVALID_REQUEST", "Datos de actualización inválidos.")
 		return
 	}
 
 	usuario, err := h.service.ActualizarUsuario(c.Request.Context(), id, orgID, input)
 	if err != nil {
-		c.JSON(http.StatusConflict, gin.H{
-			"errorCode": "UPDATE_CONFLICT",
-			"message":   err.Error(),
-		})
+		SendError(c, http.StatusConflict, "UPDATE_CONFLICT", err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, usuario)
@@ -227,7 +209,7 @@ func (h *UserHandler) ActualizarUsuario(c *gin.Context) {
 // @Security     BearerAuth
 // @Param        id path string true "UUID del usuario"
 // @Success      204 "Sin contenido"
-// @Failure      400 {object} map[string]string "No puede eliminarse a sí mismo"
+// @Failure      400 {object} ErrorResponse "No puede eliminarse a sí mismo"
 // @Failure      401 {object} map[string]string
 // @Failure      403 {object} map[string]string
 // @Failure      404 {object} map[string]string
@@ -241,18 +223,12 @@ func (h *UserHandler) EliminarUsuario(c *gin.Context) {
 
 	// Prevenir que el admin se elimine a sí mismo
 	if id == extraerUserID(c) {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"errorCode": "SELF_DELETE_NOT_ALLOWED",
-			"message":   "No puede eliminar su propio usuario.",
-		})
+		SendError(c, http.StatusBadRequest, "SELF_DELETE_NOT_ALLOWED", "No puede eliminar su propio usuario.")
 		return
 	}
 
 	if err := h.service.EliminarUsuario(c.Request.Context(), id, orgID); err != nil {
-		c.JSON(http.StatusNotFound, gin.H{
-			"errorCode": "USER_NOT_FOUND",
-			"message":   "Usuario no encontrado.",
-		})
+		SendError(c, http.StatusNotFound, "USER_NOT_FOUND", "Usuario no encontrado.")
 		return
 	}
 	c.Status(http.StatusNoContent)
@@ -292,18 +268,12 @@ func (h *UserHandler) AsignarPermisos(c *gin.Context) {
 
 	var req asignarPermisosRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"errorCode": "INVALID_REQUEST",
-			"message":   "Se requiere el campo vmids (array de enteros).",
-		})
+		SendError(c, http.StatusBadRequest, "INVALID_REQUEST", "Se requiere el campo vmids (array de enteros).")
 		return
 	}
 
 	if err := h.service.AsignarPermisos(c.Request.Context(), id, orgID, req.Vmids); err != nil {
-		c.JSON(http.StatusNotFound, gin.H{
-			"errorCode": "USER_NOT_FOUND",
-			"message":   err.Error(),
-		})
+		SendError(c, http.StatusNotFound, "USER_NOT_FOUND", err.Error())
 		return
 	}
 	c.Status(http.StatusNoContent)
@@ -352,10 +322,7 @@ func (h *UserHandler) ListarActividad(c *gin.Context) {
 
 	actividad, err := h.service.ListarActividad(c.Request.Context(), id, orgID, filtros)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{
-			"errorCode": "USER_NOT_FOUND",
-			"message":   err.Error(),
-		})
+		SendError(c, http.StatusNotFound, "USER_NOT_FOUND", err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, actividad)
@@ -386,10 +353,7 @@ func (h *UserHandler) ResetearTotp(c *gin.Context) {
 	orgID := extraerOrgID(c)
 
 	if err := h.service.ResetearTotp(c.Request.Context(), id, orgID); err != nil {
-		c.JSON(http.StatusNotFound, gin.H{
-			"errorCode": "USER_NOT_FOUND",
-			"message":   err.Error(),
-		})
+		SendError(c, http.StatusNotFound, "USER_NOT_FOUND", err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
@@ -423,10 +387,7 @@ func (h *UserHandler) ResetearContrasena(c *gin.Context) {
 
 	contrasenaTemp, err := h.service.ResetearContrasena(c.Request.Context(), id, orgID)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{
-			"errorCode": "USER_NOT_FOUND",
-			"message":   err.Error(),
-		})
+		SendError(c, http.StatusNotFound, "USER_NOT_FOUND", err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
@@ -458,10 +419,7 @@ func extraerUserID(c *gin.Context) uuid.UUID {
 func parsearUUID(c *gin.Context, param string) (uuid.UUID, bool) {
 	id, err := uuid.Parse(c.Param(param))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"errorCode": "INVALID_UUID",
-			"message":   "El identificador proporcionado no es válido.",
-		})
+		SendError(c, http.StatusBadRequest, "INVALID_UUID", "El identificador proporcionado no es válido.")
 		return uuid.Nil, false
 	}
 	return id, true

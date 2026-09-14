@@ -1,5 +1,14 @@
 basePath: /api
 definitions:
+  http.ErrorResponse:
+    properties:
+      errorCode:
+        example: INVALID_REQUEST
+        type: string
+      message:
+        example: Mensaje descriptivo del error.
+        type: string
+    type: object
   http.LoginRequest:
     properties:
       contrasena:
@@ -270,9 +279,7 @@ paths:
         "400":
           description: Contraseña actual incorrecta o nueva igual a la actual
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/http.ErrorResponse'
         "401":
           description: Unauthorized
           schema:
@@ -340,9 +347,7 @@ paths:
         "409":
           description: Email ya en uso
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/http.ErrorResponse'
       security:
       - BearerAuth: []
       summary: Actualizar mi perfil
@@ -381,15 +386,11 @@ paths:
         "400":
           description: TOTP ya vinculado o error interno
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/http.ErrorResponse'
         "401":
           description: Token pre-auth inválido o expirado
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/http.ErrorResponse'
       security:
       - BearerPreAuth: []
       summary: Obtener QR de vinculación 2FA
@@ -416,21 +417,15 @@ paths:
         "400":
           description: UUID inválido
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/http.ErrorResponse'
         "401":
           description: No autenticado
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/http.ErrorResponse'
         "403":
           description: Sin permisos o reset fallido
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/http.ErrorResponse'
       security:
       - BearerAuth: []
       summary: 'Admin: resetear 2FA de un usuario (endpoint legacy)'
@@ -460,15 +455,11 @@ paths:
         "400":
           description: Código inválido (no tiene 6 dígitos)
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/http.ErrorResponse'
         "401":
           description: Código TOTP incorrecto
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/http.ErrorResponse'
       security:
       - BearerPreAuth: []
       summary: Verificar código TOTP → obtener tokens definitivos
@@ -499,15 +490,11 @@ paths:
         "400":
           description: Formato de petición inválido
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/http.ErrorResponse'
         "401":
           description: Credenciales incorrectas
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/http.ErrorResponse'
       summary: Login de usuario
       tags:
       - Autenticación
@@ -534,15 +521,11 @@ paths:
         "400":
           description: Body inválido
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/http.ErrorResponse'
         "401":
           description: Refresh token inválido o expirado
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/http.ErrorResponse'
       summary: Renovar access token
       tags:
       - Autenticación
@@ -641,9 +624,7 @@ paths:
         "400":
           description: Datos inválidos
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/http.ErrorResponse'
         "401":
           description: Unauthorized
           schema:
@@ -659,9 +640,7 @@ paths:
         "409":
           description: Email o username ya registrado
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/http.ErrorResponse'
       security:
       - BearerAuth: []
       summary: Crear usuario
@@ -685,9 +664,7 @@ paths:
         "400":
           description: No puede eliminarse a sí mismo
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/http.ErrorResponse'
         "401":
           description: Unauthorized
           schema:
@@ -731,9 +708,7 @@ paths:
         "400":
           description: UUID inválido
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/http.ErrorResponse'
         "401":
           description: Unauthorized
           schema:
@@ -749,9 +724,7 @@ paths:
         "404":
           description: Usuario no encontrado
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/http.ErrorResponse'
       security:
       - BearerAuth: []
       summary: Obtener usuario por ID
@@ -785,9 +758,7 @@ paths:
         "400":
           description: Datos inválidos
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/http.ErrorResponse'
         "401":
           description: Unauthorized
           schema:
@@ -809,9 +780,7 @@ paths:
         "409":
           description: Email ya registrado
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/http.ErrorResponse'
       security:
       - BearerAuth: []
       summary: Actualizar usuario

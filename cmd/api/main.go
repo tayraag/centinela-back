@@ -40,20 +40,11 @@ func main() {
 	log.SetFlags(log.Ltime)
 	log.Println("🚀 Iniciando El Centinela Backend...")
 
-	// 1. Cargar variables de entorno desde .env
-	// Intentamos múltiples rutas para que funcione tanto con `go run ./cmd/api/`
-	// (desde la raíz) como ejecutando el binario desde cualquier directorio.
-	envCargado := false
-
-	for _, ruta := range []string{".env", "cmd/api/.env"} {
-		if err := godotenv.Load(ruta); err == nil {
-			log.Printf("ℹ️  Variables de entorno cargadas desde: %s", ruta)
-			envCargado = true
-			break
-		}
-	}
-	if !envCargado {
-		log.Println("ℹ️  Sin .env, usando variables de entorno del sistema")
+	// 1. Cargar variables de entorno desde .env en la raíz
+	if err := godotenv.Load(); err != nil {
+		log.Println("⚠️  Sin .env en la raíz, usando variables de entorno del sistema")
+	} else {
+		log.Println("✅ Variables de entorno cargadas desde el archivo .env")
 	}
 
 	// 2. Inicializar la base de datos

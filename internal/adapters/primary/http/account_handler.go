@@ -39,10 +39,7 @@ func (h *AccountHandler) ObtenerPerfil(c *gin.Context) {
 
 	perfil, err := h.service.ObtenerPerfil(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"errorCode": "INTERNAL_ERROR",
-			"message":   "Error al obtener el perfil.",
-		})
+		SendError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Error al obtener el perfil.")
 		return
 	}
 	c.JSON(http.StatusOK, perfil)
@@ -64,25 +61,19 @@ func (h *AccountHandler) ObtenerPerfil(c *gin.Context) {
 // @Success      200 {object} ports.UsuarioResumenDTO
 // @Failure      400 {object} map[string]string
 // @Failure      401 {object} map[string]string
-// @Failure      409 {object} map[string]string "Email ya en uso"
+// @Failure      409 {object} ErrorResponse "Email ya en uso"
 // @Router       /account/profile [put]
 func (h *AccountHandler) ActualizarPerfil(c *gin.Context) {
 	var input ports.ActualizarPerfilInput
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"errorCode": "INVALID_REQUEST",
-			"message":   "Datos de perfil inválidos.",
-		})
+		SendError(c, http.StatusBadRequest, "INVALID_REQUEST", "Datos de perfil inválidos.")
 		return
 	}
 
 	userID := extraerUserID(c)
 	usuario, err := h.service.ActualizarPerfil(c.Request.Context(), userID, input)
 	if err != nil {
-		c.JSON(http.StatusConflict, gin.H{
-			"errorCode": "PROFILE_UPDATE_CONFLICT",
-			"message":   err.Error(),
-		})
+		SendError(c, http.StatusConflict, "PROFILE_UPDATE_CONFLICT", err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, usuario)
@@ -102,25 +93,19 @@ func (h *AccountHandler) ActualizarPerfil(c *gin.Context) {
 // @Security     BearerAuth
 // @Param        body body ports.CambiarContrasenaInput true "Contraseña actual y nueva"
 // @Success      200 {object} map[string]string
-// @Failure      400 {object} map[string]string "Contraseña actual incorrecta o nueva igual a la actual"
+// @Failure      400 {object} ErrorResponse "Contraseña actual incorrecta o nueva igual a la actual"
 // @Failure      401 {object} map[string]string
 // @Router       /account/password [put]
 func (h *AccountHandler) CambiarContrasena(c *gin.Context) {
 	var input ports.CambiarContrasenaInput
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"errorCode": "INVALID_REQUEST",
-			"message":   "Se requieren contrasenaActual y contrasenaNueva (mínimo 8 caracteres).",
-		})
+		SendError(c, http.StatusBadRequest, "INVALID_REQUEST", "Se requieren contrasenaActual y contrasenaNueva (mínimo 8 caracteres).")
 		return
 	}
 
 	userID := extraerUserID(c)
 	if err := h.service.CambiarContrasena(c.Request.Context(), userID, input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"errorCode": "PASSWORD_CHANGE_FAILED",
-			"message":   err.Error(),
-		})
+		SendError(c, http.StatusBadRequest, "PASSWORD_CHANGE_FAILED", err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
@@ -145,10 +130,7 @@ func (h *AccountHandler) CerrarSesionActual(c *gin.Context) {
 	jti, _ := c.Get(middleware.ContextKeyJTI)
 	jtiStr, _ := jti.(string)
 	if jtiStr == "" {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"errorCode": "INTERNAL_ERROR",
-			"message":   "No se pudo identificar la sesión actual.",
-		})
+		SendError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "No se pudo identificar la sesión actual.")
 		return
 	}
 

@@ -59,10 +59,7 @@ const docTemplate = `{
                     "400": {
                         "description": "Contraseña actual incorrecta o nueva igual a la actual",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
+                            "$ref": "#/definitions/http.ErrorResponse"
                         }
                     },
                     "401": {
@@ -166,10 +163,7 @@ const docTemplate = `{
                     "409": {
                         "description": "Email ya en uso",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
+                            "$ref": "#/definitions/http.ErrorResponse"
                         }
                     }
                 }
@@ -228,19 +222,13 @@ const docTemplate = `{
                     "400": {
                         "description": "TOTP ya vinculado o error interno",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
+                            "$ref": "#/definitions/http.ErrorResponse"
                         }
                     },
                     "401": {
                         "description": "Token pre-auth inválido o expirado",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
+                            "$ref": "#/definitions/http.ErrorResponse"
                         }
                     }
                 }
@@ -282,28 +270,19 @@ const docTemplate = `{
                     "400": {
                         "description": "UUID inválido",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
+                            "$ref": "#/definitions/http.ErrorResponse"
                         }
                     },
                     "401": {
                         "description": "No autenticado",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
+                            "$ref": "#/definitions/http.ErrorResponse"
                         }
                     },
                     "403": {
                         "description": "Sin permisos o reset fallido",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
+                            "$ref": "#/definitions/http.ErrorResponse"
                         }
                     }
                 }
@@ -348,19 +327,13 @@ const docTemplate = `{
                     "400": {
                         "description": "Código inválido (no tiene 6 dígitos)",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
+                            "$ref": "#/definitions/http.ErrorResponse"
                         }
                     },
                     "401": {
                         "description": "Código TOTP incorrecto",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
+                            "$ref": "#/definitions/http.ErrorResponse"
                         }
                     }
                 }
@@ -400,19 +373,13 @@ const docTemplate = `{
                     "400": {
                         "description": "Formato de petición inválido",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
+                            "$ref": "#/definitions/http.ErrorResponse"
                         }
                     },
                     "401": {
                         "description": "Credenciales incorrectas",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
+                            "$ref": "#/definitions/http.ErrorResponse"
                         }
                     }
                 }
@@ -452,19 +419,13 @@ const docTemplate = `{
                     "400": {
                         "description": "Body inválido",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
+                            "$ref": "#/definitions/http.ErrorResponse"
                         }
                     },
                     "401": {
                         "description": "Refresh token inválido o expirado",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
+                            "$ref": "#/definitions/http.ErrorResponse"
                         }
                     }
                 }
@@ -616,10 +577,7 @@ const docTemplate = `{
                     "400": {
                         "description": "Datos inválidos",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
+                            "$ref": "#/definitions/http.ErrorResponse"
                         }
                     },
                     "401": {
@@ -643,10 +601,7 @@ const docTemplate = `{
                     "409": {
                         "description": "Email o username ya registrado",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
+                            "$ref": "#/definitions/http.ErrorResponse"
                         }
                     }
                 }
@@ -686,10 +641,7 @@ const docTemplate = `{
                     "400": {
                         "description": "UUID inválido",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
+                            "$ref": "#/definitions/http.ErrorResponse"
                         }
                     },
                     "401": {
@@ -713,10 +665,7 @@ const docTemplate = `{
                     "404": {
                         "description": "Usuario no encontrado",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
+                            "$ref": "#/definitions/http.ErrorResponse"
                         }
                     }
                 }
@@ -766,10 +715,7 @@ const docTemplate = `{
                     "400": {
                         "description": "Datos inválidos",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
+                            "$ref": "#/definitions/http.ErrorResponse"
                         }
                     },
                     "401": {
@@ -802,10 +748,7 @@ const docTemplate = `{
                     "409": {
                         "description": "Email ya registrado",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
+                            "$ref": "#/definitions/http.ErrorResponse"
                         }
                     }
                 }
@@ -840,10 +783,7 @@ const docTemplate = `{
                     "400": {
                         "description": "No puede eliminarse a sí mismo",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
+                            "$ref": "#/definitions/http.ErrorResponse"
                         }
                     },
                     "401": {
@@ -1166,6 +1106,19 @@ const docTemplate = `{
         }
     },
     "definitions": {
+        "http.ErrorResponse": {
+            "type": "object",
+            "properties": {
+                "errorCode": {
+                    "type": "string",
+                    "example": "INVALID_REQUEST"
+                },
+                "message": {
+                    "type": "string",
+                    "example": "Mensaje descriptivo del error."
+                }
+            }
+        },
         "http.LoginRequest": {
             "type": "object",
             "required": [

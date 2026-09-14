@@ -20,12 +20,11 @@ func main() {
 	log.Println("🌱 El Centinela — Script de Seed (Primer Usuario Admin)")
 	log.Println("─────────────────────────────────────────────────────────")
 
-	// 1. Cargar variables de entorno
-	if err := godotenv.Load("cmd/api/.env"); err != nil {
-		log.Println("ℹ️  .env no encontrado en cmd/api/.env, probando raíz del proyecto...")
-		if err2 := godotenv.Load(); err2 != nil {
-			log.Println("⚠️  Sin .env, usando variables del sistema")
-		}
+	// 1. Cargar variables de entorno desde la raíz
+	if err := godotenv.Load(); err != nil {
+		log.Println("⚠️  Sin archivo .env, usando variables del sistema")
+	} else {
+		log.Println("✅ Variables de entorno cargadas")
 	}
 
 	// 2. Conectar a la base de datos
