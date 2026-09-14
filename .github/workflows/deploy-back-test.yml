@@ -1,0 +1,29 @@
+name: deploy-back-test
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy-test:
+    name: Build & deploy to PRUEBAS (CT 102)
+    runs-on: self-hosted
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build API
+        run: |
+          /opt/go/bin/go build -trimpath -o /tmp/centinela-api ./cmd/api
+          test -x /tmp/centinela-api
+
+      - name: Deploy to CT 102 (PRUEBAS)
+        run: |
+          set -e
+          sudo pct push 102 /tmp/centinela-api /opt/centinela-api/centinela-api
+          sudo pct exec 102 -- chmod 755 /opt/centinela-api/centinela-api
+          sudo pct exec 102 -- systemctl restart centinela-api
+          sleep 2
+          sudo pct exec 102 -- systemctl is-active centinela-api
+          sudo pct exec 102 -- systemctl --no-pager --lines=3 status centinela-api
