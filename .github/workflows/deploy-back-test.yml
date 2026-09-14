@@ -29,6 +29,11 @@ jobs:
           sudo pct exec 102 -- mv -f /tmp/centinela-api.new /opt/centinela-api/centinela-api
           sudo pct exec 102 -- chmod 755 /opt/centinela-api/centinela-api
           sudo pct exec 102 -- systemctl restart centinela-api
-          sleep 2
-          sudo pct exec 102 -- systemctl is-active centinela-api
-          sudo pct exec 102 -- systemctl --no-pager --lines=3 status centinela-api
+          for i in $(seq 1 30); do
+            STATE=$(sudo pct exec 102 -- systemctl is-active centinela-api 2>/dev/null || true)
+            echo "estado: $STATE (intento $i)"
+            [ "$STATE" = "active" ] && break
+            sleep 1
+          done
+          [ "$STATE" = "active" ] || { sudo pct exec 102 -- systemctl status --no-pager --lines=20 centinela-api || true; exit 1; }
+          sudo pct exec 102 -- systemctl --no-pager --lines=5 status centinela-api
