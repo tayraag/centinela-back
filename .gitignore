@@ -16,6 +16,8 @@ vendor/
 .env
 .env.local
 .env.*
+!.env.example
+
 
 # Archivos específicos del Sistema Operativo y Editores
 .idea/
