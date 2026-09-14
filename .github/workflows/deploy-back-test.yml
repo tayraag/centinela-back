@@ -17,6 +17,7 @@ jobs:
         env:
           GOPATH: /opt/go/gopath
           GOMODCACHE: /opt/go/gopath/pkg/mod
+          GOCACHE: /opt/go/gopath/.cache/go-build
         run: |
           /opt/go/bin/go build -trimpath -o /tmp/centinela-api ./cmd/api
           test -x /tmp/centinela-api
