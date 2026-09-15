@@ -331,6 +331,46 @@ func (s *authServiceImpl) RefrescarToken(ctx context.Context, refreshToken strin
 }
 
 // ==========================================
+// CerrarSesion
+// ==========================================
+
+// CerrarSesion invalida la sesión asociada al refresh token recibido (logout).
+// Se apoya en el refresh token para que el cierre funcione aunque el access
+// token ya haya expirado.
+func (s *authServiceImpl) CerrarSesion(ctx context.Context, refreshToken string) error {
+	jwtSecret := os.Getenv("JWT_SECRET")
+
+	log.Printf("[AUTH] logout attempt")
+
+	// 1. Verificar firma y claims del refresh token
+	claims, err := crypto.VerificarToken(refreshToken, jwtSecret)
+	if err != nil {
+		log.Printf("[AUTH] logout failed | reason=invalid_token")
+		return fmt.Errorf("refresh token inválido: %w", err)
+	}
+	if claims.Tipo != crypto.TipoRefresh {
+		log.Printf("[AUTH] logout failed | reason=wrong_type | got=%s", claims.Tipo)
+		return fmt.Errorf("token no es del tipo refresh")
+	}
+
+	// 2. Buscar la sesión asociada al JTI
+	sesion, err := s.repo.BuscarSesionPorJTI(ctx, claims.ID)
+	if err != nil {
+		log.Printf("[AUTH] logout failed | reason=session_not_found")
+		return fmt.Errorf("sesión no válida o ya cerrada: %w", err)
+	}
+
+	// 3. Desactivarla
+	sesion.Activa = false
+	if err := s.repo.ActualizarSesion(ctx, sesion); err != nil {
+		return fmt.Errorf("no se pudo cerrar la sesión: %w", err)
+	}
+
+	log.Printf("[AUTH] logout done | jti=%s", claims.ID)
+	return nil
+}
+
+// ==========================================
 // SolicitarRevinculacion
 // ==========================================
 

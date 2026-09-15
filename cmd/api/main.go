@@ -84,6 +84,7 @@ func main() {
 			// Rutas públicas (sin autenticación)
 			auth.POST("/login", authHandler.Login)
 			auth.POST("/refresh", authHandler.RefrescarToken)
+			auth.POST("/logout", authHandler.Logout)
 
 			// Rutas del flujo 2FA (requieren JWT temporal pre-auth)
 			twoFA := auth.Group("/2fa", middleware.RequirePreAuth())
