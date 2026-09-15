@@ -18,8 +18,13 @@ import (
 func InitDB() (*gorm.DB, error) {
 	dsn := os.Getenv("DB_DSN")
 	if dsn == "" {
+		// Compatibilidad con la configuracion anterior del despliegue, que
+		// definia la cadena de conexion en DATABASE_URL.
+		dsn = os.Getenv("DATABASE_URL")
+	}
+	if dsn == "" {
 		dsn = "host=localhost user=centinela_admin password=centinela_password dbname=centinela_db port=5433 sslmode=disable TimeZone=America/Argentina/Buenos_Aires"
-		log.Println("⚠️  DB_DSN no encontrado en el entorno, usando configuración local por defecto")
+		log.Println("⚠️  Ni DB_DSN ni DATABASE_URL en el entorno: usando configuración local por defecto")
 	}
 
 	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
