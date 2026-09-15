@@ -27,7 +27,7 @@ func NewAuthHandler(service ports.AuthService) *AuthHandler {
 // loginRequest define el body esperado para el endpoint de login.
 type LoginRequest struct {
 	Email      string `json:"email" binding:"required,email"`
-	Contrasena string `json:"contrasena" binding:"required"`
+	Contrasena string `json:"password" binding:"required"`
 }
 
 // Login valida credenciales de email+contraseña y retorna un JWT temporal pre-2FA.

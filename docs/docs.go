@@ -1122,14 +1122,14 @@ const docTemplate = `{
         "http.LoginRequest": {
             "type": "object",
             "required": [
-                "contrasena",
-                "email"
+                "email",
+                "password"
             ],
             "properties": {
-                "contrasena": {
+                "email": {
                     "type": "string"
                 },
-                "email": {
+                "password": {
                     "type": "string"
                 }
             }

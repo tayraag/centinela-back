@@ -11,13 +11,13 @@ definitions:
     type: object
   http.LoginRequest:
     properties:
-      contrasena:
-        type: string
       email:
         type: string
+      password:
+        type: string
     required:
-    - contrasena
     - email
+    - password
     type: object
   http.asignarPermisosRequest:
     properties:
