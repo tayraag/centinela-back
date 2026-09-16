@@ -1,9 +1,10 @@
 name: deploy-back-test
 
+# El servidor de PRUEBAS debe reflejar SIEMPRE y SOLO main.
+# Por eso no hay workflow_dispatch: el unico disparador posible es un push a main.
 on:
   push:
     branches: [main]
-  workflow_dispatch:
 
 jobs:
   deploy-test:
@@ -13,13 +14,28 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Guard - el deploy solo puede ser main
+        run: |
+          if [ "${GITHUB_REF}" != "refs/heads/main" ]; then
+            echo "::error::Este workflow solo despliega refs/heads/main. Ref recibido: ${GITHUB_REF}"
+            exit 1
+          fi
+          echo "OK: desplegando ${GITHUB_REF} (${GITHUB_SHA})"
+
       - name: Build API
         env:
           GOPATH: /opt/go/gopath
           GOMODCACHE: /opt/go/gopath/pkg/mod
           GOCACHE: /opt/go/gopath/.cache/go-build
         run: |
-          /opt/go/bin/go build -trimpath -o /tmp/centinela-api ./cmd/api
+          # Stamp de build para GET /api/version (verificacion de integridad de infra).
+          # OJO: el valor va entre comillas simples porque la hora trae un espacio.
+          BUILD_COMMIT="$(git rev-parse --short HEAD)"
+          BUILD_TIME="$(TZ=America/Argentina/Buenos_Aires date '+%d/%m/%Y %H:%M' 2>/dev/null || date -u '+%d/%m/%Y %H:%M UTC')"
+          echo "build: commit=$BUILD_COMMIT time=$BUILD_TIME"
+          /opt/go/bin/go build -trimpath \
+            -ldflags "-X main.buildCommit=$BUILD_COMMIT -X 'main.buildTime=$BUILD_TIME'" \
+            -o /tmp/centinela-api ./cmd/api
           test -x /tmp/centinela-api
 
       - name: Deploy to CT 102 (PRUEBAS)
