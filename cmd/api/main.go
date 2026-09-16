@@ -101,6 +101,9 @@ func main() {
 		// Lo agrega INFRAESTRUCTURA; NO es parte del producto.
 		// PARA BORRARLO: eliminar este bloque, las variables buildCommit/buildTime
 		// de arriba, y los -ldflags del workflow .github/workflows/deploy-back-test.yml
+		//
+		// Prueba de deploy: este comentario se agrego a proposito para verificar que
+		// un push a main del back actualiza la linea "Back:" del login.
 		// ========================================================================
 		api.GET("/version", func(c *gin.Context) {
 			c.JSON(http.StatusOK, gin.H{
