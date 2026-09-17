@@ -24,7 +24,12 @@ import (
 //
 // @contact.name   Soporte El Centinela
 //
-// @host           localhost:8080
+// A proposito NO se declara @host. Si se declara (por ejemplo "localhost:8080"),
+// Swagger UI manda los "Try it out" a ESE host, es decir a la maquina de quien
+// esta mirando la documentacion, y todos los endpoints fallan por error de red.
+// Sin @host, Swagger resuelve contra el origen que sirve la doc: funciona igual
+// desde localhost, desde el FQDN y detras del proxy, sin config por entorno.
+//
 // @BasePath       /api
 //
 // @securityDefinitions.apikey BearerAuth
