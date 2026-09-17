@@ -418,11 +418,3 @@ func obtenerRefreshTTL() time.Duration {
 	return time.Duration(days) * 24 * time.Hour
 }
 
-func (s *authServiceImpl) CerrarSesion(ctx context.Context, jti string) error {
-	sesion, err := s.repo.BuscarSesionPorJTI(ctx, jti)
-	if err != nil {
-		return err
-	}
-	sesion.Activa = false
-	return s.repo.ActualizarSesion(ctx, sesion)
-}

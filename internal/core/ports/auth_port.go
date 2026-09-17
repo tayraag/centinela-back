@@ -83,7 +83,6 @@ type AuthService interface {
 
 	// RefrescarToken valida un refresh token y emite un nuevo access token.
 	RefrescarToken(ctx context.Context, refreshToken string) (*TokenResult, error)
-	CerrarSesion(ctx context.Context, jti string) error
 
 	// CerrarSesion invalida la sesión asociada a un refresh token (logout).
 	CerrarSesion(ctx context.Context, refreshToken string) error

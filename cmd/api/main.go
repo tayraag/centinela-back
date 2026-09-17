@@ -180,8 +180,7 @@ func main() {
 			account.PUT("/profile", accountHandler.ActualizarPerfil)
 			account.PUT("/password", accountHandler.CambiarContrasena)
 
-			auth.POST("/logout", middleware.RequireAuth(), authHandler.Logout)
-			account.DELETE("/sessions/current", accountHandler.CerrarSesionActual)
+						account.DELETE("/sessions/current", accountHandler.CerrarSesionActual)
 		}
 		// ==========================================
 		// Swagger UI (solo en desarrollo)
