@@ -2,6 +2,7 @@ package http
 
 import (
 	"net/http"
+	"strings"
 
 	"el-centinela/internal/adapters/primary/http/middleware"
 	"el-centinela/internal/core/ports"
@@ -48,6 +49,9 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		SendError(c, http.StatusBadRequest, "INVALID_REQUEST", "El formato de la petición es incorrecto. Se requieren email y password.")
 		return
 	}
+
+	// Normalizar email a minúsculas para login case-insensitive
+	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
 
 	result, err := h.service.Login(c.Request.Context(), req.Email, req.Contrasena)
 	if err != nil {

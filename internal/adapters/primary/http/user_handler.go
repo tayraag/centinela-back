@@ -2,6 +2,7 @@ package http
 
 import (
 	"net/http"
+	"strings"
 	"time"
 
 	"el-centinela/internal/adapters/primary/http/middleware"
@@ -112,6 +113,9 @@ func (h *UserHandler) CrearUsuario(c *gin.Context) {
 		return
 	}
 
+	// Normalizar email a minúsculas
+	input.EmailUsuario = strings.ToLower(strings.TrimSpace(input.EmailUsuario))
+
 	orgID := extraerOrgID(c)
 	resultado, err := h.service.CrearUsuario(c.Request.Context(), orgID, input)
 	if err != nil {
@@ -186,6 +190,10 @@ func (h *UserHandler) ActualizarUsuario(c *gin.Context) {
 	if err := c.ShouldBindJSON(&input); err != nil {
 		SendError(c, http.StatusBadRequest, "INVALID_REQUEST", "Datos de actualización inválidos.")
 		return
+	}
+
+	if input.EmailUsuario != "" {
+		input.EmailUsuario = strings.ToLower(strings.TrimSpace(input.EmailUsuario))
 	}
 
 	usuario, err := h.service.ActualizarUsuario(c.Request.Context(), id, orgID, input)

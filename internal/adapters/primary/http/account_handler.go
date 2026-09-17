@@ -2,6 +2,7 @@ package http
 
 import (
 	"net/http"
+	"strings"
 
 	"el-centinela/internal/core/ports"
 
@@ -67,6 +68,10 @@ func (h *AccountHandler) ActualizarPerfil(c *gin.Context) {
 	if err := c.ShouldBindJSON(&input); err != nil {
 		SendError(c, http.StatusBadRequest, "INVALID_REQUEST", "Datos de perfil inválidos.")
 		return
+	}
+
+	if input.EmailUsuario != "" {
+		input.EmailUsuario = strings.ToLower(strings.TrimSpace(input.EmailUsuario))
 	}
 
 	userID := extraerUserID(c)
