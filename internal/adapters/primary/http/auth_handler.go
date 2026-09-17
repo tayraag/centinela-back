@@ -259,10 +259,3 @@ func (h *AuthHandler) SolicitarRevinculacion(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
-	err := h.service.CerrarSesion(c.Request.Context(), jti.(string))
-	if err != nil {
-		SendError(c, http.StatusInternalServerError, "LOGOUT_ERROR", "Error al cerrar la sesión.")
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"message": "Sesión cerrada correctamente."})
-}
