@@ -19,6 +19,13 @@ definitions:
     - email
     - password
     type: object
+  http.LogoutRequest:
+    properties:
+      refreshToken:
+        type: string
+    required:
+    - refreshToken
+    type: object
   http.asignarPermisosRequest:
     properties:
       vmids:
@@ -352,24 +359,6 @@ paths:
       summary: Actualizar mi perfil
       tags:
       - Mi cuenta
-  /account/sessions/current:
-    delete:
-      description: Invalida la sesión actual del usuario. El frontend debe descartar
-        los tokens. Responde 204 sin body.
-      responses:
-        "204":
-          description: Sin contenido
-        "401":
-          description: Unauthorized
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-      security:
-      - BearerAuth: []
-      summary: Cerrar sesión (logout)
-      tags:
-      - Mi cuenta
   /auth/2fa/qr:
     get:
       description: Genera el secreto TOTP, lo cifra y devuelve el QR en Base64 más
@@ -499,22 +488,31 @@ paths:
       - Autenticación
   /auth/logout:
     post:
-      description: Invalida el token actual en la base de datos para que no pueda
-        volver a ser usado.
+      consumes:
+      - application/json
+      description: Invalida la sesión asociada al refresh token recibido. El frontend
+        debe descartar los tokens locales. Responde 204 sin body.
+      parameters:
+      - description: Token de refresco de la sesión a cerrar
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/http.LogoutRequest'
+      produces:
+      - application/json
       responses:
-        "200":
-          description: Sesión cerrada correctamente
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-        "401":
-          description: No autorizado
+        "204":
+          description: Sin contenido
+        "400":
+          description: Formato de petición inválido
           schema:
             $ref: '#/definitions/http.ErrorResponse'
-      security:
-      - BearerAuth: []
-      summary: Cerrar sesión
+        "401":
+          description: Refresh token inválido o sesión ya cerrada
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+      summary: Cerrar sesión (logout)
       tags:
       - Autenticación
   /auth/refresh:

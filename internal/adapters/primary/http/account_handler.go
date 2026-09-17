@@ -115,29 +115,3 @@ func (h *AccountHandler) CambiarContrasena(c *gin.Context) {
 
 // ==========================================
 // DELETE /api/account/sessions/current
-// ==========================================
-
-// CerrarSesionActual cierra la sesión actual del usuario (equivale a logout).
-//
-// @Summary      Cerrar sesión (logout)
-// @Description  Invalida la sesión actual del usuario. El frontend debe descartar los tokens. Responde 204 sin body.
-// @Tags         Mi cuenta
-// @Security     BearerAuth
-// @Success      204 "Sin contenido"
-// @Failure      401 {object} map[string]string
-// @Router       /account/sessions/current [delete]
-func (h *AccountHandler) CerrarSesionActual(c *gin.Context) {
-	jti, _ := c.Get(middleware.ContextKeyJTI)
-	jtiStr, _ := jti.(string)
-	if jtiStr == "" {
-		SendError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "No se pudo identificar la sesión actual.")
-		return
-	}
-
-	// Nota: el cierre de sesión individual por JTI se delega al AuthRepository
-	// a través del UserService. Por simplicidad y para no crear una dependencia
-	// circular, el handler accede directamente al servicio que expone el método.
-	// En este caso se invalida via el servicio de usuario aprovechando que
-	// CerrarSesionActual es logout: redirigir al front al login tras 204.
-	c.Status(http.StatusNoContent)
-}

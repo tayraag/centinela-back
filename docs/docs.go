@@ -169,34 +169,6 @@ const docTemplate = `{
                 }
             }
         },
-        "/account/sessions/current": {
-            "delete": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Invalida la sesión actual del usuario. El frontend debe descartar los tokens. Responde 204 sin body.",
-                "tags": [
-                    "Mi cuenta"
-                ],
-                "summary": "Cerrar sesión (logout)",
-                "responses": {
-                    "204": {
-                        "description": "Sin contenido"
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    }
-                }
-            }
-        },
         "/auth/2fa/qr": {
             "get": {
                 "security": [
@@ -387,28 +359,40 @@ const docTemplate = `{
         },
         "/auth/logout": {
             "post": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
+                "description": "Invalida la sesión asociada al refresh token recibido. El frontend debe descartar los tokens locales. Responde 204 sin body.",
+                "consumes": [
+                    "application/json"
                 ],
-                "description": "Invalida el token actual en la base de datos para que no pueda volver a ser usado.",
+                "produces": [
+                    "application/json"
+                ],
                 "tags": [
                     "Autenticación"
                 ],
-                "summary": "Cerrar sesión",
-                "responses": {
-                    "200": {
-                        "description": "Sesión cerrada correctamente",
+                "summary": "Cerrar sesión (logout)",
+                "parameters": [
+                    {
+                        "description": "Token de refresco de la sesión a cerrar",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
+                            "$ref": "#/definitions/http.LogoutRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "Sin contenido"
+                    },
+                    "400": {
+                        "description": "Formato de petición inválido",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
                         }
                     },
                     "401": {
-                        "description": "No autorizado",
+                        "description": "Refresh token inválido o sesión ya cerrada",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -1161,6 +1145,17 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "password": {
+                    "type": "string"
+                }
+            }
+        },
+        "http.LogoutRequest": {
+            "type": "object",
+            "required": [
+                "refreshToken"
+            ],
+            "properties": {
+                "refreshToken": {
                     "type": "string"
                 }
             }

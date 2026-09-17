@@ -180,8 +180,7 @@ func main() {
 			account.PUT("/profile", accountHandler.ActualizarPerfil)
 			account.PUT("/password", accountHandler.CambiarContrasena)
 
-						account.DELETE("/sessions/current", accountHandler.CerrarSesionActual)
-		}
+					}
 		// ==========================================
 		// Swagger UI (solo en desarrollo)
 		// ==========================================
