@@ -83,16 +83,16 @@ func (s *userServiceImpl) CrearUsuario(ctx context.Context, orgID uuid.UUID, inp
 
 	// 4. Construir y persistir el usuario
 	nuevoUsuario := &domain.Usuario{
-		ID:                uuid.New(),
-		OrganizacionID:    orgID,
-		NombreCompleto:    input.NombreCompleto,
-		NombreUsuario:     input.NombreUsuario,
-		EmailUsuario:      input.EmailUsuario,
-		ContrasenaHash:    hash,
-		Rol:               input.Rol,
-		Activo:            true,
-		CambioContrasena:  true,  // Obligado a cambiarla en el primer login
-		TotpVinculado:     false, // Deberá configurar 2FA en el primer login
+		ID:               uuid.New(),
+		OrganizacionID:   orgID,
+		NombreCompleto:   input.NombreCompleto,
+		NombreUsuario:    input.NombreUsuario,
+		EmailUsuario:     input.EmailUsuario,
+		ContrasenaHash:   hash,
+		Rol:              input.Rol,
+		Activo:           true,
+		CambioContrasena: true,  // Obligado a cambiarla en el primer login
+		TotpVinculado:    false, // Deberá configurar 2FA en el primer login
 	}
 
 	if err := s.userRepo.CrearUsuario(ctx, nuevoUsuario); err != nil {
@@ -377,18 +377,18 @@ func (s *userServiceImpl) construirDetalleDTO(ctx context.Context, usuario *doma
 	}
 
 	return &ports.UsuarioDetalleDTO{
-		ID:                       usuario.ID,
-		NombreCompleto:           usuario.NombreCompleto,
-		NombreUsuario:            usuario.NombreUsuario,
-		EmailUsuario:             usuario.EmailUsuario,
-		OrganizacionID:           usuario.OrganizacionID,
-		Rol:                      usuario.Rol,
-		Activo:                   usuario.Activo,
-		TotpVinculado:            usuario.TotpVinculado,
+		ID:                        usuario.ID,
+		NombreCompleto:            usuario.NombreCompleto,
+		NombreUsuario:             usuario.NombreUsuario,
+		EmailUsuario:              usuario.EmailUsuario,
+		OrganizacionID:            usuario.OrganizacionID,
+		Rol:                       usuario.Rol,
+		Activo:                    usuario.Activo,
+		TotpVinculado:             usuario.TotpVinculado,
 		CambioContrasenaRequerido: usuario.CambioContrasena,
-		FechaCreacion:            usuario.FechaCreacion,
-		FechaUltimoAcceso:        usuario.FechaUltimoAcceso,
-		InstanciasPermitidas:     vmids,
+		FechaCreacion:             usuario.FechaCreacion,
+		FechaUltimoAcceso:         usuario.FechaUltimoAcceso,
+		InstanciasPermitidas:      vmids,
 	}, nil
 }
 

@@ -222,3 +222,26 @@ func (h *AuthHandler) SolicitarRevinculacion(c *gin.Context) {
 
 	c.Status(http.StatusNoContent)
 }
+
+// Logout cierra la sesión actual invalidando el JTI.
+//
+// @Summary      Cerrar sesión
+// @Description  Invalida el token actual en la base de datos para que no pueda volver a ser usado.
+// @Tags         Autenticación
+// @Security     BearerAuth
+// @Success      200 {object} map[string]string "Sesión cerrada correctamente"
+// @Failure      401 {object} ErrorResponse "No autorizado"
+// @Router       /auth/logout [post]
+func (h *AuthHandler) Logout(c *gin.Context) {
+	jti, exists := c.Get(middleware.ContextKeyJTI)
+	if !exists {
+		SendError(c, http.StatusUnauthorized, "MISSING_JTI", "No se pudo identificar la sesión.")
+		return
+	}
+	err := h.service.CerrarSesion(c.Request.Context(), jti.(string))
+	if err != nil {
+		SendError(c, http.StatusInternalServerError, "LOGOUT_ERROR", "Error al cerrar la sesión.")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "Sesión cerrada correctamente."})
+}

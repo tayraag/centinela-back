@@ -14,14 +14,14 @@ import (
 
 // LoginResult es la respuesta del paso de login (pre-2FA).
 type LoginResult struct {
-	JWTTemporal              string `json:"jwtTemporal"`
-	TotpVinculado            bool   `json:"totpVinculado"`
-	CambioContrasenaRequerido bool  `json:"cambioContrasenaRequerido"` // true si el usuario debe cambiar su contraseña antes de continuar
+	JWTTemporal               string `json:"jwtTemporal"`
+	TotpVinculado             bool   `json:"totpVinculado"`
+	CambioContrasenaRequerido bool   `json:"cambioContrasenaRequerido"` // true si el usuario debe cambiar su contraseña antes de continuar
 }
 
 // QRResult contiene el QR de vinculación TOTP y el secreto manual como fallback.
 type QRResult struct {
-	QRBase64     string `json:"qrBase64"`
+	QRBase64      string `json:"qrBase64"`
 	SecretoManual string `json:"secretoManual"` // Solo retornado en la vinculación inicial, nunca más
 }
 
@@ -83,6 +83,7 @@ type AuthService interface {
 
 	// RefrescarToken valida un refresh token y emite un nuevo access token.
 	RefrescarToken(ctx context.Context, refreshToken string) (*TokenResult, error)
+	CerrarSesion(ctx context.Context, jti string) error
 
 	// SolicitarRevinculacion (solo ADMIN) resetea el 2FA de un usuario objetivo.
 	SolicitarRevinculacion(ctx context.Context, jtiAdmin string, targetUsuarioID uuid.UUID) error

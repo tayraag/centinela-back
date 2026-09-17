@@ -90,8 +90,8 @@ func (s *authServiceImpl) Login(ctx context.Context, email, contrasena string) (
 	log.Printf("[AUTH] login ok | user=%s | rol=%s | totp_vinculado=%v | cambio_pass=%v | jti=%s", usuario.EmailUsuario, usuario.Rol, usuario.TotpVinculado, usuario.CambioContrasena, jti)
 
 	return &ports.LoginResult{
-		JWTTemporal:              jwtTemporal,
-		TotpVinculado:            usuario.TotpVinculado,
+		JWTTemporal:               jwtTemporal,
+		TotpVinculado:             usuario.TotpVinculado,
 		CambioContrasenaRequerido: usuario.CambioContrasena,
 	}, nil
 }
@@ -376,4 +376,13 @@ func obtenerRefreshTTL() time.Duration {
 		}
 	}
 	return time.Duration(days) * 24 * time.Hour
+}
+
+func (s *authServiceImpl) CerrarSesion(ctx context.Context, jti string) error {
+	sesion, err := s.repo.BuscarSesionPorJTI(ctx, jti)
+	if err != nil {
+		return err
+	}
+	sesion.Activa = false
+	return s.repo.ActualizarSesion(ctx, sesion)
 }

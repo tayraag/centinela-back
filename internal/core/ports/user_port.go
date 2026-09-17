@@ -61,37 +61,37 @@ type ListaUsuariosResult struct {
 
 // UsuarioDetalleDTO es la proyección completa del usuario incluyendo instancias permitidas.
 type UsuarioDetalleDTO struct {
-	ID                       uuid.UUID  `json:"id"`
-	NombreCompleto           string     `json:"nombreCompleto"`
-	NombreUsuario            string     `json:"nombreUsuario"`
-	EmailUsuario             string     `json:"emailUsuario"`
-	OrganizacionID           uuid.UUID  `json:"organizacionId"`
-	Rol                      string     `json:"rol"`
-	Activo                   bool       `json:"activo"`
-	TotpVinculado            bool       `json:"totpVinculado"`
-	CambioContrasenaRequerido bool      `json:"cambioContrasenaRequerido"`
-	FechaCreacion            time.Time  `json:"fechaCreacion"`
-	FechaUltimoAcceso        *time.Time `json:"fechaUltimoAcceso"`
-	InstanciasPermitidas     []int      `json:"instanciasPermitidas"` // VMIDs de Proxmox
+	ID                        uuid.UUID  `json:"id"`
+	NombreCompleto            string     `json:"nombreCompleto"`
+	NombreUsuario             string     `json:"nombreUsuario"`
+	EmailUsuario              string     `json:"emailUsuario"`
+	OrganizacionID            uuid.UUID  `json:"organizacionId"`
+	Rol                       string     `json:"rol"`
+	Activo                    bool       `json:"activo"`
+	TotpVinculado             bool       `json:"totpVinculado"`
+	CambioContrasenaRequerido bool       `json:"cambioContrasenaRequerido"`
+	FechaCreacion             time.Time  `json:"fechaCreacion"`
+	FechaUltimoAcceso         *time.Time `json:"fechaUltimoAcceso"`
+	InstanciasPermitidas      []int      `json:"instanciasPermitidas"` // VMIDs de Proxmox
 }
 
 // CrearUsuarioResult es la respuesta al crear un usuario exitosamente.
 type CrearUsuarioResult struct {
-	ID            uuid.UUID `json:"id"`
-	Rol           string    `json:"rol"`
-	Activo        bool      `json:"activo"`
-	ContrasenaTemp string   `json:"contrasenaTemp"` // Solo devuelto aquí (Plan A sin SMTP)
+	ID             uuid.UUID `json:"id"`
+	Rol            string    `json:"rol"`
+	Activo         bool      `json:"activo"`
+	ContrasenaTemp string    `json:"contrasenaTemp"` // Solo devuelto aquí (Plan A sin SMTP)
 }
 
 // ActividadDTO proyecta un registro de auditoría para la vista de actividad de un usuario.
 type ActividadDTO struct {
-	ID             uuid.UUID `json:"id"`
-	FechaHora      time.Time `json:"fechaHora"`
-	Accion         string    `json:"accion"`
-	InstanciaID    string    `json:"instanciaId"`
-	InstanciaNombre string   `json:"instanciaNombre"`
-	Resultado      string    `json:"resultado"`
-	Detalles       string    `json:"detalles,omitempty"`
+	ID              uuid.UUID `json:"id"`
+	FechaHora       time.Time `json:"fechaHora"`
+	Accion          string    `json:"accion"`
+	InstanciaID     string    `json:"instanciaId"`
+	InstanciaNombre string    `json:"instanciaNombre"`
+	Resultado       string    `json:"resultado"`
+	Detalles        string    `json:"detalles,omitempty"`
 }
 
 // RolDTO representa un rol disponible en el sistema.
