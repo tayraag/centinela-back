@@ -23,7 +23,6 @@ import (
 //
 // @contact.name   Soporte El Centinela
 //
-// @host           localhost:8080
 // @BasePath       /api
 //
 // @securityDefinitions.apikey BearerAuth
@@ -138,7 +137,7 @@ func main() {
 			account.PUT("/profile", accountHandler.ActualizarPerfil)
 			account.PUT("/password", accountHandler.CambiarContrasena)
 
-			// Logout: cierra la sesión actual
+			auth.POST("/logout", middleware.RequireAuth(), authHandler.Logout)
 			account.DELETE("/sessions/current", accountHandler.CerrarSesionActual)
 		}
 		// ==========================================

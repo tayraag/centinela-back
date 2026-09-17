@@ -243,7 +243,6 @@ definitions:
       totpVinculado:
         type: boolean
     type: object
-host: localhost:8080
 info:
   contact:
     name: Soporte El Centinela
@@ -496,6 +495,26 @@ paths:
           schema:
             $ref: '#/definitions/http.ErrorResponse'
       summary: Login de usuario
+      tags:
+      - Autenticación
+  /auth/logout:
+    post:
+      description: Invalida el token actual en la base de datos para que no pueda
+        volver a ser usado.
+      responses:
+        "200":
+          description: Sesión cerrada correctamente
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: No autorizado
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Cerrar sesión
       tags:
       - Autenticación
   /auth/refresh:
