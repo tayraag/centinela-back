@@ -3,7 +3,6 @@ package http
 import (
 	"net/http"
 
-	"el-centinela/internal/adapters/primary/http/middleware"
 	"el-centinela/internal/core/ports"
 
 	"github.com/gin-gonic/gin"
