@@ -45,7 +45,7 @@ type LoginRequest struct {
 func (h *AuthHandler) Login(c *gin.Context) {
 	var req LoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		SendError(c, http.StatusBadRequest, "INVALID_REQUEST", "El formato de la petición es incorrecto. Se requieren email y contrasena.")
+		SendError(c, http.StatusBadRequest, "INVALID_REQUEST", "El formato de la petición es incorrecto. Se requieren email y password.")
 		return
 	}
 
@@ -56,6 +56,42 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, result)
+}
+
+// ==========================================
+// POST /api/auth/logout
+// ==========================================
+
+// LogoutRequest define el body esperado para cerrar sesión.
+type LogoutRequest struct {
+	RefreshToken string `json:"refreshToken" binding:"required"`
+}
+
+// Logout invalida la sesión del usuario a partir de su refresh token.
+//
+// @Summary      Cerrar sesión (logout)
+// @Description  Invalida la sesión asociada al refresh token recibido. El frontend debe descartar los tokens locales. Responde 204 sin body.
+// @Tags         Autenticación
+// @Accept       json
+// @Produce      json
+// @Param        body body LogoutRequest true "Token de refresco de la sesión a cerrar"
+// @Success      204 "Sin contenido"
+// @Failure      400 {object} ErrorResponse "Formato de petición inválido"
+// @Failure      401 {object} ErrorResponse "Refresh token inválido o sesión ya cerrada"
+// @Router       /auth/logout [post]
+func (h *AuthHandler) Logout(c *gin.Context) {
+	var req LogoutRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		SendError(c, http.StatusBadRequest, "INVALID_REQUEST", "El formato de la petición es incorrecto. Se requiere refreshToken.")
+		return
+	}
+
+	if err := h.service.CerrarSesion(c.Request.Context(), req.RefreshToken); err != nil {
+		SendError(c, http.StatusUnauthorized, "AUTH_FAILED", "sesión inválida o ya cerrada")
+		return
+	}
+
+	c.Status(http.StatusNoContent)
 }
 
 // ==========================================

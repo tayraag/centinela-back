@@ -3,6 +3,7 @@ package main
 
 import (
 	"log"
+	"net/http"
 
 	_ "el-centinela/docs"
 	httpHandlers "el-centinela/internal/adapters/primary/http"
@@ -23,6 +24,12 @@ import (
 //
 // @contact.name   Soporte El Centinela
 //
+// A proposito NO se declara @host. Si se declara (por ejemplo "localhost:8080"),
+// Swagger UI manda los "Try it out" a ESE host, es decir a la maquina de quien
+// esta mirando la documentacion, y todos los endpoints fallan por error de red.
+// Sin @host, Swagger resuelve contra el origen que sirve la doc: funciona igual
+// desde localhost, desde el FQDN y detras del proxy, sin config por entorno.
+//
 // @BasePath       /api
 //
 // @securityDefinitions.apikey BearerAuth
@@ -34,6 +41,21 @@ import (
 // @in             header
 // @name           Authorization
 // @description    JWT temporal pre-2FA. Formato: **Bearer &lt;jwtTemporal&gt;**. Obtené el token de `POST /auth/login`.
+
+// ============================================================================
+// VERIFICACION DE INTEGRIDAD DE INFRAESTRUCTURA (TEMPORAL)
+// ----------------------------------------------------------------------------
+// Datos de build que inyecta el workflow de deploy con -ldflags. Alimentan el
+// endpoint GET /api/version, que permite comprobar desde afuera que el deploy
+// del back llego al servidor.
+// Lo agrega INFRAESTRUCTURA para verificar integridad; NO es parte del producto.
+// Se puede borrar sin afectar nada (ver instrucciones en el endpoint /api/version).
+// ============================================================================
+var (
+	buildCommit = "dev"
+	buildTime   = "dev"
+)
+
 func main() {
 	// Configurar logger conciso: solo hora, sin fecha
 	log.SetFlags(log.Ltime)
@@ -75,6 +97,26 @@ func main() {
 	// 7. Definir las rutas
 	api := router.Group("/api")
 	{
+		// ========================================================================
+		// VERIFICACION DE INTEGRIDAD DE INFRAESTRUCTURA (TEMPORAL)
+		// ------------------------------------------------------------------------
+		// Devuelve la version desplegada del back (commit + fecha/hora del build)
+		// para comprobar desde afuera que el deploy llego al servidor:
+		//     curl http://centinela/api/version
+		// Lo agrega INFRAESTRUCTURA; NO es parte del producto.
+		// PARA BORRARLO: eliminar este bloque, las variables buildCommit/buildTime
+		// de arriba, y los -ldflags del workflow .github/workflows/deploy-back-test.yml
+		//
+		// Prueba de deploy: este comentario se agrego a proposito para verificar que
+		// un push a main del back actualiza la linea "Back:" del login.
+		// ========================================================================
+		api.GET("/version", func(c *gin.Context) {
+			c.JSON(http.StatusOK, gin.H{
+				"commit":  buildCommit,
+				"builtAt": buildTime,
+			})
+		})
+
 		// ==========================================
 		// Rutas de Autenticación (RF-01)
 		// ==========================================
@@ -83,6 +125,7 @@ func main() {
 			// Rutas públicas (sin autenticación)
 			auth.POST("/login", authHandler.Login)
 			auth.POST("/refresh", authHandler.RefrescarToken)
+			auth.POST("/logout", authHandler.Logout)
 
 			// Rutas del flujo 2FA (requieren JWT temporal pre-auth)
 			twoFA := auth.Group("/2fa", middleware.RequirePreAuth())

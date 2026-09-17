@@ -85,6 +85,9 @@ type AuthService interface {
 	RefrescarToken(ctx context.Context, refreshToken string) (*TokenResult, error)
 	CerrarSesion(ctx context.Context, jti string) error
 
+	// CerrarSesion invalida la sesión asociada a un refresh token (logout).
+	CerrarSesion(ctx context.Context, refreshToken string) error
+
 	// SolicitarRevinculacion (solo ADMIN) resetea el 2FA de un usuario objetivo.
 	SolicitarRevinculacion(ctx context.Context, jtiAdmin string, targetUsuarioID uuid.UUID) error
 }
