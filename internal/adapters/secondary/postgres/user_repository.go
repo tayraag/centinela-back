@@ -183,8 +183,20 @@ func (r *UserRepository) ReemplazarPermisos(ctx context.Context, usuarioID uuid.
 		if len(vmids) == 0 {
 			return nil
 		}
-		nuevos := make([]domain.PermisoInstancia, len(vmids))
-		for i, vmid := range vmids {
+		
+		// 2.1 Deduplicar vmids en memoria
+		vmidsUnicos := make(map[int]bool)
+		var vmidsFiltrados []int
+		for _, v := range vmids {
+			if !vmidsUnicos[v] {
+				vmidsUnicos[v] = true
+				vmidsFiltrados = append(vmidsFiltrados, v)
+			}
+		}
+
+		// 2.2 Crear los structs a insertar
+		nuevos := make([]domain.PermisoInstancia, len(vmidsFiltrados))
+		for i, vmid := range vmidsFiltrados {
 			nuevos[i] = domain.PermisoInstancia{
 				ID:          uuid.New(),
 				UsuarioID:   usuarioID,
