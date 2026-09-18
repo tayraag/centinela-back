@@ -576,7 +576,7 @@ paths:
       summary: Listar roles disponibles
       tags:
       - Usuarios (Admin)
-  /users:
+  /admin/users:
     get:
       description: 'Devuelve todos los usuarios de la organización del admin autenticado,
         con un resumen (`summary`) de totales por rol. Soporta filtros opcionales:
@@ -663,7 +663,7 @@ paths:
       summary: Crear usuario
       tags:
       - Usuarios (Admin)
-  /users/{id}:
+  /admin/users/{id}:
     delete:
       description: Marca al usuario como inactivo (`activo=false`) sin borrarlo físicamente,
         e invalida todas sus sesiones activas. Un admin no puede eliminarse a sí mismo.
@@ -803,7 +803,7 @@ paths:
       summary: Actualizar usuario
       tags:
       - Usuarios (Admin)
-  /users/{id}/2fa/reset:
+  /admin/users/{id}/2fa/reset:
     post:
       description: Invalida el secreto TOTP del usuario. En su próximo login deberá
         escanear un nuevo QR para vincular 2FA. También invalida todas sus sesiones
@@ -846,7 +846,7 @@ paths:
       summary: 'Admin: resetear 2FA del usuario'
       tags:
       - Usuarios (Admin)
-  /users/{id}/activity:
+  /admin/users/{id}/activity:
     get:
       description: 'Devuelve hasta 100 registros de auditoría del usuario, ordenados
         del más reciente al más antiguo. Soporta filtros: `?accion=START|STOP|...`,
@@ -900,7 +900,7 @@ paths:
       summary: Actividad auditada del usuario
       tags:
       - Usuarios (Admin)
-  /users/{id}/instances:
+  /admin/users/{id}/instances:
     put:
       consumes:
       - application/json
@@ -953,7 +953,7 @@ paths:
       summary: Asignar instancias Proxmox al usuario
       tags:
       - Usuarios (Admin)
-  /users/{id}/password/reset:
+  /admin/users/{id}/password/reset:
     post:
       description: Genera una nueva contraseña temporal segura y la aplica. Devuelve
         `contrasenaTemp` (solo en esta respuesta). El usuario deberá cambiarla en

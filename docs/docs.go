@@ -492,7 +492,7 @@ const docTemplate = `{
                 }
             }
         },
-        "/users": {
+        "/admin/users": {
             "get": {
                 "security": [
                     {
@@ -622,7 +622,7 @@ const docTemplate = `{
                 }
             }
         },
-        "/users/{id}": {
+        "/admin/users/{id}": {
             "get": {
                 "security": [
                     {
@@ -831,7 +831,7 @@ const docTemplate = `{
                 }
             }
         },
-        "/users/{id}/2fa/reset": {
+        "/admin/users/{id}/2fa/reset": {
             "post": {
                 "security": [
                     {
@@ -895,7 +895,7 @@ const docTemplate = `{
                 }
             }
         },
-        "/users/{id}/activity": {
+        "/admin/users/{id}/activity": {
             "get": {
                 "security": [
                     {
@@ -976,7 +976,7 @@ const docTemplate = `{
                 }
             }
         },
-        "/users/{id}/instances": {
+        "/admin/users/{id}/instances": {
             "put": {
                 "security": [
                     {
@@ -1055,7 +1055,7 @@ const docTemplate = `{
                 }
             }
         },
-        "/users/{id}/password/reset": {
+        "/admin/users/{id}/password/reset": {
             "post": {
                 "security": [
                     {
