@@ -65,7 +65,7 @@ func (h *UserHandler) ObtenerRoles(c *gin.Context) {
 // @Success      200 {object} ports.ListaUsuariosResult
 // @Failure      401 {object} map[string]string
 // @Failure      403 {object} map[string]string
-// @Router       /users [get]
+// @Router       /admin/users [get]
 func (h *UserHandler) ListarUsuarios(c *gin.Context) {
 	orgID := extraerOrgID(c)
 	solicitanteID := extraerUserID(c)
@@ -105,7 +105,7 @@ func (h *UserHandler) ListarUsuarios(c *gin.Context) {
 // @Failure      401 {object} map[string]string
 // @Failure      403 {object} map[string]string
 // @Failure      409 {object} ErrorResponse "Email o username ya registrado"
-// @Router       /users [post]
+// @Router       /admin/users [post]
 func (h *UserHandler) CrearUsuario(c *gin.Context) {
 	var input ports.CrearUsuarioInput
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -142,7 +142,7 @@ func (h *UserHandler) CrearUsuario(c *gin.Context) {
 // @Failure      401 {object} map[string]string
 // @Failure      403 {object} map[string]string
 // @Failure      404 {object} ErrorResponse "Usuario no encontrado"
-// @Router       /users/{id} [get]
+// @Router       /admin/users/{id} [get]
 func (h *UserHandler) ObtenerUsuario(c *gin.Context) {
 	id, ok := parsearUUID(c, "id")
 	if !ok {
@@ -178,7 +178,7 @@ func (h *UserHandler) ObtenerUsuario(c *gin.Context) {
 // @Failure      403 {object} map[string]string
 // @Failure      404 {object} map[string]string
 // @Failure      409 {object} ErrorResponse "Email ya registrado"
-// @Router       /users/{id} [put]
+// @Router       /admin/users/{id} [put]
 func (h *UserHandler) ActualizarUsuario(c *gin.Context) {
 	id, ok := parsearUUID(c, "id")
 	if !ok {
@@ -221,7 +221,7 @@ func (h *UserHandler) ActualizarUsuario(c *gin.Context) {
 // @Failure      401 {object} map[string]string
 // @Failure      403 {object} map[string]string
 // @Failure      404 {object} map[string]string
-// @Router       /users/{id} [delete]
+// @Router       /admin/users/{id} [delete]
 func (h *UserHandler) EliminarUsuario(c *gin.Context) {
 	id, ok := parsearUUID(c, "id")
 	if !ok {
@@ -266,7 +266,7 @@ type asignarPermisosRequest struct {
 // @Failure      401 {object} map[string]string
 // @Failure      403 {object} map[string]string
 // @Failure      404 {object} map[string]string
-// @Router       /users/{id}/instances [put]
+// @Router       /admin/users/{id}/instances [put]
 func (h *UserHandler) AsignarPermisos(c *gin.Context) {
 	id, ok := parsearUUID(c, "id")
 	if !ok {
@@ -306,7 +306,7 @@ func (h *UserHandler) AsignarPermisos(c *gin.Context) {
 // @Failure      401 {object} map[string]string
 // @Failure      403 {object} map[string]string
 // @Failure      404 {object} map[string]string
-// @Router       /users/{id}/activity [get]
+// @Router       /admin/users/{id}/activity [get]
 func (h *UserHandler) ListarActividad(c *gin.Context) {
 	id, ok := parsearUUID(c, "id")
 	if !ok {
@@ -352,7 +352,7 @@ func (h *UserHandler) ListarActividad(c *gin.Context) {
 // @Failure      401 {object} map[string]string
 // @Failure      403 {object} map[string]string
 // @Failure      404 {object} map[string]string
-// @Router       /users/{id}/2fa/reset [post]
+// @Router       /admin/users/{id}/2fa/reset [post]
 func (h *UserHandler) ResetearTotp(c *gin.Context) {
 	id, ok := parsearUUID(c, "id")
 	if !ok {
@@ -385,7 +385,7 @@ func (h *UserHandler) ResetearTotp(c *gin.Context) {
 // @Failure      401 {object} map[string]string
 // @Failure      403 {object} map[string]string
 // @Failure      404 {object} map[string]string
-// @Router       /users/{id}/password/reset [post]
+// @Router       /admin/users/{id}/password/reset [post]
 func (h *UserHandler) ResetearContrasena(c *gin.Context) {
 	id, ok := parsearUUID(c, "id")
 	if !ok {
