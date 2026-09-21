@@ -739,9 +739,11 @@ paths:
       - Usuarios (Admin)
   /admin/users/{id}/password/reset:
     post:
-      description: Genera una nueva contraseña temporal segura y la aplica. Devuelve
-        `contrasenaTemp` (solo en esta respuesta). El usuario deberá cambiarla en
-        su próximo acceso. Invalida todas sus sesiones.
+      description: Genera una nueva contraseña temporal segura (12 caracteres, mayúscula,
+        número y carácter especial), la hashea y la persiste. Establece `must_change_password=true`
+        e invalida todas las sesiones activas del usuario. Devuelve `contrasenaTemp`
+        únicamente en esta respuesta — solo su hash queda en base de datos. Requiere
+        rol ADMIN.
       parameters:
       - description: UUID del usuario
         in: path
@@ -764,20 +766,16 @@ paths:
               type: string
             type: object
         "403":
-          description: Forbidden
+          description: OPERATOR recibe 403 Forbidden
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/http.ErrorResponse'
         "404":
-          description: Not Found
+          description: Usuario no encontrado en la organización
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/http.ErrorResponse'
       security:
       - BearerAuth: []
-      summary: Resetear contraseña del usuario
+      summary: Restablecer contraseña (admin)
       tags:
       - Usuarios (Admin)
   /auth/2fa/qr:

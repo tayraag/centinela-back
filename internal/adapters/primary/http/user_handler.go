@@ -375,16 +375,16 @@ func (h *UserHandler) ResetearTotp(c *gin.Context) {
 
 // ResetearContrasena genera una nueva contraseña temporal para el usuario.
 //
-// @Summary      Resetear contraseña del usuario
-// @Description  Genera una nueva contraseña temporal segura y la aplica. Devuelve `contrasenaTemp` (solo en esta respuesta). El usuario deberá cambiarla en su próximo acceso. Invalida todas sus sesiones.
+// @Summary      Restablecer contraseña (admin)
+// @Description  Genera una nueva contraseña temporal segura (12 caracteres, mayúscula, número y carácter especial), la hashea y la persiste. Establece `must_change_password=true` e invalida todas las sesiones activas del usuario. Devuelve `contrasenaTemp` únicamente en esta respuesta — solo su hash queda en base de datos. Requiere rol ADMIN.
 // @Tags         Usuarios (Admin)
 // @Produce      json
 // @Security     BearerAuth
 // @Param        id path string true "UUID del usuario"
 // @Success      200 {object} map[string]string
 // @Failure      401 {object} map[string]string
-// @Failure      403 {object} map[string]string
-// @Failure      404 {object} map[string]string
+// @Failure      403 {object} ErrorResponse "OPERATOR recibe 403 Forbidden"
+// @Failure      404 {object} ErrorResponse "Usuario no encontrado en la organización"
 // @Router       /admin/users/{id}/password/reset [post]
 func (h *UserHandler) ResetearContrasena(c *gin.Context) {
 	id, ok := parsearUUID(c, "id")
