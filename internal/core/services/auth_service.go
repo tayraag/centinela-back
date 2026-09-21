@@ -279,6 +279,19 @@ func (s *authServiceImpl) VerificarTotp(ctx context.Context, jtiTemporal, codigo
 		return nil, fmt.Errorf("error al guardar sesión de refresh: %w", err)
 	}
 
+	// 8. Guardar sesión de access en BD (para poder revocar el token individualmente)
+	sesionAccess := &domain.SesionActiva{
+		ID:              uuid.New(),
+		UsuarioID:       usuario.ID,
+		JtiToken:        jtiAccess,
+		Activa:          true,
+		Estado2fa:       true,
+		FechaExpiracion: time.Now().Add(accessTTL),
+	}
+	if err := s.repo.GuardarSesion(ctx, sesionAccess); err != nil {
+		return nil, fmt.Errorf("error al guardar sesión de access: %w", err)
+	}
+
 	log.Printf("[AUTH] tokens issued | user=%s | access_jti=%s | refresh_jti=%s | access_ttl=%s", usuario.EmailUsuario, jtiAccess, jtiRefresh, accessTTL)
 
 	return &ports.TokenResult{
@@ -346,6 +359,19 @@ func (s *authServiceImpl) RefrescarToken(ctx context.Context, refreshToken strin
 		return nil, fmt.Errorf("error al emitir access token: %w", err)
 	}
 
+	// 5. Guardar sesión de access en BD (para poder revocar el token individualmente)
+	sesionAccess := &domain.SesionActiva{
+		ID:              uuid.New(),
+		UsuarioID:       usuario.ID,
+		JtiToken:        jtiAccess,
+		Activa:          true,
+		Estado2fa:       true,
+		FechaExpiracion: time.Now().Add(accessTTL),
+	}
+	if err := s.repo.GuardarSesion(ctx, sesionAccess); err != nil {
+		return nil, fmt.Errorf("error al guardar sesión de access: %w", err)
+	}
+
 	log.Printf("[AUTH] refresh ok | user=%s | new_access_jti=%s", usuario.EmailUsuario, jtiAccess)
 
 	return &ports.TokenResult{
@@ -359,10 +385,9 @@ func (s *authServiceImpl) RefrescarToken(ctx context.Context, refreshToken strin
 // CerrarSesion
 // ==========================================
 
-// CerrarSesion invalida la sesión asociada al refresh token recibido (logout).
-// Se apoya en el refresh token para que el cierre funcione aunque el access
-// token ya haya expirado.
-func (s *authServiceImpl) CerrarSesion(ctx context.Context, refreshToken string) error {
+// CerrarSesion invalida la sesión asociada al refresh token recibido y al access token actual.
+// Se apoya en el JTI para cortar el acceso inmediatamente.
+func (s *authServiceImpl) CerrarSesion(ctx context.Context, refreshToken, accessTokenJTI string) error {
 	jwtSecret := os.Getenv("JWT_SECRET")
 
 	log.Printf("[AUTH] logout attempt")
@@ -391,7 +416,26 @@ func (s *authServiceImpl) CerrarSesion(ctx context.Context, refreshToken string)
 		return fmt.Errorf("no se pudo cerrar la sesión: %w", err)
 	}
 
-	log.Printf("[AUTH] logout done | jti=%s", claims.ID)
+	log.Printf("[AUTH] logout done | refresh_jti=%s", claims.ID)
+	
+	// 4. Intentar revocar también el Access Token si se proveyó
+	if accessTokenJTI != "" {
+		if sesionAccess, err := s.repo.BuscarSesionPorJTI(ctx, accessTokenJTI); err == nil {
+			sesionAccess.Activa = false
+			_ = s.repo.ActualizarSesion(ctx, sesionAccess)
+			log.Printf("[AUTH] access token revoked | access_jti=%s", accessTokenJTI)
+		}
+	}
+	
+	return nil
+}
+
+// RevocarSesionesUsuario revoca todas las sesiones activas (access y refresh) de un usuario en un solo llamado.
+func (s *authServiceImpl) RevocarSesionesUsuario(ctx context.Context, usuarioID uuid.UUID) error {
+	log.Printf("[AUTH] revoking all sessions for user=%s", usuarioID)
+	if err := s.repo.InvalidarSesionesDeUsuario(ctx, usuarioID); err != nil {
+		return fmt.Errorf("error al revocar sesiones: %w", err)
+	}
 	return nil
 }
 

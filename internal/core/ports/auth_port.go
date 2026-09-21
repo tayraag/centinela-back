@@ -94,8 +94,12 @@ type AuthService interface {
 	// RefrescarToken valida un refresh token y emite un nuevo access token.
 	RefrescarToken(ctx context.Context, refreshToken string) (*TokenResult, error)
 
-	// CerrarSesion invalida la sesión asociada a un refresh token (logout).
-	CerrarSesion(ctx context.Context, refreshToken string) error
+	// CerrarSesion invalida la sesión asociada a un refresh token y a un access token (logout).
+	CerrarSesion(ctx context.Context, refreshToken, accessTokenJTI string) error
+
+	// RevocarSesionesUsuario invalida inmediatamente todas las sesiones activas de un usuario.
+	// Útil para flujos administrativos y reseteos críticos.
+	RevocarSesionesUsuario(ctx context.Context, usuarioID uuid.UUID) error
 
 	// SolicitarRecuperacionContrasena genera un código de 6 dígitos y lo envía por email.
 	SolicitarRecuperacionContrasena(ctx context.Context, email string) error

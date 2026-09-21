@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 
+	"el-centinela/internal/core/ports"
 	"el-centinela/internal/infrastructure/crypto"
 
 	"github.com/gin-gonic/gin"
@@ -28,7 +29,7 @@ const (
 // RequirePreAuth valida que la petición tenga un JWT temporal válido (tipo "pre-auth").
 // Se usa en las rutas del flujo 2FA: GET /2fa/qr y POST /2fa/verify.
 // Inyecta el JTI en el contexto de Gin para uso posterior.
-func RequirePreAuth() gin.HandlerFunc {
+func RequirePreAuth(repo ports.AuthRepository) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		tokenStr := extraerBearer(c)
 		if tokenStr == "" {
@@ -57,6 +58,16 @@ func RequirePreAuth() gin.HandlerFunc {
 			return
 		}
 
+		// Validar que la sesión no haya sido revocada o invalidada en base de datos
+		sesion, err := repo.BuscarSesionPorJTI(c.Request.Context(), claims.ID)
+		if err != nil || !sesion.Activa {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"errorCode": "TOKEN_REVOKED",
+				"message":   "La sesión ha sido revocada o expirada administrativamente.",
+			})
+			return
+		}
+
 		// Inyectar datos en el contexto para los handlers
 		c.Set(ContextKeyJTI, claims.ID)
 		c.Set(ContextKeyUserID, claims.Subject)
@@ -70,7 +81,7 @@ func RequirePreAuth() gin.HandlerFunc {
 
 // RequireAuth valida que la petición tenga un JWT de acceso válido (tipo "access")
 // con 2FA verificado. Es el middleware principal para rutas protegidas.
-func RequireAuth() gin.HandlerFunc {
+func RequireAuth(repo ports.AuthRepository) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		tokenStr := extraerBearer(c)
 		if tokenStr == "" {
@@ -103,6 +114,16 @@ func RequireAuth() gin.HandlerFunc {
 			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
 				"errorCode": "2FA_REQUIRED",
 				"message":   "Se requiere completar la verificación en dos pasos.",
+			})
+			return
+		}
+
+		// Validar que la sesión no haya sido revocada o invalidada en base de datos
+		sesion, err := repo.BuscarSesionPorJTI(c.Request.Context(), claims.ID)
+		if err != nil || !sesion.Activa {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"errorCode": "TOKEN_REVOKED",
+				"message":   "La sesión ha sido revocada o expirada administrativamente.",
 			})
 			return
 		}

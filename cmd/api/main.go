@@ -134,7 +134,7 @@ func main() {
 			auth.POST("/password/reset", authHandler.ConfirmarRecuperacion)
 
 			// Rutas del flujo 2FA (requieren JWT temporal pre-auth)
-			twoFA := auth.Group("/2fa", middleware.RequirePreAuth())
+			twoFA := auth.Group("/2fa", middleware.RequirePreAuth(authRepo))
 			{
 				twoFA.GET("/qr", authHandler.ObtenerQR)
 				twoFA.POST("/verify", authHandler.VerificarTotp)
@@ -142,12 +142,12 @@ func main() {
 		}
 
 		// Roles disponibles (para el selector del formulario)
-		api.GET("/roles", middleware.RequireAuth(), middleware.RequireRole("ADMIN"), userHandler.ObtenerRoles)
+		api.GET("/roles", middleware.RequireAuth(authRepo), middleware.RequireRole("ADMIN"), userHandler.ObtenerRoles)
 
 		// ==========================================
 		// Rutas de Gestión de Usuarios (RF-09) — solo ADMIN
 		// ==========================================
-		admin := api.Group("/admin", middleware.RequireAuth(), middleware.RequireRole("ADMIN"))
+		admin := api.Group("/admin", middleware.RequireAuth(authRepo), middleware.RequireRole("ADMIN"))
 		{
 			// CRUD de usuarios
 			users := admin.Group("/users")
@@ -173,7 +173,7 @@ func main() {
 		// ==========================================
 		// Rutas de Perfil Propio (RF-09) — cualquier usuario autenticado
 		// ==========================================
-		account := api.Group("/account", middleware.RequireAuth())
+		account := api.Group("/account", middleware.RequireAuth(authRepo))
 		{
 			account.GET("/profile", accountHandler.ObtenerPerfil)
 			account.PUT("/profile", accountHandler.ActualizarPerfil)
