@@ -56,7 +56,7 @@ type Usuario struct {
 
 type SesionActiva struct {
 	ID        uuid.UUID `gorm:"type:uuid;primaryKey;default:uuid_generate_v7()" json:"id"`
-	UsuarioID uuid.UUID `gorm:"type:uuid;not null;uniqueIndex:idx_usuario_vmid" json:"usuarioId"`
+	UsuarioID uuid.UUID `gorm:"type:uuid;not null;index" json:"usuarioId"`
 
 	JtiToken       string `gorm:"type:varchar(255);uniqueIndex;not null" json:"jtiToken"`
 	Activa         bool   `gorm:"default:true" json:"activa"`
@@ -73,8 +73,8 @@ type SesionActiva struct {
 
 type PermisoInstancia struct {
 	ID          uuid.UUID `gorm:"type:uuid;primaryKey;default:uuid_generate_v7()" json:"id"`
-	UsuarioID   uuid.UUID `gorm:"type:uuid;not null;uniqueIndex:idx_usuario_vmid" json:"usuarioId"`
-	VmidProxmox int       `gorm:"not null;uniqueIndex:idx_usuario_vmid" json:"vmidProxmox"`
+	UsuarioID   uuid.UUID `gorm:"type:uuid;not null;uniqueIndex:idx_permisos_usuario_vmid" json:"usuarioId"`
+	VmidProxmox int       `gorm:"not null;uniqueIndex:idx_permisos_usuario_vmid" json:"vmidProxmox"`
 }
 
 // ==========================================
@@ -83,7 +83,7 @@ type PermisoInstancia struct {
 
 type Auditoria struct {
 	ID        uuid.UUID `gorm:"type:uuid;primaryKey;default:uuid_generate_v7()" json:"id"`
-	UsuarioID uuid.UUID `gorm:"type:uuid;not null;uniqueIndex:idx_usuario_vmid" json:"usuarioId"`
+	UsuarioID uuid.UUID `gorm:"type:uuid;not null;index" json:"usuarioId"`
 
 	Accion          string `gorm:"type:varchar(100);not null" json:"accion"`
 	InstanciaID     string `gorm:"type:varchar(100)" json:"instanciaId"`
@@ -116,7 +116,7 @@ type TareaAsincrona struct {
 
 type Notificacion struct {
 	ID        uuid.UUID `gorm:"type:uuid;primaryKey;default:uuid_generate_v7()" json:"id"`
-	UsuarioID uuid.UUID `gorm:"type:uuid;not null;uniqueIndex:idx_usuario_vmid" json:"usuarioId"`
+	UsuarioID uuid.UUID `gorm:"type:uuid;not null;index" json:"usuarioId"`
 
 	InstanciaID string `gorm:"type:varchar(100)" json:"instanciaId"`
 	TipoEvento  string `gorm:"type:varchar(100)" json:"tipoEvento"`
