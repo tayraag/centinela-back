@@ -36,7 +36,8 @@ type Usuario struct {
 
 	// Campos 2FA (RF-01)
 	TotpVinculado      bool   `gorm:"default:false" json:"totpVinculado"`
-	SecretoTotpCifrado string `gorm:"type:varchar(255)" json:"-"` // Oculto en JSON
+	SecretoTotpCifrado string `gorm:"type:varchar(255)" json:"-"`          // Oculto en JSON
+	UltimoTotpPeriodo  *int64 `gorm:"type:bigint" json:"-"`                // Anti-replay: período TOTP (unix/30) del último código usado
 
 	FechaUltimoAcceso *time.Time `json:"fechaUltimoAcceso"` // Puntero porque puede ser null inicialmente
 	FechaCreacion     time.Time  `gorm:"default:now()" json:"fechaCreacion"`

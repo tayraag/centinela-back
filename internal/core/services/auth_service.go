@@ -200,6 +200,17 @@ func (s *authServiceImpl) VerificarTotp(ctx context.Context, jtiTemporal, codigo
 		return nil, fmt.Errorf("código TOTP incorrecto")
 	}
 
+	// Protección anti-replay
+	periodoActual := time.Now().Unix() / 30
+	if usuario.UltimoTotpPeriodo != nil && *usuario.UltimoTotpPeriodo == periodoActual {
+		log.Printf("[2FA] totp replay detected | user=%s", usuario.EmailUsuario)
+		return nil, fmt.Errorf("código TOTP ya utilizado, espere al siguiente código")
+	}
+
+	if err := s.repo.ActualizarUltimoTotpPeriodo(ctx, usuario.ID, periodoActual); err != nil {
+		return nil, fmt.Errorf("error al registrar uso del código TOTP: %w", err)
+	}
+
 	// 3. Si era la primera vinculación, marcar como vinculado
 	if !usuario.TotpVinculado {
 		log.Printf("[2FA] first link confirmed | user=%s", usuario.EmailUsuario)

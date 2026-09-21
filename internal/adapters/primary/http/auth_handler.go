@@ -155,7 +155,7 @@ type verificarTotpRequest struct {
 // @Param        body body verificarTotpRequest true "Código TOTP de 6 dígitos"
 // @Success      200 {object} ports.TokenResult
 // @Failure      400 {object} ErrorResponse "Código inválido (no tiene 6 dígitos)"
-// @Failure      401 {object} ErrorResponse "Código TOTP incorrecto"
+// @Failure      401 {object} ErrorResponse "Código TOTP incorrecto o ya utilizado (anti-replay)"
 // @Router       /auth/2fa/verify [post]
 func (h *AuthHandler) VerificarTotp(c *gin.Context) {
 	var req verificarTotpRequest

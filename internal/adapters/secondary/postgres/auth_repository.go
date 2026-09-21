@@ -128,3 +128,16 @@ func (r *AuthRepository) InvalidarSesionesDeUsuario(ctx context.Context, usuario
 	}
 	return nil
 }
+
+// ActualizarUltimoTotpPeriodo guarda el período TOTP del último código validado exitosamente.
+// Se usa para protección anti-replay: evita que el mismo código sea aceptado dos veces en la misma ventana de 30s.
+func (r *AuthRepository) ActualizarUltimoTotpPeriodo(ctx context.Context, usuarioID uuid.UUID, periodo int64) error {
+	result := r.db.WithContext(ctx).
+		Model(&domain.Usuario{}).
+		Where("id = ?", usuarioID).
+		Update("ultimo_totp_periodo", periodo)
+	if result.Error != nil {
+		return fmt.Errorf("error al actualizar último período TOTP: %w", result.Error)
+	}
+	return nil
+}

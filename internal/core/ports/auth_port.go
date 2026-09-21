@@ -62,6 +62,9 @@ type AuthRepository interface {
 
 	// InvalidarSesionesDeUsuario marca todas las sesiones activas de un usuario como inactivas.
 	InvalidarSesionesDeUsuario(ctx context.Context, usuarioID uuid.UUID) error
+
+	// ActualizarUltimoTotpPeriodo guarda el período del último código TOTP usado (anti-replay).
+	ActualizarUltimoTotpPeriodo(ctx context.Context, usuarioID uuid.UUID, periodo int64) error
 }
 
 // ==========================================

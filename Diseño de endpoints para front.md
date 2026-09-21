@@ -349,6 +349,13 @@ Al validar el código correctamente, el backend entrega el par de tokens definit
 ```json
 {
   "errorCode": "TOTP_FAILED",
+  "message": "código TOTP ya utilizado, espere al siguiente código"
+}
+```
+
+```json
+{
+  "errorCode": "TOTP_FAILED",
   "message": "Sesión ya fue verificada."
 }
 ```

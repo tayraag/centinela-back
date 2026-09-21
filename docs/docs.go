@@ -936,7 +936,7 @@ const docTemplate = `{
                         }
                     },
                     "401": {
-                        "description": "Código TOTP incorrecto",
+                        "description": "Código TOTP incorrecto o ya utilizado (anti-replay)",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
