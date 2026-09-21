@@ -8,7 +8,7 @@ Guía completa para levantar el proyecto desde cero, ejecutar el seed inicial y 
 
 | Herramienta             | Versión mínima      | Verificar          |
 | ----------------------- | ------------------- | ------------------ |
-| Go                      | 1.21+               | `go version`       |
+| Go                      | 1.22+               | `go version`       |
 | Docker + Docker Compose | Cualquiera reciente | `docker --version` |
 | Git                     | Cualquiera          | `git --version`    |
 
@@ -27,7 +27,7 @@ cd centinela-back
 
 ```bash
 # Copiar la plantilla
-cp cmd/api/.env.example .env
+cp .env.example .env
 ```
 
 Editar `.env` con valores reales. Los campos obligatorios son:
@@ -169,7 +169,7 @@ Para probar los endpoints necesitás **dos terminales abiertas al mismo tiempo**
 Ejecutá en tu terminal:
 
 ```bash
-curl -X POST http://localhost:8080/api/auth/login -H "Content-Type: application/json" -d "{\"email\":\"juan@empresa.com\",\"contrasena\":\"MiPass123!\"}"
+curl -X POST http://localhost:8080/api/auth/login -H "Content-Type: application/json" -d "{\"email\":\"juan@empresa.com\",\"password\":\"MiPass123!\"}"
 ```
 
 > _(Ajustá `juan@empresa.com` y `MiPass123!` por las credenciales que configuraste en el seed)_
@@ -186,7 +186,7 @@ curl -X POST http://localhost:8080/api/auth/login -H "Content-Type: application/
 **Logs en la terminal del servidor:**
 
 ```
-→ POST /api/auth/login | body: {"email":"juan@empresa.com","contrasena":"***"}
+→ POST /api/auth/login | body: {"email":"juan@empresa.com","password":"***"}
 [AUTH] login attempt | email=juan@empresa.com
 [AUTH] login ok | user=juan@empresa.com | rol=ADMIN | totp_vinculado=false | jti=abc123...
 ✅ 200 | 254ms | resp: {"jwtTemporal":"eyJ…[jwt]","totpVinculado":false}
@@ -267,7 +267,7 @@ Cuando `totpVinculado: true`, el flujo no pide QR y se hace directamente:
 **1. Login:**
 
 ```bash
-curl -X POST http://localhost:8080/api/auth/login -H "Content-Type: application/json" -d "{\"email\":\"juan@empresa.com\",\"contrasena\":\"MiPass123!\"}"
+curl -X POST http://localhost:8080/api/auth/login -H "Content-Type: application/json" -d "{\"email\":\"juan@empresa.com\",\"password\":\"MiPass123!\"}"
 ```
 
 **2. Verificar TOTP (con el código actual del autenticador):**
@@ -328,7 +328,7 @@ curl -i -X GET http://localhost:8080/api/account/profile -H "Authorization: Bear
 ### Contraseña incorrecta → 401
 
 ```bash
-curl -i -X POST http://localhost:8080/api/auth/login -H "Content-Type: application/json" -d "{\"email\":\"juan@empresa.com\",\"contrasena\":\"incorrecta\"}"
+curl -i -X POST http://localhost:8080/api/auth/login -H "Content-Type: application/json" -d "{\"email\":\"juan@empresa.com\",\"password\":\"incorrecta\"}"
 ```
 
 - **Código esperado**: `HTTP/1.1 401 Unauthorized`
@@ -342,8 +342,6 @@ curl -i -X POST http://localhost:8080/api/auth/2fa/verify -H "Authorization: Bea
 
 - **Código esperado**: `HTTP/1.1 401 Unauthorized`
 - **Log servidor**: `[2FA] totp invalid | user=juan@empresa.com`
-
-````
 
 ---
 
@@ -365,7 +363,7 @@ SELECT usuario_id, LEFT(jti_token, 8) || '...' AS jti, activa, estado2fa, fecha_
 FROM sesion_activas
 ORDER BY fecha_creacion DESC
 LIMIT 10;
-````
+```
 
 **Output esperado:**
 
@@ -381,11 +379,11 @@ LIMIT 10;
 
 ```
 centinela-back/
+├── .env.example                 ← Plantilla de variables de entorno
+├── .env                         ← (gitignored) Variables reales
 ├── cmd/
 │   ├── api/
-│   │   ├── main.go              ← Punto de entrada, DI, rutas
-│   │   ├── .env.example         ← Plantilla de variables de entorno
-│   │   └── .env                 ← (gitignored) Variables reales
+│   │   └── main.go              ← Punto de entrada, DI, rutas
 │   └── seed/
 │       └── main.go              ← Script de seed interactivo
 ├── internal/
@@ -422,6 +420,7 @@ centinela-back/
 | ------ | ------------------------------------- | -------------------------------------- | ------------------------------------------------- |
 | POST   | `/api/auth/login`                     | —                                      | Login email+contraseña → JWT temporal (5 min)     |
 | POST   | `/api/auth/refresh`                   | —                                      | Refresh token → nuevo access token                |
+| POST   | `/api/auth/logout`                    | —                                      | Invalida la sesión asociada al refreshToken        |
 | GET    | `/api/auth/2fa/qr`                    | `RequirePreAuth`                       | Generar QR para vincular TOTP                     |
 | POST   | `/api/auth/2fa/verify`                | `RequirePreAuth`                       | Validar código TOTP → access+refresh tokens       |
 | GET    | `/api/roles`                          | `RequireAuth` + `RequireRole("ADMIN")` | Lista roles disponibles (hardcodeado)             |
@@ -437,7 +436,6 @@ centinela-back/
 | GET    | `/api/account/profile`                | `RequireAuth`                          | Perfil propio                                     |
 | PUT    | `/api/account/profile`                | `RequireAuth`                          | Actualizar nombre/email propios                   |
 | PUT    | `/api/account/password`               | `RequireAuth`                          | Cambiar contraseña (requiere actual)              |
-| DELETE | `/api/account/sessions/current`       | `RequireAuth`                          | Logout (cierra sesión actual)                     |
 
 ---
 
@@ -451,10 +449,11 @@ centinela-back/
 
 ### Prerequisito: obtener un access token
 
-Seguí los pasos 7.1 → 7.3 del SETUP para obtener un `accessToken`. Guardalo en una variable:
+Seguí los pasos 7.1 → 7.3 del SETUP para obtener un `accessToken` y un `refreshToken`. Guardalos en variables:
 
 ```powershell
 $ACCESS = "<pegar accessToken aquí>"
+$REFRESH = "<pegar refreshToken aquí>"
 ```
 
 ---
@@ -485,7 +484,7 @@ curl.exe -s http://localhost:8080/api/roles -H "Authorization: Bearer $ACCESS"
 ### 12.2 Listar usuarios (con summary)
 
 ```powershell
-curl.exe -s http://localhost:8080/api/users -H "Authorization: Bearer $ACCESS"
+curl.exe -s http://localhost:8080/api/admin/users -H "Authorization: Bearer $ACCESS"
 ```
 
 **Respuesta esperada (200 OK):**
@@ -518,7 +517,7 @@ Filtros disponibles: `?rol=ADMIN`, `?activo=true`, `?buscar=juan`
 
 ```powershell
 Set-Content body_newuser.json '{"nombreCompleto":"Maria Gomez","nombreUsuario":"mgomez","emailUsuario":"mgomez@empresa.com","rol":"OPERATOR"}' -Encoding ascii -NoNewline
-curl.exe -s -X POST http://localhost:8080/api/users -H "Content-Type: application/json" -H "Authorization: Bearer $ACCESS" -d "@body_newuser.json"
+curl.exe -s -X POST http://localhost:8080/api/admin/users -H "Content-Type: application/json" -H "Authorization: Bearer $ACCESS" -d "@body_newuser.json"
 ```
 
 **Respuesta esperada (201 Created):**
@@ -545,7 +544,7 @@ $UID = "1babeab8-ebe0-4c4f-adbf-14acdac94405"
 ### 12.4 Ver detalle del usuario creado
 
 ```powershell
-curl.exe -s "http://localhost:8080/api/users/$UID" -H "Authorization: Bearer $ACCESS"
+curl.exe -s "http://localhost:8080/api/admin/users/$UID" -H "Authorization: Bearer $ACCESS"
 ```
 
 **Respuesta esperada (200 OK):**
@@ -568,7 +567,7 @@ curl.exe -s "http://localhost:8080/api/users/$UID" -H "Authorization: Bearer $AC
 
 ```powershell
 Set-Content body_instances.json '{"vmids":[100,102]}' -Encoding ascii -NoNewline
-curl.exe -s -i -X PUT "http://localhost:8080/api/users/$UID/instances" -H "Content-Type: application/json" -H "Authorization: Bearer $ACCESS" -d "@body_instances.json"
+curl.exe -s -i -X PUT "http://localhost:8080/api/admin/users/$UID/instances" -H "Content-Type: application/json" -H "Authorization: Bearer $ACCESS" -d "@body_instances.json"
 ```
 
 **Respuesta esperada: `HTTP/1.1 204 No Content`** (sin body)
@@ -576,7 +575,7 @@ curl.exe -s -i -X PUT "http://localhost:8080/api/users/$UID/instances" -H "Conte
 Verificar que se guardaron:
 
 ```powershell
-curl.exe -s "http://localhost:8080/api/users/$UID" -H "Authorization: Bearer $ACCESS"
+curl.exe -s "http://localhost:8080/api/admin/users/$UID" -H "Authorization: Bearer $ACCESS"
 # instanciasPermitidas debe ser [100, 102]
 ```
 
@@ -586,7 +585,7 @@ curl.exe -s "http://localhost:8080/api/users/$UID" -H "Authorization: Bearer $AC
 
 ```powershell
 Set-Content body_update.json '{"rol":"ADMIN"}' -Encoding ascii -NoNewline
-curl.exe -s -X PUT "http://localhost:8080/api/users/$UID" -H "Content-Type: application/json" -H "Authorization: Bearer $ACCESS" -d "@body_update.json"
+curl.exe -s -X PUT "http://localhost:8080/api/admin/users/$UID" -H "Content-Type: application/json" -H "Authorization: Bearer $ACCESS" -d "@body_update.json"
 ```
 
 **Respuesta esperada (200 OK):** devuelve el usuario actualizado con `"rol": "ADMIN"`.
@@ -653,10 +652,25 @@ curl.exe -s -X PUT http://localhost:8080/api/account/password -H "Content-Type: 
 
 ---
 
-### 12.11 Soft-delete de usuario
+### 12.11 Cerrar sesión (logout)
+
+> A diferencia del resto de los endpoints de esta sección, `logout` cuelga de `/api/auth` (no de `/api/account`), no requiere el header `Authorization` y en cambio recibe el `refreshToken` en el body — es lo que el backend usa para identificar y cerrar la sesión.
 
 ```powershell
-curl.exe -s -i -X DELETE "http://localhost:8080/api/users/$UID" -H "Authorization: Bearer $ACCESS"
+Set-Content body_logout.json "{`"refreshToken`":`"$REFRESH`"}" -Encoding ascii -NoNewline
+curl.exe -s -i -X POST http://localhost:8080/api/auth/logout -H "Content-Type: application/json" -d "@body_logout.json"
+```
+
+**Respuesta esperada: `HTTP/1.1 204 No Content`**
+
+> Invalida la sesión asociada a ese refresh token. Si se reintenta el mismo request, responde `401` con `errorCode: AUTH_FAILED` (sesión inválida o ya cerrada).
+
+---
+
+### 12.12 Soft-delete de usuario
+
+```powershell
+curl.exe -s -i -X DELETE "http://localhost:8080/api/admin/users/$UID" -H "Authorization: Bearer $ACCESS"
 ```
 
 **Respuesta esperada: `HTTP/1.1 204 No Content`**
@@ -665,12 +679,12 @@ curl.exe -s -i -X DELETE "http://localhost:8080/api/users/$UID" -H "Authorizatio
 
 ---
 
-### 12.12 Casos de error (verificar comportamiento)
+### 12.13 Casos de error (verificar comportamiento)
 
 **Auto-eliminarse → 400:**
 
 ```powershell
-curl.exe -s -i -X DELETE "http://localhost:8080/api/users/<TU_PROPIO_UUID>" -H "Authorization: Bearer $ACCESS"
+curl.exe -s -i -X DELETE "http://localhost:8080/api/admin/users/<TU_PROPIO_UUID>" -H "Authorization: Bearer $ACCESS"
 # HTTP 400 — errorCode: SELF_DELETE_NOT_ALLOWED
 ```
 
@@ -678,14 +692,14 @@ curl.exe -s -i -X DELETE "http://localhost:8080/api/users/<TU_PROPIO_UUID>" -H "
 
 ```powershell
 # Intentar crear otro usuario con el mismo email
-curl.exe -s -X POST http://localhost:8080/api/users -H "Content-Type: application/json" -H "Authorization: Bearer $ACCESS" -d "@body_newuser.json"
+curl.exe -s -X POST http://localhost:8080/api/admin/users -H "Content-Type: application/json" -H "Authorization: Bearer $ACCESS" -d "@body_newuser.json"
 # HTTP 409 — errorCode: USER_CONFLICT
 ```
 
 **Sin token → 401:**
 
 ```powershell
-curl.exe -s -i http://localhost:8080/api/users
+curl.exe -s -i http://localhost:8080/api/admin/users
 # HTTP 401 — errorCode: MISSING_TOKEN
 ```
 
@@ -693,6 +707,6 @@ curl.exe -s -i http://localhost:8080/api/users
 
 ```powershell
 # Con el accessToken de un OPERATOR
-curl.exe -s -i http://localhost:8080/api/users -H "Authorization: Bearer <TOKEN_OPERATOR>"
+curl.exe -s -i http://localhost:8080/api/admin/users -H "Authorization: Bearer <TOKEN_OPERATOR>"
 # HTTP 403 — errorCode: INSUFFICIENT_ROLE
 ```
