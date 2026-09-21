@@ -2,10 +2,11 @@ package services
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/base64"
 	"fmt"
 	"log"
-	"math/rand"
+	"math/big"
 	"os"
 	"strconv"
 	"time"
@@ -402,20 +403,23 @@ func (s *authServiceImpl) CerrarSesion(ctx context.Context, refreshToken string)
 // y lo envía usando el servicio de email (simulado o real).
 func (s *authServiceImpl) SolicitarRecuperacionContrasena(ctx context.Context, email string) error {
 	usuario, err := s.repo.BuscarUsuarioPorEmail(ctx, email)
-	if err != nil {
-		// Por seguridad, si el usuario no existe, fingimos éxito para no enumerar correos
-		log.Printf("[AUTH] recuperacion solicitada para email no existente: %s", email)
+	
+	// Prevenir enumeración y ataques de timing (Timing Attacks)
+	// Si el usuario no existe o está inactivo, realizamos un trabajo computacional similar 
+	// (como hashear una clave dummy) para que el tiempo de respuesta sea indistinguible.
+	if err != nil || !usuario.Activo {
+		crypto.HashContrasena("dummy-hash-to-prevent-timing-attacks")
+		log.Printf("[AUTH] recuperacion solicitada para email no existente o inactivo: %s", email)
 		return nil
 	}
 
-	if !usuario.Activo {
-		log.Printf("[AUTH] recuperacion rechazada (inactivo): %s", email)
-		return nil
-	}
-
-	randSource := rand.New(rand.NewSource(time.Now().UnixNano()))
-	codigo := fmt.Sprintf("%06d", randSource.Intn(1000000))
-	expiracion := time.Now().Add(15 * time.Minute)
+	// Generar código numérico criptográficamente seguro de 6 dígitos
+	max := big.NewInt(1000000)
+	n, _ := rand.Int(rand.Reader, max)
+	codigo := fmt.Sprintf("%06d", n.Int64())
+	
+	// Expiración estricta de 10 minutos (600 segundos)
+	expiracion := time.Now().Add(10 * time.Minute)
 
 	if err := s.repo.ActualizarCodigoRecuperacion(ctx, usuario.ID, &codigo, &expiracion); err != nil {
 		return fmt.Errorf("error al guardar código de recuperación: %w", err)
