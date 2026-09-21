@@ -169,6 +169,199 @@ const docTemplate = `{
                 }
             }
         },
+        "/admin/audit": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Devuelve el log de auditoría de la organización con soporte de filtros, paginación y ordenamiento. Solo accesible por ADMIN.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Auditoría (Admin)"
+                ],
+                "summary": "Listar log de auditoría",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Filtrar por UUID de usuario",
+                        "name": "usuarioId",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filtrar por tipo de acción (ej: LOGIN, CREAR_USUARIO)",
+                        "name": "accion",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filtrar por ID de instancia Proxmox",
+                        "name": "instanciaId",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filtrar por resultado: EXITO o FALLA",
+                        "name": "resultado",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Fecha desde (YYYY-MM-DD)",
+                        "name": "desde",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Fecha hasta (YYYY-MM-DD)",
+                        "name": "hasta",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Número de página (default 1)",
+                        "name": "pagina",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Registros por página (default 50, máx 200)",
+                        "name": "tamano",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Campo de ordenamiento: fechaHora (default), accion, resultado",
+                        "name": "ordenarPor",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Dirección: desc (default) o asc",
+                        "name": "direccion",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/ports.PaginaAuditoria"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/audit/export": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Exporta el log de auditoría de la organización. Aplica los mismos filtros que el listado. Retorna el archivo como adjunto descargable. Solo accesible por ADMIN.",
+                "produces": [
+                    "text/csv",
+                    "application/json"
+                ],
+                "tags": [
+                    "Auditoría (Admin)"
+                ],
+                "summary": "Exportar log de auditoría",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Filtrar por UUID de usuario",
+                        "name": "usuarioId",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filtrar por tipo de acción",
+                        "name": "accion",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filtrar por ID de instancia",
+                        "name": "instanciaId",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "EXITO o FALLA",
+                        "name": "resultado",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Fecha desde (YYYY-MM-DD)",
+                        "name": "desde",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Fecha hasta (YYYY-MM-DD)",
+                        "name": "hasta",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Formato de exportación: csv (default) o json",
+                        "name": "formato",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Archivo CSV o JSON descargable",
+                        "schema": {
+                            "type": "file"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/admin/users": {
             "get": {
                 "security": [
@@ -1209,6 +1402,40 @@ const docTemplate = `{
                 }
             }
         },
+        "ports.AuditoriaDTO": {
+            "type": "object",
+            "properties": {
+                "accion": {
+                    "type": "string"
+                },
+                "detalles": {
+                    "type": "string"
+                },
+                "fechaHora": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "instanciaId": {
+                    "type": "string"
+                },
+                "instanciaNombre": {
+                    "type": "string"
+                },
+                "nombreUsuario": {
+                    "description": "Nombre completo (JOIN con usuarios, o \"[usuario eliminado]\")",
+                    "type": "string"
+                },
+                "resultado": {
+                    "type": "string"
+                },
+                "usuarioId": {
+                    "description": "Puntero: puede ser null si el usuario fue eliminado",
+                    "type": "string"
+                }
+            }
+        },
         "ports.CambiarContrasenaInput": {
             "type": "object",
             "required": [
@@ -1300,6 +1527,26 @@ const docTemplate = `{
                 },
                 "totpVinculado": {
                     "type": "boolean"
+                }
+            }
+        },
+        "ports.PaginaAuditoria": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "description": "Registros de esta página",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/ports.AuditoriaDTO"
+                    }
+                },
+                "pagina": {
+                    "description": "Página actual",
+                    "type": "integer"
+                },
+                "total": {
+                    "description": "Total de registros que coinciden con los filtros",
+                    "type": "integer"
                 }
             }
         },

@@ -117,7 +117,8 @@ func (h *UserHandler) CrearUsuario(c *gin.Context) {
 	input.EmailUsuario = strings.ToLower(strings.TrimSpace(input.EmailUsuario))
 
 	orgID := extraerOrgID(c)
-	resultado, err := h.service.CrearUsuario(c.Request.Context(), orgID, input)
+	actorID := extraerUserID(c)
+	resultado, err := h.service.CrearUsuario(c.Request.Context(), orgID, actorID, input)
 	if err != nil {
 		SendError(c, http.StatusConflict, "USER_CONFLICT", err.Error())
 		return
@@ -185,6 +186,7 @@ func (h *UserHandler) ActualizarUsuario(c *gin.Context) {
 		return
 	}
 	orgID := extraerOrgID(c)
+	actorID := extraerUserID(c)
 
 	var input ports.ActualizarUsuarioInput
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -196,7 +198,7 @@ func (h *UserHandler) ActualizarUsuario(c *gin.Context) {
 		input.EmailUsuario = strings.ToLower(strings.TrimSpace(input.EmailUsuario))
 	}
 
-	usuario, err := h.service.ActualizarUsuario(c.Request.Context(), id, orgID, input)
+	usuario, err := h.service.ActualizarUsuario(c.Request.Context(), id, orgID, actorID, input)
 	if err != nil {
 		SendError(c, http.StatusConflict, "UPDATE_CONFLICT", err.Error())
 		return
@@ -228,6 +230,7 @@ func (h *UserHandler) EliminarUsuario(c *gin.Context) {
 		return
 	}
 	orgID := extraerOrgID(c)
+	actorID := extraerUserID(c)
 
 	// Prevenir que el admin se elimine a sí mismo
 	if id == extraerUserID(c) {
@@ -235,7 +238,7 @@ func (h *UserHandler) EliminarUsuario(c *gin.Context) {
 		return
 	}
 
-	if err := h.service.EliminarUsuario(c.Request.Context(), id, orgID); err != nil {
+	if err := h.service.EliminarUsuario(c.Request.Context(), id, orgID, actorID); err != nil {
 		SendError(c, http.StatusNotFound, "USER_NOT_FOUND", "Usuario no encontrado.")
 		return
 	}
@@ -273,6 +276,7 @@ func (h *UserHandler) AsignarPermisos(c *gin.Context) {
 		return
 	}
 	orgID := extraerOrgID(c)
+	actorID := extraerUserID(c)
 
 	var req asignarPermisosRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -280,7 +284,7 @@ func (h *UserHandler) AsignarPermisos(c *gin.Context) {
 		return
 	}
 
-	if err := h.service.AsignarPermisos(c.Request.Context(), id, orgID, req.Vmids); err != nil {
+	if err := h.service.AsignarPermisos(c.Request.Context(), id, orgID, actorID, req.Vmids); err != nil {
 		SendError(c, http.StatusNotFound, "USER_NOT_FOUND", err.Error())
 		return
 	}
@@ -359,8 +363,9 @@ func (h *UserHandler) ResetearTotp(c *gin.Context) {
 		return
 	}
 	orgID := extraerOrgID(c)
+	actorID := extraerUserID(c)
 
-	if err := h.service.ResetearTotp(c.Request.Context(), id, orgID); err != nil {
+	if err := h.service.ResetearTotp(c.Request.Context(), id, orgID, actorID); err != nil {
 		SendError(c, http.StatusNotFound, "USER_NOT_FOUND", err.Error())
 		return
 	}
@@ -392,8 +397,9 @@ func (h *UserHandler) ResetearContrasena(c *gin.Context) {
 		return
 	}
 	orgID := extraerOrgID(c)
+	actorID := extraerUserID(c)
 
-	contrasenaTemp, err := h.service.ResetearContrasena(c.Request.Context(), id, orgID)
+	contrasenaTemp, err := h.service.ResetearContrasena(c.Request.Context(), id, orgID, actorID)
 	if err != nil {
 		SendError(c, http.StatusNotFound, "USER_NOT_FOUND", err.Error())
 		return
