@@ -45,7 +45,7 @@ type Usuario struct {
 	// Relaciones Has-Many (Para Foreign Keys)
 	SesionesActivas   []SesionActiva     `gorm:"foreignKey:UsuarioID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;" json:"-"`
 	PermisosInstancia []PermisoInstancia `gorm:"foreignKey:UsuarioID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;" json:"-"`
-	Auditorias        []Auditoria        `gorm:"foreignKey:UsuarioID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;" json:"-"`
+	Auditorias        []Auditoria        `gorm:"foreignKey:UsuarioID;constraint:OnUpdate:CASCADE,OnDelete:SET NULL;" json:"-"`
 	TareasAsincronas  []TareaAsincrona   `gorm:"foreignKey:UsuarioID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;" json:"-"`
 	Notificaciones    []Notificacion     `gorm:"foreignKey:UsuarioID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;" json:"-"`
 }
@@ -82,16 +82,16 @@ type PermisoInstancia struct {
 // ==========================================
 
 type Auditoria struct {
-	ID        uuid.UUID `gorm:"type:uuid;primaryKey;default:uuid_generate_v7()" json:"id"`
-	UsuarioID uuid.UUID `gorm:"type:uuid;not null;index" json:"usuarioId"`
+	ID        uuid.UUID  `gorm:"type:uuid;primaryKey;default:uuid_generate_v7()" json:"id"`
+	UsuarioID *uuid.UUID `gorm:"type:uuid;index:idx_auditoria_usuario_fecha" json:"usuarioId"` // Puntero: SET NULL si se elimina el usuario
 
-	Accion          string `gorm:"type:varchar(100);not null" json:"accion"`
-	InstanciaID     string `gorm:"type:varchar(100)" json:"instanciaId"`
+	Accion          string `gorm:"type:varchar(100);not null;index:idx_auditoria_accion" json:"accion"`
+	InstanciaID     string `gorm:"type:varchar(100);index:idx_auditoria_instancia" json:"instanciaId"`
 	InstanciaNombre string `gorm:"type:varchar(255)" json:"instanciaNombre"`
-	Resultado       string `gorm:"type:varchar(50);not null" json:"resultado"` // EXITO o FALLA
+	Resultado       string `gorm:"type:varchar(50);not null;index:idx_auditoria_resultado" json:"resultado"` // EXITO o FALLA
 
-	Detalles  string    `gorm:"type:jsonb" json:"detalles"` // JSON estructurado con metadata extra
-	FechaHora time.Time `gorm:"default:now();index" json:"fechaHora"`
+	Detalles  *string   `gorm:"type:jsonb" json:"detalles"`                                     // JSON estructurado con metadata extra (puntero para permitir NULL en PostgreSQL)
+	FechaHora time.Time `gorm:"default:now();index:idx_auditoria_usuario_fecha" json:"fechaHora"` // Índice compuesto con usuario_id
 }
 
 // ==========================================
