@@ -35,8 +35,9 @@ type Usuario struct {
 	CambioContrasena bool   `gorm:"default:false" json:"cambioContrasenaRequerido"` // Si es true, debe cambiar la clave al loguearse
 
 	// Campos para recuperación de contraseña
-	CodigoRecuperacion *string    `gorm:"type:varchar(6)" json:"-"`
-	ExpiracionCodigo   *time.Time `json:"-"`
+	CodigoRecuperacion   *string    `gorm:"type:varchar(6)" json:"-"`
+	ExpiracionCodigo     *time.Time `json:"-"`
+	IntentosRecuperacion int        `gorm:"default:0" json:"-"`
 
 	// 2FA TOTP
 	SecretoTotpCifrado string `gorm:"type:text" json:"-"` // Oculto en JSON

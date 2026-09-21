@@ -958,7 +958,8 @@ paths:
       - application/json
       description: Valida el código de 6 dígitos enviado por email y establece la
         nueva contraseña (8-12 chars, mayúscula, número, especial). Invalida el código
-        tras el uso.
+        tras el uso o tras 3 intentos fallidos. La nueva contraseña no puede coincidir
+        con la anterior.
       parameters:
       - description: Datos de recuperación
         in: body
@@ -976,7 +977,8 @@ paths:
               type: string
             type: object
         "400":
-          description: Datos inválidos, código incorrecto o contraseña débil
+          description: Datos inválidos, código incorrecto, demasiados intentos, contraseña
+            débil o igual a la actual
           schema:
             $ref: '#/definitions/http.ErrorResponse'
       summary: Confirmar recuperación de contraseña

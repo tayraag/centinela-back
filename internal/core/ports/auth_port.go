@@ -70,6 +70,9 @@ type AuthRepository interface {
 	// ActualizarCodigoRecuperacion guarda el código de 6 dígitos y su expiración en el usuario.
 	ActualizarCodigoRecuperacion(ctx context.Context, usuarioID uuid.UUID, codigo *string, expiracion *time.Time) error
 
+	// ActualizarIntentosRecuperacion actualiza el número de intentos de recuperación fallidos.
+	ActualizarIntentosRecuperacion(ctx context.Context, usuarioID uuid.UUID, intentos int) error
+
 	// ActualizarContrasenaYLimpiarCodigo cambia la contraseña y elimina el código temporal usado.
 	ActualizarContrasenaYLimpiarCodigo(ctx context.Context, usuarioID uuid.UUID, hash string) error
 }

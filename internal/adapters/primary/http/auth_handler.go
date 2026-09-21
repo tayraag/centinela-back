@@ -264,13 +264,13 @@ type confirmarRecuperacionRequest struct {
 // ConfirmarRecuperacion valida el código de recuperación y establece la nueva contraseña.
 //
 // @Summary      Confirmar recuperación de contraseña
-// @Description  Valida el código de 6 dígitos enviado por email y establece la nueva contraseña (8-12 chars, mayúscula, número, especial). Invalida el código tras el uso.
+// @Description  Valida el código de 6 dígitos enviado por email y establece la nueva contraseña (8-12 chars, mayúscula, número, especial). Invalida el código tras el uso o tras 3 intentos fallidos. La nueva contraseña no puede coincidir con la anterior.
 // @Tags         Autenticación
 // @Accept       json
 // @Produce      json
 // @Param        body body confirmarRecuperacionRequest true "Datos de recuperación"
 // @Success      200 {object} map[string]string
-// @Failure      400 {object} ErrorResponse "Datos inválidos, código incorrecto o contraseña débil"
+// @Failure      400 {object} ErrorResponse "Datos inválidos, código incorrecto, demasiados intentos, contraseña débil o igual a la actual"
 // @Router       /auth/password/reset [post]
 func (h *AuthHandler) ConfirmarRecuperacion(c *gin.Context) {
 	var req confirmarRecuperacionRequest

@@ -485,8 +485,20 @@ func (s *authServiceImpl) ConfirmarRecuperacionContrasena(ctx context.Context, e
 		return fmt.Errorf("código inválido o expirado")
 	}
 
-	if usuario.CodigoRecuperacion == nil || *usuario.CodigoRecuperacion != codigo {
+	if usuario.CodigoRecuperacion == nil {
 		return fmt.Errorf("código inválido o expirado")
+	}
+
+	if *usuario.CodigoRecuperacion != codigo {
+		intentos := usuario.IntentosRecuperacion + 1
+		if intentos >= 3 {
+			// Invalidar el código por demasiados intentos (fuerza bruta)
+			_ = s.repo.ActualizarCodigoRecuperacion(ctx, usuario.ID, nil, nil)
+			return fmt.Errorf("demasiados intentos fallidos, el código ha sido invalidado")
+		}
+		// Sumar el intento fallido
+		_ = s.repo.ActualizarIntentosRecuperacion(ctx, usuario.ID, intentos)
+		return fmt.Errorf("código inválido")
 	}
 
 	if usuario.ExpiracionCodigo == nil || time.Now().After(*usuario.ExpiracionCodigo) {
@@ -496,6 +508,11 @@ func (s *authServiceImpl) ConfirmarRecuperacionContrasena(ctx context.Context, e
 	// Validar complejidad de la nueva contraseña
 	if err := crypto.ValidarComplejidadContrasena(nuevaContrasena); err != nil {
 		return err
+	}
+
+	// Validar que la nueva contraseña difiera de la anterior
+	if crypto.VerificarContrasena(usuario.ContrasenaHash, nuevaContrasena) {
+		return fmt.Errorf("la nueva contraseña no puede ser igual a la actual")
 	}
 
 	hash, err := crypto.HashContrasena(nuevaContrasena)

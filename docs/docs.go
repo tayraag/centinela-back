@@ -1024,7 +1024,7 @@ const docTemplate = `{
         },
         "/auth/password/reset": {
             "post": {
-                "description": "Valida el código de 6 dígitos enviado por email y establece la nueva contraseña (8-12 chars, mayúscula, número, especial). Invalida el código tras el uso.",
+                "description": "Valida el código de 6 dígitos enviado por email y establece la nueva contraseña (8-12 chars, mayúscula, número, especial). Invalida el código tras el uso o tras 3 intentos fallidos. La nueva contraseña no puede coincidir con la anterior.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1057,7 +1057,7 @@ const docTemplate = `{
                         }
                     },
                     "400": {
-                        "description": "Datos inválidos, código incorrecto o contraseña débil",
+                        "description": "Datos inválidos, código incorrecto, demasiados intentos, contraseña débil o igual a la actual",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }

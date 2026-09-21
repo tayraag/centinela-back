@@ -147,8 +147,9 @@ func (r *AuthRepository) ActualizarUltimoTotpPeriodo(ctx context.Context, usuari
 // Si codigo y expiracion son nil, se limpian los valores (código ya utilizado o invalidado).
 func (r *AuthRepository) ActualizarCodigoRecuperacion(ctx context.Context, usuarioID uuid.UUID, codigo *string, expiracion *time.Time) error {
 	updates := map[string]interface{}{
-		"codigo_recuperacion": codigo,
-		"expiracion_codigo":   expiracion,
+		"codigo_recuperacion":   codigo,
+		"expiracion_codigo":     expiracion,
+		"intentos_recuperacion": 0,
 	}
 	result := r.db.WithContext(ctx).
 		Model(&domain.Usuario{}).
@@ -163,10 +164,11 @@ func (r *AuthRepository) ActualizarCodigoRecuperacion(ctx context.Context, usuar
 // ActualizarContrasenaYLimpiarCodigo cambia la contraseña, limpia el código temporal y quita el flag de cambio obligatorio.
 func (r *AuthRepository) ActualizarContrasenaYLimpiarCodigo(ctx context.Context, usuarioID uuid.UUID, hash string) error {
 	updates := map[string]interface{}{
-		"codigo_recuperacion": nil,
-		"expiracion_codigo":   nil,
-		"contrasena_hash":     hash,
-		"cambio_contrasena":   false,
+		"codigo_recuperacion":   nil,
+		"expiracion_codigo":     nil,
+		"contrasena_hash":       hash,
+		"cambio_contrasena":     false,
+		"intentos_recuperacion": 0,
 	}
 	result := r.db.WithContext(ctx).
 		Model(&domain.Usuario{}).
@@ -174,6 +176,18 @@ func (r *AuthRepository) ActualizarContrasenaYLimpiarCodigo(ctx context.Context,
 		Updates(updates)
 	if result.Error != nil {
 		return fmt.Errorf("error al actualizar contraseña: %w", result.Error)
+	}
+	return nil
+}
+
+// ActualizarIntentosRecuperacion actualiza el número de intentos fallidos al recuperar contraseña.
+func (r *AuthRepository) ActualizarIntentosRecuperacion(ctx context.Context, usuarioID uuid.UUID, intentos int) error {
+	result := r.db.WithContext(ctx).
+		Model(&domain.Usuario{}).
+		Where("id = ?", usuarioID).
+		Update("intentos_recuperacion", intentos)
+	if result.Error != nil {
+		return fmt.Errorf("error al actualizar intentos de recuperación: %w", result.Error)
 	}
 	return nil
 }

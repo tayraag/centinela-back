@@ -55,6 +55,24 @@ El sistema restablece la contraseña e invalida el código (de un solo uso) para
 }
 ```
 
+**Respuestas de Error (400 Bad Request):**
+
+```json
+// Si el código expira, se equivoca, o intenta fuerza bruta (>3 intentos)
+{
+  "errorCode": "RESET_FAILED",
+  "message": "código inválido o expirado"
+}
+```
+
+```json
+// Si la contraseña nueva es idéntica a la anterior
+{
+  "errorCode": "RESET_FAILED",
+  "message": "la nueva contraseña no puede ser igual a la actual"
+}
+```
+
 &nbsp;
 
 **Plantilla de Errores para todo el flujo:**
