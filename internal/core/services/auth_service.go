@@ -229,10 +229,11 @@ func (s *authServiceImpl) VerificarTotp(ctx context.Context, jtiTemporal, codigo
 	accessTTL := obtenerAccessTTL()
 	jtiAccess := uuid.New().String()
 	accessClaims := crypto.JWTClaims{
-		Rol:           usuario.Rol,
-		Tipo:          crypto.TipoAccess,
-		Verificado2FA: true,
-		OrgID:         usuario.OrganizacionID.String(),
+		Rol:                       usuario.Rol,
+		Tipo:                      crypto.TipoAccess,
+		Verificado2FA:             true,
+		OrgID:                     usuario.OrganizacionID.String(),
+		CambioContrasenaRequerido: usuario.CambioContrasena,
 	}
 	accessClaims.Subject = usuario.ID.String()
 	accessClaims.ID = jtiAccess
@@ -321,14 +322,15 @@ func (s *authServiceImpl) RefrescarToken(ctx context.Context, refreshToken strin
 		return nil, fmt.Errorf("cuenta desactivada")
 	}
 
-	// 4. Emitir nuevo access token
+	// 4. Emitir nuevo access token (refleja el estado actual de la BD)
 	accessTTL := obtenerAccessTTL()
 	jtiAccess := uuid.New().String()
 	accessClaims := crypto.JWTClaims{
-		Rol:           usuario.Rol,
-		Tipo:          crypto.TipoAccess,
-		Verificado2FA: true,
-		OrgID:         usuario.OrganizacionID.String(),
+		Rol:                       usuario.Rol,
+		Tipo:                      crypto.TipoAccess,
+		Verificado2FA:             true,
+		OrgID:                     usuario.OrganizacionID.String(),
+		CambioContrasenaRequerido: usuario.CambioContrasena,
 	}
 	accessClaims.Subject = usuario.ID.String()
 	accessClaims.ID = jtiAccess

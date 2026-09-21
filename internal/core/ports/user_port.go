@@ -128,9 +128,10 @@ type ActualizarPerfilInput struct {
 }
 
 // CambiarContrasenaInput es el body para que el usuario cambie su propia contraseña.
+// Reglas de complejidad aplicadas en la capa de servicio: mayúscula, número y carácter especial.
 type CambiarContrasenaInput struct {
 	ContrasenaActual string `json:"contrasenaActual" binding:"required"`
-	ContrasenaNueva  string `json:"contrasenaNueva"  binding:"required,min=8"`
+	ContrasenaNueva  string `json:"contrasenaNueva"  binding:"required,min=8,max=12"`
 }
 
 // ==========================================

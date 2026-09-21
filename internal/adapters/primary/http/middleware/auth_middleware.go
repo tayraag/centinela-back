@@ -107,6 +107,22 @@ func RequireAuth() gin.HandlerFunc {
 			return
 		}
 
+		// Bloquear acceso a rutas de negocio si hay cambio de contraseña pendiente.
+		// Solo se permite continuar si la ruta es PUT /api/account/password o POST /api/auth/logout.
+		if claims.CambioContrasenaRequerido {
+			path := c.Request.URL.Path
+			method := c.Request.Method
+			esCambioContrasena := method == "PUT" && path == "/api/account/password"
+			esLogout := method == "POST" && path == "/api/auth/logout"
+			if !esCambioContrasena && !esLogout {
+				c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+					"errorCode": "PASSWORD_CHANGE_REQUIRED",
+					"message":   "Debe cambiar su contraseña temporal antes de continuar.",
+				})
+				return
+			}
+		}
+
 		c.Set(ContextKeyJTI, claims.ID)
 		c.Set(ContextKeyUserID, claims.Subject)
 		c.Set(ContextKeyRol, claims.Rol)

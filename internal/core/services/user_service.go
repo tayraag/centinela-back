@@ -349,6 +349,11 @@ func (s *userServiceImpl) CambiarContrasena(ctx context.Context, usuarioID uuid.
 		return fmt.Errorf("la nueva contraseña no puede ser igual a la actual")
 	}
 
+	// Validar complejidad de la nueva contraseña
+	if err := crypto.ValidarComplejidadContrasena(input.ContrasenaNueva); err != nil {
+		return err
+	}
+
 	hash, err := crypto.HashContrasena(input.ContrasenaNueva)
 	if err != nil {
 		return fmt.Errorf("error al procesar la nueva contraseña: %w", err)
@@ -361,7 +366,7 @@ func (s *userServiceImpl) CambiarContrasena(ctx context.Context, usuarioID uuid.
 		return err
 	}
 
-	log.Printf("[USERS] contraseña cambiada | user=%s", usuarioID)
+	log.Printf("[USERS] contraseña cambiada | user=%s | cambio_obligatorio_resuelto=%v", usuarioID, usuario.CambioContrasena)
 	return nil
 }
 

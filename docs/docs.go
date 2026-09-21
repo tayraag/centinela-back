@@ -24,7 +24,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Valida la contraseña actual y aplica la nueva. Si la contraseña era temporal (` + "`" + `cambioContrasenaRequerido=true` + "`" + `), este cambio limpia ese flag y el usuario puede operar con normalidad.",
+                "description": "Valida la contraseña actual y aplica la nueva. Reglas de complejidad: entre 8 y 12 caracteres, al menos una mayúscula, un número y un carácter especial (!@#$%^\u0026*-_=+). Si la contraseña era temporal (` + "`" + `cambioContrasenaRequerido=true` + "`" + `), este cambio limpia ese flag y desbloquea el acceso al resto de la plataforma.",
                 "consumes": [
                     "application/json"
                 ],
@@ -57,7 +57,7 @@ const docTemplate = `{
                         }
                     },
                     "400": {
-                        "description": "Contraseña actual incorrecta o nueva igual a la actual",
+                        "description": "Formato inválido, contraseña actual incorrecta, nueva igual a la actual o no cumple las reglas de complejidad",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -69,6 +69,12 @@ const docTemplate = `{
                             "additionalProperties": {
                                 "type": "string"
                             }
+                        }
+                    },
+                    "403": {
+                        "description": "PASSWORD_CHANGE_REQUIRED — solo este endpoint y logout son accesibles mientras el flag esté activo",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
                         }
                     }
                 }
@@ -1221,6 +1227,7 @@ const docTemplate = `{
                 },
                 "contrasenaNueva": {
                     "type": "string",
+                    "maxLength": 12,
                     "minLength": 8
                 }
             }
