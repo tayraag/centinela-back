@@ -105,13 +105,14 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 // ObtenerQR genera el QR de vinculación TOTP para el usuario.
 //
 // @Summary      Obtener QR de vinculación 2FA
-// @Description  Genera el secreto TOTP, lo cifra y devuelve el QR en Base64 más el secreto manual. Solo disponible con JWT temporal (pre-auth). Llamar únicamente si `totpVinculado` es false.
+// @Description  Genera el secreto TOTP, lo cifra y devuelve el QR en Base64 más el secreto manual. Solo disponible con JWT temporal (pre-auth). Llamar únicamente si `totpVinculado` es false. Si el usuario ya tiene 2FA activo, se rechaza con 409.
 // @Tags         Autenticación 2FA
 // @Produce      json
 // @Security     BearerPreAuth
 // @Success      200 {object} ports.QRResult
-// @Failure      400 {object} ErrorResponse "TOTP ya vinculado o error interno"
+// @Failure      400 {object} ErrorResponse "Error interno al generar el QR"
 // @Failure      401 {object} ErrorResponse "Token pre-auth inválido o expirado"
+// @Failure      409 {object} ErrorResponse "El 2FA ya está activo, requiere reset administrativo"
 // @Router       /auth/2fa/qr [get]
 func (h *AuthHandler) ObtenerQR(c *gin.Context) {
 	jti, _ := c.Get(middleware.ContextKeyJTI)
@@ -123,7 +124,11 @@ func (h *AuthHandler) ObtenerQR(c *gin.Context) {
 
 	result, err := h.service.ObtenerQRParaVinculacion(c.Request.Context(), jtiStr)
 	if err != nil {
-		SendError(c, http.StatusBadRequest, "QR_ERROR", err.Error())
+		if strings.Contains(err.Error(), "el doble factor ya está activo") {
+			SendError(c, http.StatusConflict, "TOTP_ALREADY_LINKED", err.Error())
+		} else {
+			SendError(c, http.StatusBadRequest, "QR_ERROR", err.Error())
+		}
 		return
 	}
 

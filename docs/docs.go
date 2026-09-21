@@ -169,329 +169,6 @@ const docTemplate = `{
                 }
             }
         },
-        "/auth/2fa/qr": {
-            "get": {
-                "security": [
-                    {
-                        "BearerPreAuth": []
-                    }
-                ],
-                "description": "Genera el secreto TOTP, lo cifra y devuelve el QR en Base64 más el secreto manual. Solo disponible con JWT temporal (pre-auth). Llamar únicamente si ` + "`" + `totpVinculado` + "`" + ` es false.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Autenticación 2FA"
-                ],
-                "summary": "Obtener QR de vinculación 2FA",
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/ports.QRResult"
-                        }
-                    },
-                    "400": {
-                        "description": "TOTP ya vinculado o error interno",
-                        "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
-                        }
-                    },
-                    "401": {
-                        "description": "Token pre-auth inválido o expirado",
-                        "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/auth/2fa/relink": {
-            "post": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Invalida el secreto TOTP del usuario indicado. En su próximo login, el usuario deberá escanear un nuevo QR. Usar en su lugar ` + "`" + `POST /users/{id}/2fa/reset` + "`" + `.",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Autenticación 2FA"
-                ],
-                "summary": "Admin: resetear 2FA de un usuario (endpoint legacy)",
-                "parameters": [
-                    {
-                        "description": "UUID del usuario a resetear",
-                        "name": "body",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/http.relinkRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "204": {
-                        "description": "Sin contenido"
-                    },
-                    "400": {
-                        "description": "UUID inválido",
-                        "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
-                        }
-                    },
-                    "401": {
-                        "description": "No autenticado",
-                        "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
-                        }
-                    },
-                    "403": {
-                        "description": "Sin permisos o reset fallido",
-                        "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/auth/2fa/verify": {
-            "post": {
-                "security": [
-                    {
-                        "BearerPreAuth": []
-                    }
-                ],
-                "description": "Recibe el código de 6 dígitos del autenticador. Si es correcto emite el ` + "`" + `accessToken` + "`" + ` (8h) y el ` + "`" + `refreshToken` + "`" + ` (30 días) con 2FA completado. Funciona tanto para la primera vinculación como para logins posteriores.",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Autenticación 2FA"
-                ],
-                "summary": "Verificar código TOTP → obtener tokens definitivos",
-                "parameters": [
-                    {
-                        "description": "Código TOTP de 6 dígitos",
-                        "name": "body",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/http.verificarTotpRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/ports.TokenResult"
-                        }
-                    },
-                    "400": {
-                        "description": "Código inválido (no tiene 6 dígitos)",
-                        "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
-                        }
-                    },
-                    "401": {
-                        "description": "Código TOTP incorrecto",
-                        "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/auth/login": {
-            "post": {
-                "description": "Valida email y contraseña. Si son correctas emite un JWT temporal (5 min) para continuar el flujo 2FA. El campo ` + "`" + `totpVinculado` + "`" + ` indica si el usuario debe escanear el QR (false) o ingresar el código TOTP (true). El campo ` + "`" + `cambioContrasenaRequerido` + "`" + ` indica si la contraseña es temporal y debe cambiarse.",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Autenticación"
-                ],
-                "summary": "Login de usuario",
-                "parameters": [
-                    {
-                        "description": "Credenciales de acceso",
-                        "name": "body",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/http.LoginRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/ports.LoginResult"
-                        }
-                    },
-                    "400": {
-                        "description": "Formato de petición inválido",
-                        "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
-                        }
-                    },
-                    "401": {
-                        "description": "Credenciales incorrectas",
-                        "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/auth/logout": {
-            "post": {
-                "description": "Invalida la sesión asociada al refresh token recibido. El frontend debe descartar los tokens locales. Responde 204 sin body.",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Autenticación"
-                ],
-                "summary": "Cerrar sesión (logout)",
-                "parameters": [
-                    {
-                        "description": "Token de refresco de la sesión a cerrar",
-                        "name": "body",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/http.LogoutRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "204": {
-                        "description": "Sin contenido"
-                    },
-                    "400": {
-                        "description": "Formato de petición inválido",
-                        "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
-                        }
-                    },
-                    "401": {
-                        "description": "Refresh token inválido o sesión ya cerrada",
-                        "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/auth/refresh": {
-            "post": {
-                "description": "Recibe un refresh token válido y emite un nuevo access token (8h). El refresh token no cambia.",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Autenticación"
-                ],
-                "summary": "Renovar access token",
-                "parameters": [
-                    {
-                        "description": "Refresh token",
-                        "name": "body",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/http.refreshRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/ports.TokenResult"
-                        }
-                    },
-                    "400": {
-                        "description": "Body inválido",
-                        "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
-                        }
-                    },
-                    "401": {
-                        "description": "Refresh token inválido o expirado",
-                        "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/roles": {
-            "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Devuelve los roles definidos en el sistema (ADMIN y OPERATOR). Útil para poblar selectores en el frontend al crear o editar usuarios.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Usuarios (Admin)"
-                ],
-                "summary": "Listar roles disponibles",
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "array",
-                            "items": {
-                                "$ref": "#/definitions/ports.RolDTO"
-                            }
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "403": {
-                        "description": "Forbidden",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    }
-                }
-            }
-        },
         "/admin/users": {
             "get": {
                 "security": [
@@ -1109,6 +786,335 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/2fa/qr": {
+            "get": {
+                "security": [
+                    {
+                        "BearerPreAuth": []
+                    }
+                ],
+                "description": "Genera el secreto TOTP, lo cifra y devuelve el QR en Base64 más el secreto manual. Solo disponible con JWT temporal (pre-auth). Llamar únicamente si ` + "`" + `totpVinculado` + "`" + ` es false. Si el usuario ya tiene 2FA activo, se rechaza con 409.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Autenticación 2FA"
+                ],
+                "summary": "Obtener QR de vinculación 2FA",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/ports.QRResult"
+                        }
+                    },
+                    "400": {
+                        "description": "Error interno al generar el QR",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Token pre-auth inválido o expirado",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "El 2FA ya está activo, requiere reset administrativo",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/2fa/relink": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Invalida el secreto TOTP del usuario indicado. En su próximo login, el usuario deberá escanear un nuevo QR. Usar en su lugar ` + "`" + `POST /users/{id}/2fa/reset` + "`" + `.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Autenticación 2FA"
+                ],
+                "summary": "Admin: resetear 2FA de un usuario (endpoint legacy)",
+                "parameters": [
+                    {
+                        "description": "UUID del usuario a resetear",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/http.relinkRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "Sin contenido"
+                    },
+                    "400": {
+                        "description": "UUID inválido",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "No autenticado",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Sin permisos o reset fallido",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/2fa/verify": {
+            "post": {
+                "security": [
+                    {
+                        "BearerPreAuth": []
+                    }
+                ],
+                "description": "Recibe el código de 6 dígitos del autenticador. Si es correcto emite el ` + "`" + `accessToken` + "`" + ` (8h) y el ` + "`" + `refreshToken` + "`" + ` (30 días) con 2FA completado. Funciona tanto para la primera vinculación como para logins posteriores.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Autenticación 2FA"
+                ],
+                "summary": "Verificar código TOTP → obtener tokens definitivos",
+                "parameters": [
+                    {
+                        "description": "Código TOTP de 6 dígitos",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/http.verificarTotpRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/ports.TokenResult"
+                        }
+                    },
+                    "400": {
+                        "description": "Código inválido (no tiene 6 dígitos)",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Código TOTP incorrecto",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/login": {
+            "post": {
+                "description": "Valida email y contraseña. Si son correctas emite un JWT temporal (5 min) para continuar el flujo 2FA. El campo ` + "`" + `totpVinculado` + "`" + ` indica si el usuario debe escanear el QR (false) o ingresar el código TOTP (true). El campo ` + "`" + `cambioContrasenaRequerido` + "`" + ` indica si la contraseña es temporal y debe cambiarse.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Autenticación"
+                ],
+                "summary": "Login de usuario",
+                "parameters": [
+                    {
+                        "description": "Credenciales de acceso",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/http.LoginRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/ports.LoginResult"
+                        }
+                    },
+                    "400": {
+                        "description": "Formato de petición inválido",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Credenciales incorrectas",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/logout": {
+            "post": {
+                "description": "Invalida la sesión asociada al refresh token recibido. El frontend debe descartar los tokens locales. Responde 204 sin body.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Autenticación"
+                ],
+                "summary": "Cerrar sesión (logout)",
+                "parameters": [
+                    {
+                        "description": "Token de refresco de la sesión a cerrar",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/http.LogoutRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "Sin contenido"
+                    },
+                    "400": {
+                        "description": "Formato de petición inválido",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Refresh token inválido o sesión ya cerrada",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/refresh": {
+            "post": {
+                "description": "Recibe un refresh token válido y emite un nuevo access token (8h). El refresh token no cambia.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Autenticación"
+                ],
+                "summary": "Renovar access token",
+                "parameters": [
+                    {
+                        "description": "Refresh token",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/http.refreshRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/ports.TokenResult"
+                        }
+                    },
+                    "400": {
+                        "description": "Body inválido",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Refresh token inválido o expirado",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/roles": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Devuelve los roles definidos en el sistema (ADMIN y OPERATOR). Útil para poblar selectores en el frontend al crear o editar usuarios.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Usuarios (Admin)"
+                ],
+                "summary": "Listar roles disponibles",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/ports.RolDTO"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {

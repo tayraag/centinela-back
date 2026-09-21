@@ -272,7 +272,7 @@ Headers:
 
 Una vez que el usuario escaneó el QR o ingresó la clave manual, el frontend pasa al paso 4 (Verificación 2FA) para confirmar que la vinculación fue exitosa.
 
-**Respuestas de Error (400 / 401)**
+**Respuestas de Error (400 / 401 / 409)**
 
 ```json
 {
@@ -287,6 +287,16 @@ Una vez que el usuario escaneó el QR o ingresó la clave manual, el frontend pa
   "message": "Se requiere un token pre-autenticación para esta ruta."
 }
 ```
+
+```json
+// 409 Conflict — El usuario ya tiene 2FA activo
+{
+  "errorCode": "TOTP_ALREADY_LINKED",
+  "message": "el doble factor ya está activo. Para regenerar el QR se requiere un restablecimiento administrativo"
+}
+```
+
+> ⚠️ Si el frontend recibe `409 TOTP_ALREADY_LINKED`, **no** debe mostrar la pantalla de QR. Significa que el usuario ya completó la vinculación y solo un administrador puede resetearla vía `POST /api/admin/users/:id/2fa/reset` o `POST /api/auth/2fa/relink`.
 
 #### 4\. Verificación 2FA
 

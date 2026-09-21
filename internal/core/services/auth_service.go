@@ -125,6 +125,12 @@ func (s *authServiceImpl) ObtenerQRParaVinculacion(ctx context.Context, jtiTempo
 	// Verificar que el JWT secret es correcto (no expuesto al cliente)
 	_ = jwtSecret // Se usa en el middleware, aquí solo necesitamos la sesión de BD
 
+	// Rechazar si el usuario ya tiene TOTP vinculado (requiere reset administrativo para reemplazar)
+	if usuario.TotpVinculado {
+		log.Printf("[2FA] qr rejected | user=%s | reason=totp_already_linked", usuario.EmailUsuario)
+		return nil, fmt.Errorf("el doble factor ya está activo. Para regenerar el QR se requiere un restablecimiento administrativo")
+	}
+
 	log.Printf("[2FA] qr requested | user=%s | jti=%s", usuario.EmailUsuario, jtiTemporal)
 
 	// 3. Generar nuevo secreto TOTP
