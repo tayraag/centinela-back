@@ -124,7 +124,7 @@ func (h *AuthHandler) ObtenerQR(c *gin.Context) {
 	result, err := h.service.ObtenerQRParaVinculacion(c.Request.Context(), jtiStr)
 	if err != nil {
 		if strings.Contains(err.Error(), "el doble factor ya está activo") {
-			SendError(c, http.StatusConflict, "TOTP_ALREADY_LINKED", err.Error())
+			SendError(c, http.StatusConflict, "TWO_FACTOR_ALREADY_ENABLED", err.Error())
 		} else {
 			SendError(c, http.StatusBadRequest, "QR_ERROR", err.Error())
 		}
