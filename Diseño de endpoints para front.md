@@ -1,8 +1,8 @@
-####  0.1 Recuperar contraseña
+#### 0.1 Recuperar contraseña
 
 El backend recibe el email, valida su formato, genera el código temporal de 6 dígitos y define su fecha de expiración.&nbsp;
 
-- El usuario presiona "Enviar enlace de recuperación" en la primera pantalla.&nbsp;  
+- El usuario presiona "Enviar enlace de recuperación" en la primera pantalla.&nbsp;
 - **POST /api/auth/recovery/request**
 
 **1\. Petición (Frontend ➡️ Backend)**
@@ -29,8 +29,8 @@ El frontend recibe el tiempo para poder mostrar el contador.&nbsp;
 
 El backend recibe el código de verificación y valida que sea correcto y no haya expirado.
 
-- Cuando el usuario ingresa los 6 dígitos y presiona "Verificar código" en la segunda pantalla. El backend recibe el email, genera el código en Redis y lo envía. Si es un reenvío, pisa la clave anterior en Redis, invalidando el código viejo y reiniciando el temporizador.&nbsp;  
-- **POST  /api/auth/recovery/verify**&nbsp;
+- Cuando el usuario ingresa los 6 dígitos y presiona "Verificar código" en la segunda pantalla. El backend recibe el email, genera el código en Redis y lo envía. Si es un reenvío, pisa la clave anterior en Redis, invalidando el código viejo y reiniciando el temporizador.&nbsp;
+- **POST /api/auth/recovery/verify**&nbsp;
 
 **1\. Petición (Frontend ➡️ Backend)**
 
@@ -256,7 +256,7 @@ Headers:
   Authorization: Bearer <jwtTemporal>   ← el JWT recibido en el paso de login
 ```
 
-*No se envía body.*
+_No se envía body._
 
 **Respuesta Exitosa (200 OK)**
 
@@ -296,7 +296,7 @@ Una vez que el usuario escaneó el QR o ingresó la clave manual, el frontend pa
 }
 ```
 
-> ⚠️ Si el frontend recibe `409 TOTP_ALREADY_LINKED`, **no** debe mostrar la pantalla de QR. Significa que el usuario ya completó la vinculación y solo un administrador puede resetearla vía `POST /api/admin/users/:id/2fa/reset` o `POST /api/auth/2fa/relink`.
+> ⚠️ Si el frontend recibe `409 TOTP_ALREADY_LINKED`, **no** debe mostrar la pantalla de QR. Significa que el usuario ya completó la vinculación y solo un administrador puede resetearla vía `POST /api/admin/users/:id/2fa/reset`.
 
 #### 4\. Verificación 2FA
 
@@ -373,19 +373,20 @@ Al validar el código correctamente, el backend entrega el par de tokens definit
 >
 > **Workaround actual implementado:** Un administrador puede resetear el 2FA de un usuario vía el siguiente endpoint protegido. El usuario afectado deberá completar el flujo de vinculación inicial (QR) en su próximo login.
 >
-> **POST /api/auth/2fa/relink**
+> **POST /api/admin/users/:id/2fa/reset**
+>
 > ```
 > Headers:
 >   Authorization: Bearer <accessToken de un ADMIN>
 > ```
-> ```json
-> { "usuarioId": "uuid-del-usuario-a-resetear" }
-> ```
-> Respuesta exitosa: `204 No Content`. El sistema invalida todas las sesiones activas del usuario y resetea su TOTP.
+>
+> _(El `id` del usuario a resetear se envía en la URL)_
+>
+> Respuesta exitosa: `200 OK`. El sistema invalida todas las sesiones activas del usuario y resetea su TOTP.
 
 ---
 
-*El flujo de auto-recuperación propuesto a continuación es preliminar y está sujeto a revisión:*
+_El flujo de auto-recuperación propuesto a continuación es preliminar y está sujeto a revisión:_
 
 #### 5\. Recuperación / Revinculación de 2FA (propuesta preliminar)
 
@@ -445,7 +446,7 @@ El backend valida ambos datos. Si son correctos, genera los datos del nuevo TOTP
 
 &nbsp;
 
-En lugar de crear un endpoint nuevo, el frontend le pega al mismo endpoint de la Configuración Inicial de 2FA. La única diferencia es que en los *Headers* envían el `recovery_token` que obtuvieron en el paso anterior.&nbsp;
+En lugar de crear un endpoint nuevo, el frontend le pega al mismo endpoint de la Configuración Inicial de 2FA. La única diferencia es que en los _Headers_ envían el `recovery_token` que obtuvieron en el paso anterior.&nbsp;
 
 **GET /api/auth/2fa/setup**&nbsp;&nbsp;
 
@@ -481,7 +482,7 @@ Confirmar y Sobrescribir: Nuevamente, reutilizamos el endpoint que confirma la c
 }
 ```
 
-(Aquí el backend hace la magia: valida el código nuevo, sobrescribe el secreto\_totp\_cifrado viejo en la base de datos con el nuevo, e invalida los códigos de respaldo anteriores).&nbsp;
+(Aquí el backend hace la magia: valida el código nuevo, sobrescribe el secreto_totp_cifrado viejo en la base de datos con el nuevo, e invalida los códigos de respaldo anteriores).&nbsp;
 
 #### 6\. Dashboard
 
@@ -489,7 +490,7 @@ Confirmar y Sobrescribir: Nuevamente, reutilizamos el endpoint que confirma la c
 
 \--Dividir todos los datos que se piden en el dashboard en json separados por temáticas, el frontend puede cargar los componentes gráficos en paralelo sin tener que esperar un json gigantesco que el backend tarda en procesar.
 
-	\-El documento exige que el usuario pueda seleccionar un rango para ver las métricas (minuto, última hora, 6 horas, día o 7 días). El `timeframe` es el parámetro que el frontend debe enviar en la URL (por ejemplo: `?timeframe=6h`) para avisar qué opción eligió el usuario en la interfaz.
+    \-El documento exige que el usuario pueda seleccionar un rango para ver las métricas (minuto, última hora, 6 horas, día o 7 días). El `timeframe` es el parámetro que el frontend debe enviar en la URL (por ejemplo: `?timeframe=6h`) para avisar qué opción eligió el usuario en la interfaz.
 
 Cuando recibís ese parámetro, tu backend consulta a la base de datos RRD de Proxmox. La principal ventaja de la base de datos RRD es que agrupa y promedia los datos en intervalos de tiempo para ahorrar espacio. Entonces, si el frontend te pide un filtro temporal de 7 días, tu backend no va a devolver millones de registros (uno por cada segundo de la semana). En su lugar, RRD entrega los datos ya promediados y agrupados, lo que te permite pasarle un array compacto al frontend para que el gráfico se dibuje rápido y sin colapsar.
 
@@ -524,11 +525,7 @@ Este endpoint carga de forma instantánea los números principales, el estado de
     "runningPercent": 66.67,
     "stoppedPercent": 33.33
   },
-  "permissions": [
-    "instance:start",
-    "instance:stop",
-    "instance:reboot"
-  ],
+  "permissions": ["instance:start", "instance:stop", "instance:reboot"],
   "activeOperations": [
     {
       "taskId": "UPID:pve1:0001:...",
@@ -684,19 +681,8 @@ Con respecto a los query params en la url DE EJEMPLO de arriba:
       "storageTotalGb": 50.0,
       "storageUsagePercent": 41.0,
       "mainIp": "192.168.1.50",
-      "permissions": [
-        "START",
-        "STOP",
-        "REBOOT",
-        "EDIT",
-        "SNAPSHOT",
-        "DELETE"
-      ],
-      "availableActions": [
-        "STOP",
-        "REBOOT",
-        "SNAPSHOT"
-      ],//Se separó estrictamente permissions (las acciones que el rol del usuario tiene permitidas) de availableActions (las acciones que el estado actual de la máquina permite ejecutar). Un operador puede tener permiso de iniciar (START), pero si la máquina ya está encendida, esa opción desaparece de las acciones disponibles. 
+      "permissions": ["START", "STOP", "REBOOT", "EDIT", "SNAPSHOT", "DELETE"],
+      "availableActions": ["STOP", "REBOOT", "SNAPSHOT"], //Se separó estrictamente permissions (las acciones que el rol del usuario tiene permitidas) de availableActions (las acciones que el estado actual de la máquina permite ejecutar). Un operador puede tener permiso de iniciar (START), pero si la máquina ya está encendida, esa opción desaparece de las acciones disponibles.
       "activeTask": null //devuelve null (si la maquina está inactiva) o el estado actual de la acción
     },
     {
@@ -711,19 +697,8 @@ Con respecto a los query params en la url DE EJEMPLO de arriba:
       "storageTotalGb": 20.0,
       "storageUsagePercent": 50.0,
       "mainIp": null,
-      "permissions": [
-        "START",
-        "STOP",
-        "REBOOT",
-        "EDIT",
-        "SNAPSHOT",
-        "DELETE"
-      ],
-      "availableActions": [
-        "START",
-        "EDIT",
-        "DELETE"
-      ],
+      "permissions": ["START", "STOP", "REBOOT", "EDIT", "SNAPSHOT", "DELETE"],
+      "availableActions": ["START", "EDIT", "DELETE"],
       "activeTask": "STARTING"
     }
   ]
@@ -757,7 +732,11 @@ Este es el primer endpoint que el frontend consume al entrar al detalle. Aliment
   "mainIp": "192.168.1.50",
   "ipAddresses": [
     { "address": "192.168.1.50", "version": "IPv4", "isPrimary": true },
-    { "address": "fe80::1ff:fe23:4567:890a", "version": "IPv6", "isPrimary": false }
+    {
+      "address": "fe80::1ff:fe23:4567:890a",
+      "version": "IPv6",
+      "isPrimary": false
+    }
   ],
   "permissions": ["START", "STOP", "REBOOT", "EDIT", "SNAPSHOT"],
   "availableActions": ["STOP", "REBOOT", "SNAPSHOT"],
@@ -813,14 +792,16 @@ En lugar de repetir el histórico en cada pestaña (8.0 a 8.3), centralizamos la
 
 ```json
 {
-  "cpu": [
-    { "timestamp": "2026-08-28T16:00:00Z", "usedPercent": 40.0 }
-  ],
-  "ram": [
-    { "timestamp": "2026-08-28T16:00:00Z", "usedPercent": 55.2 }
-  ],
+  "cpu": [{ "timestamp": "2026-08-28T16:00:00Z", "usedPercent": 40.0 }],
+  "ram": [{ "timestamp": "2026-08-28T16:00:00Z", "usedPercent": 55.2 }],
   "disk": [
-    { "timestamp": "2026-08-28T16:00:00Z", "usedPercent": 40.0, "readMb": 15.5, "writeMb": 5.2, "iops": 250 }
+    {
+      "timestamp": "2026-08-28T16:00:00Z",
+      "usedPercent": 40.0,
+      "readMb": 15.5,
+      "writeMb": 5.2,
+      "iops": 250
+    }
   ],
   "network": [
     { "timestamp": "2026-08-28T16:00:00Z", "inMb": 10.2, "outMb": 4.1 }
@@ -912,12 +893,13 @@ Resumen de almacenamiento global de la instancia y desglose exacto de cada disco
     "usagePercent": 40.0
   },
   "storageDetails": {
-    "id": "local-lvm", 
-    "type": "lvmthin", 
-    "totalCapacityGb": 500.0, 
-    "usedGb": 200.0, 
-    "availableGb": 300.0, 
-    "thinProvisioning": true },
+    "id": "local-lvm",
+    "type": "lvmthin",
+    "totalCapacityGb": 500.0,
+    "usedGb": 200.0,
+    "availableGb": 300.0,
+    "thinProvisioning": true
+  },
   "disks": [
     {
       "id": "scsi0",
@@ -986,7 +968,14 @@ Configuración completa de conectividad, direcciones e interfaces secundarias.
     "firewallEnabled": true
   },
   "ipAddresses": [
-    { "version": "IPv4", "address": "192.168.1.50", "mask": "24", "gateway": "192.168.1.1", "isPrimary": true, "status": "active" }
+    {
+      "version": "IPv4",
+      "address": "192.168.1.50",
+      "mask": "24",
+      "gateway": "192.168.1.1",
+      "isPrimary": true,
+      "status": "active"
+    }
   ],
   "dns": {
     "primary": "1.1.1.1",
@@ -1227,9 +1216,7 @@ Lista los bridges (puentes de red) disponibles en ese nodo.&nbsp;
 **GET /api/nodes/{nodeId}/networks**&nbsp;
 
 ```json
-[
-  { "id": "vmbr0", "status": "active" }
-]
+[{ "id": "vmbr0", "status": "active" }]
 ```
 
 #### 9.4 Crear instancia \- Paso 5: Sistema Operativo
@@ -1306,7 +1293,7 @@ Los del front no nos pidieron ninguna contraseña para LXC. Pero el gurú vio el
   "type": "LXC",
   "node": "pve1",
   "name": "db-cache",
-  "password": "PasswordSegura123!", 
+  "password": "PasswordSegura123!",
   "cpu": {
     "cores": 1
   },
@@ -1339,7 +1326,7 @@ Los del front no nos pidieron ninguna contraseña para LXC. Pero el gurú vio el
 
 &nbsp;
 
-Al recibir el POST, el backend valida internamente que los recursos (CPU/RAM) sigan existiendo en Proxmox. Si los recursos se agotaron milisegundos antes, devuelve un `409 Conflict` o `400 Bad Request` con un error claro (ej. *"Recursos insuficientes en el nodo pve1"*). Si los recursos están disponibles y se dispara la orden, como crear una máquina toma tiempo, el backend captura el UPID de Proxmox, lo transforma en un ID interno seguro, y devuelve la **Respuesta Exitosa Unificada (202 Accepted)**:
+Al recibir el POST, el backend valida internamente que los recursos (CPU/RAM) sigan existiendo en Proxmox. Si los recursos se agotaron milisegundos antes, devuelve un `409 Conflict` o `400 Bad Request` con un error claro (ej. _"Recursos insuficientes en el nodo pve1"_). Si los recursos están disponibles y se dispara la orden, como crear una máquina toma tiempo, el backend captura el UPID de Proxmox, lo transforma en un ID interno seguro, y devuelve la **Respuesta Exitosa Unificada (202 Accepted)**:
 
 &nbsp;
 
@@ -1372,11 +1359,11 @@ Mediante query parameters:
 
 **GET /api/audit?page=1\&limit=10\&from=2024-05-01\&to=2024-05-08\&result=SUCCESS**
 
-* GET /api/audit: Es la ruta base del endpoint encargada de consultar y devolver los registros de auditoría almacenados en la base de datos.  
-* page=1: Indica el número de la página actual que se está solicitando (útil para la paginación de la tabla).  
-* limit=10: Define la cantidad máxima de registros que el backend debe devolver por cada página (en este caso, 10 elementos por vista).  
-* from=2024-05-01 y to=2024-05-08: Son los parámetros que aplican el filtro temporal, limitando la búsqueda de eventos únicamente a los ocurridos dentro de ese rango de fechas (desde el 1 de mayo hasta el 8 de mayo de 2024).  
-* result=SUCCESS: Filtra los registros para mostrar exclusivamente aquellas acciones cuyo resultado haya sido exitoso.
+- GET /api/audit: Es la ruta base del endpoint encargada de consultar y devolver los registros de auditoría almacenados en la base de datos.
+- page=1: Indica el número de la página actual que se está solicitando (útil para la paginación de la tabla).
+- limit=10: Define la cantidad máxima de registros que el backend debe devolver por cada página (en este caso, 10 elementos por vista).
+- from=2024-05-01 y to=2024-05-08: Son los parámetros que aplican el filtro temporal, limitando la búsqueda de eventos únicamente a los ocurridos dentro de ese rango de fechas (desde el 1 de mayo hasta el 8 de mayo de 2024).
+- result=SUCCESS: Filtra los registros para mostrar exclusivamente aquellas acciones cuyo resultado haya sido exitoso.
 
 &nbsp;
 
@@ -1431,7 +1418,7 @@ El frontend necesita la cantidad total y desglosada por roles para mostrar en la
 
 &nbsp;
 
-**GET /api/users/stats**
+**GET /api/admin/users/stats**
 
 &nbsp;
 
@@ -1450,11 +1437,11 @@ El frontend necesita la cantidad total y desglosada por roles para mostrar en la
 
 #### 11.2 Gestión de usuarios (Listado y Consulta de Usuarios)
 
-El frontend necesita traer la lista de usuarios de la organización con filtros, ordenamiento y búsqueda textual. La URL soportará *Query Parameters* (ej: `GET /api/users?role=ADMIN&status=active&search=juan`).
+El frontend necesita traer la lista de usuarios de la organización con filtros, ordenamiento y búsqueda textual. La URL soportará _Query Parameters_ (ej: `GET /api/admin/users?role=ADMIN&status=active&search=juan`).
 
 &nbsp;
 
-**GET /api/users**
+**GET /api/admin/users**
 
 &nbsp;
 
@@ -1475,7 +1462,7 @@ Devuelve un array directo (Slice). Se incluye el indicador visual para saber si 
     "isActive": true,
     "lastLoginAt": "2026-08-27T10:00:00Z",
     "is2faActive": false,
-  	"createdAt": "2026-08-01T14:30:00Z",
+    "createdAt": "2026-08-01T14:30:00Z",
     "isCurrentUser": true
   },
   {
@@ -1517,7 +1504,7 @@ Antes de poder crear un usuario, el frontend necesita saber qué roles existen p
   {
     "id": "role-uuid-2",
     "name": "OPERATOR",
-"description": "Acceso restringido solo a instancias asignadas."
+    "description": "Acceso restringido solo a instancias asignadas."
   }
 ]
 ```
@@ -1534,7 +1521,7 @@ El frontend envía los datos básicos ingresados en el formulario. El backend se
 
 Petición (Frontend ➡️ Backend)&nbsp;
 
-**POST /api/users**
+**POST /api/admin/users**
 
 &nbsp;
 
@@ -1593,7 +1580,7 @@ El frontend necesita traer el perfil completo del usuario, incluyendo qué insta
 
 &nbsp;
 
-**GET /api/users/{userId}**&nbsp;
+**GET /api/admin/users/{userId}**&nbsp;
 
 &nbsp;
 
@@ -1626,7 +1613,7 @@ El frontend necesita traer el perfil completo del usuario, incluyendo qué insta
 
 Petición (Frontend ➡️ Backend):
 
-**PUT /api/users/{userId}** (Para actualizar datos, rol o estado)&nbsp;
+**PUT /api/admin/users/{userId}** (Para actualizar datos, rol o estado)&nbsp;
 
 &nbsp;
 
@@ -1641,7 +1628,7 @@ Petición (Frontend ➡️ Backend):
 
 &nbsp;
 
-**DELETE /api/users/{userId}** (Para eliminar al usuario)&nbsp;
+**DELETE /api/admin/users/{userId}** (Para eliminar al usuario)&nbsp;
 
 Devuelve un simple `204 No Content` sin cuerpo de respuesta.&nbsp;
 
@@ -1653,7 +1640,7 @@ Para cumplir con el requisito de "asignar, modificar o quitar acceso a una insta
 
 Petición (Frontend ➡️ Backend):
 
-**PUT /api/users/{userId}/instances**
+**PUT /api/admin/users/{userId}/instances**
 
 &nbsp;
 
@@ -1668,11 +1655,11 @@ Petición (Frontend ➡️ Backend):
 
 #### 13.2 Actividad Reciente del Usuario&nbsp;
 
-El frontend necesita mostrar el historial de acciones exclusivas de este usuario, con filtros y ordenado por fecha. La URL soportará filtros (ej: `GET /api/users/{userId}/activity?action=START`).&nbsp;
+El frontend necesita mostrar el historial de acciones exclusivas de este usuario, con filtros y ordenado por fecha. La URL soportará filtros (ej: `GET /api/admin/users/{userId}/activity?action=START`).&nbsp;
 
 &nbsp;
 
-**GET /api/users/{userId}/activity**&nbsp;
+**GET /api/admin/users/{userId}/activity**&nbsp;
 
 &nbsp;
 
@@ -1703,7 +1690,7 @@ El administrador debe poder ver desde dónde está conectado el usuario y poder 
 
 &nbsp;
 
-**GET /api/users/{userId}/sessions**&nbsp;
+**GET /api/admin/users/{userId}/sessions**&nbsp;
 
 &nbsp;
 
@@ -1725,9 +1712,9 @@ El administrador debe poder ver desde dónde está conectado el usuario y poder 
 ]
 ```
 
-**DELETE /api/users/{userId}/sessions** (Cierra todas las sesiones del usuario).&nbsp;
+**DELETE /api/admin/users/{userId}/sessions** (Cierra todas las sesiones del usuario).&nbsp;
 
-**DELETE /api/users/{userId}/sessions/{sessionId}** (Cierra una sesión en particular).&nbsp;
+**DELETE /api/admin/users/{userId}/sessions/{sessionId}** (Cierra una sesión en particular).&nbsp;
 
 #### 13.4 Seguridad (2FA y Contraseña)&nbsp;&nbsp;
 
@@ -1735,7 +1722,7 @@ El administrador puede invalidar el 2FA si el usuario perdió el celular, o gene
 
 &nbsp;
 
-**POST /api/users/{userId}/2fa/reset**&nbsp;
+**POST /api/admin/users/{userId}/2fa/reset**&nbsp;
 
 Inicia el flujo de revinculación invalidando el 2FA actual.&nbsp;
 
@@ -1747,7 +1734,7 @@ Inicia el flujo de revinculación invalidando el 2FA actual.&nbsp;
 
 &nbsp;
 
-**POST /api/users/{userId}/password/reset**&nbsp;
+**POST /api/admin/users/{userId}/password/reset**&nbsp;
 
 Genera una clave temporal, la asocia al usuario y devuelve el resultado.&nbsp;&nbsp;
 
@@ -1897,7 +1884,7 @@ Respuesta Exitosa (200 OK):&nbsp;
     "startedAt": "2026-08-27T08:00:00Z",
     "lastActivityAt": "2026-08-27T19:45:00Z",
     "isActive": true,
-    "isCurrent": true 
+    "isCurrent": true
   },
   {
     "id": "session-uuid-2",
@@ -1911,7 +1898,6 @@ Respuesta Exitosa (200 OK):&nbsp;
     "isCurrent": false
   }
 ]
-
 ```
 
 &nbsp;
@@ -1935,7 +1921,7 @@ Lo devolverá el backend en cualquier endpoint (ej. `DELETE /api/instances/101`)
 }
 ```
 
-*(Nota: Como dice el documento, el Frontend ya conoce normalmente el usuario autenticado y su rol gracias al JWT, por lo que no es estrictamente necesario que el backend se los repita en cada error 403, manteniendo la respuesta más liviana)*.&nbsp;
+_(Nota: Como dice el documento, el Frontend ya conoce normalmente el usuario autenticado y su rol gracias al JWT, por lo que no es estrictamente necesario que el backend se los repita en cada error 403, manteniendo la respuesta más liviana)_.&nbsp;
 
 #### 16\. Página no encontrada – 404
 

@@ -42,13 +42,6 @@ definitions:
     required:
     - refreshToken
     type: object
-  http.relinkRequest:
-    properties:
-      usuarioId:
-        type: string
-    required:
-    - usuarioId
-    type: object
   http.verificarTotpRequest:
     properties:
       codigo:
@@ -626,7 +619,7 @@ paths:
             type: object
       security:
       - BearerAuth: []
-      summary: 'Admin: resetear 2FA del usuario'
+      summary: Resetear 2FA del usuario
       tags:
       - Usuarios (Admin)
   /admin/users/{id}/activity:
@@ -776,7 +769,7 @@ paths:
             type: object
       security:
       - BearerAuth: []
-      summary: 'Admin: resetear contraseña del usuario'
+      summary: Resetear contraseña del usuario
       tags:
       - Usuarios (Admin)
   /auth/2fa/qr:
@@ -807,41 +800,6 @@ paths:
       security:
       - BearerPreAuth: []
       summary: Obtener QR de vinculación 2FA
-      tags:
-      - Autenticación 2FA
-  /auth/2fa/relink:
-    post:
-      consumes:
-      - application/json
-      description: Invalida el secreto TOTP del usuario indicado. En su próximo login,
-        el usuario deberá escanear un nuevo QR. Usar en su lugar `POST /users/{id}/2fa/reset`.
-      parameters:
-      - description: UUID del usuario a resetear
-        in: body
-        name: body
-        required: true
-        schema:
-          $ref: '#/definitions/http.relinkRequest'
-      produces:
-      - application/json
-      responses:
-        "204":
-          description: Sin contenido
-        "400":
-          description: UUID inválido
-          schema:
-            $ref: '#/definitions/http.ErrorResponse'
-        "401":
-          description: No autenticado
-          schema:
-            $ref: '#/definitions/http.ErrorResponse'
-        "403":
-          description: Sin permisos o reset fallido
-          schema:
-            $ref: '#/definitions/http.ErrorResponse'
-      security:
-      - BearerAuth: []
-      summary: 'Admin: resetear 2FA de un usuario (endpoint legacy)'
       tags:
       - Autenticación 2FA
   /auth/2fa/verify:

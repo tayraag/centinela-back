@@ -388,30 +388,6 @@ func (s *authServiceImpl) CerrarSesion(ctx context.Context, refreshToken string)
 }
 
 // ==========================================
-// SolicitarRevinculacion
-// ==========================================
-
-// SolicitarRevinculacion permite a un administrador resetear el 2FA de otro usuario.
-// El jtiAdmin corresponde al JTI del access token del administrador que hace la solicitud.
-// Nota: la verificación de rol ADMIN ya fue hecha por el middleware RequireAuth + RequireRole.
-func (s *authServiceImpl) SolicitarRevinculacion(ctx context.Context, jtiAdmin string, targetUsuarioID uuid.UUID) error {
-	log.Printf("[ADMIN] relink requested | target_user=%s | admin_jti=%s", targetUsuarioID, jtiAdmin)
-
-	// 1. Resetear el TOTP del usuario objetivo
-	if err := s.repo.ResetearTotp(ctx, targetUsuarioID); err != nil {
-		return fmt.Errorf("error al resetear TOTP: %w", err)
-	}
-
-	// 2. Invalidar todas las sesiones activas del usuario objetivo (forzar re-login)
-	if err := s.repo.InvalidarSesionesDeUsuario(ctx, targetUsuarioID); err != nil {
-		return fmt.Errorf("error al invalidar sesiones del usuario: %w", err)
-	}
-
-	log.Printf("[ADMIN] relink done | target_user=%s | totp_reset=true | sessions_invalidated=true", targetUsuarioID)
-	return nil
-}
-
-// ==========================================
 // Helpers de configuración
 // ==========================================
 

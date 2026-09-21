@@ -342,7 +342,7 @@ func (h *UserHandler) ListarActividad(c *gin.Context) {
 
 // ResetearTotp invalida el 2FA del usuario, forzando revinculación en el próximo login.
 //
-// @Summary      Admin: resetear 2FA del usuario
+// @Summary      Resetear 2FA del usuario
 // @Description  Invalida el secreto TOTP del usuario. En su próximo login deberá escanear un nuevo QR para vincular 2FA. También invalida todas sus sesiones activas.
 // @Tags         Usuarios (Admin)
 // @Produce      json
@@ -375,7 +375,7 @@ func (h *UserHandler) ResetearTotp(c *gin.Context) {
 
 // ResetearContrasena genera una nueva contraseña temporal para el usuario.
 //
-// @Summary      Admin: resetear contraseña del usuario
+// @Summary      Resetear contraseña del usuario
 // @Description  Genera una nueva contraseña temporal segura y la aplica. Devuelve `contrasenaTemp` (solo en esta respuesta). El usuario deberá cambiarla en su próximo acceso. Invalida todas sus sesiones.
 // @Tags         Usuarios (Admin)
 // @Produce      json

@@ -133,13 +133,6 @@ func main() {
 				twoFA.GET("/qr", authHandler.ObtenerQR)
 				twoFA.POST("/verify", authHandler.VerificarTotp)
 			}
-
-			// Ruta de administración (requiere access token + rol ADMIN)
-			auth.POST("/2fa/relink",
-				middleware.RequireAuth(),
-				middleware.RequireRole("ADMIN"),
-				authHandler.SolicitarRevinculacion,
-			)
 		}
 
 		// Roles disponibles (para el selector del formulario)

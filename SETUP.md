@@ -6,11 +6,11 @@ Guía completa para levantar el proyecto desde cero, ejecutar el seed inicial y 
 
 ## Prerrequisitos
 
-| Herramienta | Versión mínima | Verificar |
-|---|---|---|
-| Go | 1.21+ | `go version` |
+| Herramienta             | Versión mínima      | Verificar          |
+| ----------------------- | ------------------- | ------------------ |
+| Go                      | 1.21+               | `go version`       |
 | Docker + Docker Compose | Cualquiera reciente | `docker --version` |
-| Git | Cualquiera | `git --version` |
+| Git                     | Cualquiera          | `git --version`    |
 
 ---
 
@@ -32,14 +32,14 @@ cp cmd/api/.env.example .env
 
 Editar `.env` con valores reales. Los campos obligatorios son:
 
-| Variable | Descripción | Ejemplo |
-|---|---|---|
-| `DB_DSN` | Cadena de conexión PostgreSQL | `host=localhost user=... port=5433 ...` |
-| `JWT_SECRET` | Clave secreta para firmar JWT (≥32 chars) | `mi_clave_super_secreta_de_32_chars` |
-| `JWT_ACCESS_TTL_HOURS` | Vida del access token en horas | `8` |
-| `JWT_REFRESH_TTL_DAYS` | Vida del refresh token en días | `30` |
-| `TOTP_ENCRYPTION_KEY` | Clave AES-256 para cifrar secretos TOTP (exactamente 32 chars ASCII) | `0123456789abcdef0123456789abcdef` |
-| `APP_NAME` | Nombre que aparece en Google Authenticator | `El Centinela` |
+| Variable               | Descripción                                                          | Ejemplo                                 |
+| ---------------------- | -------------------------------------------------------------------- | --------------------------------------- |
+| `DB_DSN`               | Cadena de conexión PostgreSQL                                        | `host=localhost user=... port=5433 ...` |
+| `JWT_SECRET`           | Clave secreta para firmar JWT (≥32 chars)                            | `mi_clave_super_secreta_de_32_chars`    |
+| `JWT_ACCESS_TTL_HOURS` | Vida del access token en horas                                       | `8`                                     |
+| `JWT_REFRESH_TTL_DAYS` | Vida del refresh token en días                                       | `30`                                    |
+| `TOTP_ENCRYPTION_KEY`  | Clave AES-256 para cifrar secretos TOTP (exactamente 32 chars ASCII) | `0123456789abcdef0123456789abcdef`      |
+| `APP_NAME`             | Nombre que aparece en Google Authenticator                           | `El Centinela`                          |
 
 > **Seguridad**: El `.env` ya está en `.gitignore`. Nunca lo commitees.
 
@@ -91,6 +91,7 @@ Si simplemente presionás Enter, usa el valor por defecto:
 ```
 
 Output esperado:
+
 ```
 ✅ Seed completado exitosamente
    Organización : El Centinela (uuid...)
@@ -109,7 +110,6 @@ Output esperado:
 - Si la organización ya existe pero el email es nuevo → reutiliza la organización y crea el usuario.
 - **Nunca borra ni sobreescribe** datos existentes.
 
-
 ---
 
 ## 6. Arrancar el servidor
@@ -122,6 +122,7 @@ go run ./cmd/api/
 ```
 
 Output esperado al iniciar:
+
 ```
 12:00:00 🚀 Iniciando El Centinela Backend...
 12:00:00 ℹ️  Variables de entorno cargadas desde: .env
@@ -153,7 +154,6 @@ Para probar los endpoints necesitás **dos terminales abiertas al mismo tiempo**
 
 **En Windows**: abrí una ventana de **Símbolo del sistema (cmd.exe)** o **PowerShell** desde el mismo directorio del proyecto.
 
-
 ---
 
 ## 7. Flujo completo de autenticación — paso a paso
@@ -172,9 +172,10 @@ Ejecutá en tu terminal:
 curl -X POST http://localhost:8080/api/auth/login -H "Content-Type: application/json" -d "{\"email\":\"juan@empresa.com\",\"contrasena\":\"MiPass123!\"}"
 ```
 
-> *(Ajustá `juan@empresa.com` y `MiPass123!` por las credenciales que configuraste en el seed)*
+> _(Ajustá `juan@empresa.com` y `MiPass123!` por las credenciales que configuraste en el seed)_
 
 **Respuesta esperada:**
+
 ```json
 {
   "jwtTemporal": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
@@ -183,6 +184,7 @@ curl -X POST http://localhost:8080/api/auth/login -H "Content-Type: application/
 ```
 
 **Logs en la terminal del servidor:**
+
 ```
 → POST /api/auth/login | body: {"email":"juan@empresa.com","contrasena":"***"}
 [AUTH] login attempt | email=juan@empresa.com
@@ -203,6 +205,7 @@ curl -X GET http://localhost:8080/api/auth/2fa/qr -H "Authorization: Bearer <JWT
 ```
 
 **Respuesta esperada:**
+
 ```json
 {
   "secretoManual": "K5IJR2GW2KMO6EAW7446LMV7PIW7LRAA",
@@ -211,6 +214,7 @@ curl -X GET http://localhost:8080/api/auth/2fa/qr -H "Authorization: Bearer <JWT
 ```
 
 **Logs en el servidor:**
+
 ```
 → GET /api/auth/2fa/qr
 [2FA] qr requested | user=juan@empresa.com | jti=abc123...
@@ -219,6 +223,7 @@ curl -X GET http://localhost:8080/api/auth/2fa/qr -H "Authorization: Bearer <JWT
 ```
 
 **Vincular en tu aplicación de autenticación:**
+
 - En Google Authenticator / Authy: tocá el botón `+` → `Introducir clave de configuración` (o configuración manual) e ingresá el valor de `secretoManual`.
 
 ---
@@ -232,15 +237,17 @@ curl -X POST http://localhost:8080/api/auth/2fa/verify -H "Authorization: Bearer
 ```
 
 **Respuesta esperada:**
+
 ```json
 {
-  "accessToken":  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
   "refreshToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-  "expiresIn":    28800
+  "expiresIn": 28800
 }
 ```
 
 **Logs en el servidor:**
+
 ```
 → POST /api/auth/2fa/verify | body: {"codigo":"123456"}
 [2FA] totp verify attempt | user=juan@empresa.com | codigo=123456
@@ -258,11 +265,13 @@ curl -X POST http://localhost:8080/api/auth/2fa/verify -H "Authorization: Bearer
 Cuando `totpVinculado: true`, el flujo no pide QR y se hace directamente:
 
 **1. Login:**
+
 ```bash
 curl -X POST http://localhost:8080/api/auth/login -H "Content-Type: application/json" -d "{\"email\":\"juan@empresa.com\",\"contrasena\":\"MiPass123!\"}"
 ```
 
 **2. Verificar TOTP (con el código actual del autenticador):**
+
 ```bash
 curl -X POST http://localhost:8080/api/auth/2fa/verify -H "Authorization: Bearer <JWT_TEMPORAL>" -H "Content-Type: application/json" -d "{\"codigo\":\"<CODIGO_6_DIGITOS>\"}"
 ```
@@ -276,15 +285,17 @@ curl -X POST http://localhost:8080/api/auth/refresh -H "Content-Type: applicatio
 ```
 
 **Respuesta esperada:**
+
 ```json
 {
-  "accessToken":  "eyJ... (nuevo)",
+  "accessToken": "eyJ... (nuevo)",
   "refreshToken": "eyJ... (mismo)",
-  "expiresIn":    28800
+  "expiresIn": 28800
 }
 ```
 
 **Logs en el servidor:**
+
 ```
 → POST /api/auth/refresh | body: {"refreshToken":"eyJ…[jwt]"}
 [AUTH] refresh attempt
@@ -292,58 +303,47 @@ curl -X POST http://localhost:8080/api/auth/refresh -H "Content-Type: applicatio
 ✅ 200 | 4ms | resp: {"accessToken":"eyJ…[jwt]","expiresIn":28800,"refreshToken":"eyJ…[jwt]"}
 ```
 
----
-
-### 7.6 Reset de 2FA de un usuario (solo ADMIN)
-
-```bash
-curl -i -X POST http://localhost:8080/api/auth/2fa/relink -H "Authorization: Bearer <ACCESS_TOKEN>" -H "Content-Type: application/json" -d "{\"usuarioId\":\"<UUID_DEL_USUARIO>\"}"
-```
-
-**Respuesta esperada:** HTTP `204 No Content` (sin body).
-
-**Logs en el servidor:**
-```
-→ POST /api/auth/2fa/relink | body: {"usuarioId":"uuid..."}
-[ADMIN] relink requested | target_user=uuid... | admin_jti=xyz...
-[ADMIN] relink done | target_user=uuid... | totp_reset=true | sessions_invalidated=true
-✅ 204 | 42ms | resp: 
-```
-
----
-
 ## 8. Casos de error (verificar comportamiento)
 
 > El flag `-i` en curl muestra los encabezados de respuesta con el código HTTP (`401`, `403`, etc.).
 
 ### Token sin enviar → 401
+
 ```bash
-curl -i -X POST http://localhost:8080/api/auth/2fa/relink -H "Content-Type: application/json" -d "{\"usuarioId\":\"test\"}"
+curl -i -X GET http://localhost:8080/api/account/profile
 ```
+
 - **Código esperado**: `HTTP/1.1 401 Unauthorized`
 - **Log servidor**: `🔒 401 | 0ms | resp: {"errorCode":"MISSING_TOKEN",...}`
 
 ### JWT pre-auth en ruta que pide access token → 403
+
 ```bash
-curl -i -X POST http://localhost:8080/api/auth/2fa/relink -H "Authorization: Bearer <JWT_TEMPORAL>" -H "Content-Type: application/json" -d "{\"usuarioId\":\"test\"}"
+curl -i -X GET http://localhost:8080/api/account/profile -H "Authorization: Bearer <JWT_TEMPORAL>"
 ```
+
 - **Código esperado**: `HTTP/1.1 403 Forbidden`
 - **Log servidor**: `🚫 403 | 0ms | resp: {"errorCode":"WRONG_TOKEN_TYPE",...}`
 
 ### Contraseña incorrecta → 401
+
 ```bash
 curl -i -X POST http://localhost:8080/api/auth/login -H "Content-Type: application/json" -d "{\"email\":\"juan@empresa.com\",\"contrasena\":\"incorrecta\"}"
 ```
+
 - **Código esperado**: `HTTP/1.1 401 Unauthorized`
 - **Log servidor**: `[AUTH] login failed | email=juan@empresa.com | reason=wrong_password`
 
 ### Código TOTP incorrecto → 401
+
 ```bash
 curl -i -X POST http://localhost:8080/api/auth/2fa/verify -H "Authorization: Bearer <JWT_TEMPORAL>" -H "Content-Type: application/json" -d "{\"codigo\":\"000000\"}"
 ```
+
 - **Código esperado**: `HTTP/1.1 401 Unauthorized`
 - **Log servidor**: `[2FA] totp invalid | user=juan@empresa.com`
-```
+
+````
 
 ---
 
@@ -365,9 +365,10 @@ SELECT usuario_id, LEFT(jti_token, 8) || '...' AS jti, activa, estado2fa, fecha_
 FROM sesion_activas
 ORDER BY fecha_creacion DESC
 LIMIT 10;
-```
+````
 
 **Output esperado:**
+
 ```
  nombre_usuario | rol   | activo | totp_vinculado | hash_preview | secreto
 ----------------+-------+--------+----------------+--------------+----------------------------
@@ -417,27 +418,26 @@ centinela-back/
 
 ## 11. Rutas registradas
 
-| Método | Ruta | Middleware | Descripción |
-|---|---|---|---|
-| POST | `/api/auth/login` | — | Login email+contraseña → JWT temporal (5 min) |
-| POST | `/api/auth/refresh` | — | Refresh token → nuevo access token |
-| GET | `/api/auth/2fa/qr` | `RequirePreAuth` | Generar QR para vincular TOTP |
-| POST | `/api/auth/2fa/verify` | `RequirePreAuth` | Validar código TOTP → access+refresh tokens |
-| POST | `/api/auth/2fa/relink` | `RequireAuth` + `RequireRole("ADMIN")` | Admin resetea 2FA de un usuario |
-| GET | `/api/roles` | `RequireAuth` + `RequireRole("ADMIN")` | Lista roles disponibles (hardcodeado) |
-| GET | `/api/users` | `RequireAuth` + `RequireRole("ADMIN")` | Lista usuarios + summary (?rol, ?activo, ?buscar) |
-| POST | `/api/users` | `RequireAuth` + `RequireRole("ADMIN")` | Crear usuario → devuelve contrasenaTemp |
-| GET | `/api/users/:id` | `RequireAuth` + `RequireRole("ADMIN")` | Detalle con instanciasPermitidas |
-| PUT | `/api/users/:id` | `RequireAuth` + `RequireRole("ADMIN")` | Actualizar nombre/email/rol/estado |
-| DELETE | `/api/users/:id` | `RequireAuth` + `RequireRole("ADMIN")` | Soft-delete + cierra sesiones |
-| PUT | `/api/users/:id/instances` | `RequireAuth` + `RequireRole("ADMIN")` | Reemplazar permisos de instancias |
-| GET | `/api/users/:id/activity` | `RequireAuth` + `RequireRole("ADMIN")` | Auditoría filtrada del usuario |
-| POST | `/api/users/:id/2fa/reset` | `RequireAuth` + `RequireRole("ADMIN")` | Resetear TOTP del usuario |
-| POST | `/api/users/:id/password/reset` | `RequireAuth` + `RequireRole("ADMIN")` | Nueva contraseña temporal |
-| GET | `/api/account/profile` | `RequireAuth` | Perfil propio |
-| PUT | `/api/account/profile` | `RequireAuth` | Actualizar nombre/email propios |
-| PUT | `/api/account/password` | `RequireAuth` | Cambiar contraseña (requiere actual) |
-| DELETE | `/api/account/sessions/current` | `RequireAuth` | Logout (cierra sesión actual) |
+| Método | Ruta                                  | Middleware                             | Descripción                                       |
+| ------ | ------------------------------------- | -------------------------------------- | ------------------------------------------------- |
+| POST   | `/api/auth/login`                     | —                                      | Login email+contraseña → JWT temporal (5 min)     |
+| POST   | `/api/auth/refresh`                   | —                                      | Refresh token → nuevo access token                |
+| GET    | `/api/auth/2fa/qr`                    | `RequirePreAuth`                       | Generar QR para vincular TOTP                     |
+| POST   | `/api/auth/2fa/verify`                | `RequirePreAuth`                       | Validar código TOTP → access+refresh tokens       |
+| GET    | `/api/roles`                          | `RequireAuth` + `RequireRole("ADMIN")` | Lista roles disponibles (hardcodeado)             |
+| GET    | `/api/admin/users`                    | `RequireAuth` + `RequireRole("ADMIN")` | Lista usuarios + summary (?rol, ?activo, ?buscar) |
+| POST   | `/api/admin/users`                    | `RequireAuth` + `RequireRole("ADMIN")` | Crear usuario → devuelve contrasenaTemp           |
+| GET    | `/api/admin/users/:id`                | `RequireAuth` + `RequireRole("ADMIN")` | Detalle con instanciasPermitidas                  |
+| PUT    | `/api/admin/users/:id`                | `RequireAuth` + `RequireRole("ADMIN")` | Actualizar nombre/email/rol/estado                |
+| DELETE | `/api/admin/users/:id`                | `RequireAuth` + `RequireRole("ADMIN")` | Soft-delete + cierra sesiones                     |
+| PUT    | `/api/admin/users/:id/instances`      | `RequireAuth` + `RequireRole("ADMIN")` | Reemplazar permisos de instancias                 |
+| GET    | `/api/admin/users/:id/activity`       | `RequireAuth` + `RequireRole("ADMIN")` | Auditoría filtrada del usuario                    |
+| POST   | `/api/admin/users/:id/2fa/reset`      | `RequireAuth` + `RequireRole("ADMIN")` | Resetear TOTP del usuario                         |
+| POST   | `/api/admin/users/:id/password/reset` | `RequireAuth` + `RequireRole("ADMIN")` | Nueva contraseña temporal                         |
+| GET    | `/api/account/profile`                | `RequireAuth`                          | Perfil propio                                     |
+| PUT    | `/api/account/profile`                | `RequireAuth`                          | Actualizar nombre/email propios                   |
+| PUT    | `/api/account/password`               | `RequireAuth`                          | Cambiar contraseña (requiere actual)              |
+| DELETE | `/api/account/sessions/current`       | `RequireAuth`                          | Logout (cierra sesión actual)                     |
 
 ---
 
@@ -466,10 +466,17 @@ curl.exe -s http://localhost:8080/api/roles -H "Authorization: Bearer $ACCESS"
 ```
 
 **Respuesta esperada (200 OK):**
+
 ```json
 [
-  {"valor":"ADMIN","descripcion":"Acceso total al sistema y gestión de usuarios."},
-  {"valor":"OPERATOR","descripcion":"Acceso restringido a instancias asignadas por un administrador."}
+  {
+    "valor": "ADMIN",
+    "descripcion": "Acceso total al sistema y gestión de usuarios."
+  },
+  {
+    "valor": "OPERATOR",
+    "descripcion": "Acceso restringido a instancias asignadas por un administrador."
+  }
 ]
 ```
 
@@ -482,9 +489,10 @@ curl.exe -s http://localhost:8080/api/users -H "Authorization: Bearer $ACCESS"
 ```
 
 **Respuesta esperada (200 OK):**
+
 ```json
 {
-  "summary": {"total": 1, "admins": 1, "operators": 0},
+  "summary": { "total": 1, "admins": 1, "operators": 0 },
   "users": [
     {
       "id": "49326b68-...",
@@ -514,6 +522,7 @@ curl.exe -s -X POST http://localhost:8080/api/users -H "Content-Type: applicatio
 ```
 
 **Respuesta esperada (201 Created):**
+
 ```json
 {
   "id": "1babeab8-...",
@@ -526,6 +535,7 @@ curl.exe -s -X POST http://localhost:8080/api/users -H "Content-Type: applicatio
 > 📋 El admin copia `contrasenaTemp` y se la comparte al nuevo usuario por su propio canal seguro.
 
 Guardá el ID del nuevo usuario:
+
 ```powershell
 $UID = "1babeab8-ebe0-4c4f-adbf-14acdac94405"
 ```
@@ -539,6 +549,7 @@ curl.exe -s "http://localhost:8080/api/users/$UID" -H "Authorization: Bearer $AC
 ```
 
 **Respuesta esperada (200 OK):**
+
 ```json
 {
   "id": "1babeab8-...",
@@ -563,6 +574,7 @@ curl.exe -s -i -X PUT "http://localhost:8080/api/users/$UID/instances" -H "Conte
 **Respuesta esperada: `HTTP/1.1 204 No Content`** (sin body)
 
 Verificar que se guardaron:
+
 ```powershell
 curl.exe -s "http://localhost:8080/api/users/$UID" -H "Authorization: Bearer $ACCESS"
 # instanciasPermitidas debe ser [100, 102]
@@ -584,10 +596,11 @@ curl.exe -s -X PUT "http://localhost:8080/api/users/$UID" -H "Content-Type: appl
 ### 12.7 Reset de contraseña (admin genera nueva temporal)
 
 ```powershell
-curl.exe -s -X POST "http://localhost:8080/api/users/$UID/password/reset" -H "Authorization: Bearer $ACCESS"
+curl.exe -s -X POST "http://localhost:8080/api/admin/users/$UID/password/reset" -H "Authorization: Bearer $ACCESS"
 ```
 
 **Respuesta esperada (200 OK):**
+
 ```json
 {
   "message": "Contraseña restablecida. El usuario deberá cambiarla en su próximo acceso.",
@@ -600,10 +613,11 @@ curl.exe -s -X POST "http://localhost:8080/api/users/$UID/password/reset" -H "Au
 ### 12.8 Reset de TOTP (admin invalida 2FA del usuario)
 
 ```powershell
-curl.exe -s -X POST "http://localhost:8080/api/users/$UID/2fa/reset" -H "Authorization: Bearer $ACCESS"
+curl.exe -s -X POST "http://localhost:8080/api/admin/users/$UID/2fa/reset" -H "Authorization: Bearer $ACCESS"
 ```
 
 **Respuesta esperada (200 OK):**
+
 ```json
 {
   "message": "TOTP reseteado. El usuario deberá vincularlo en su próximo acceso."
@@ -630,8 +644,9 @@ curl.exe -s -X PUT http://localhost:8080/api/account/password -H "Content-Type: 
 ```
 
 **Respuesta esperada (200 OK):**
+
 ```json
-{"message": "Contraseña actualizada correctamente."}
+{ "message": "Contraseña actualizada correctamente." }
 ```
 
 > ⚠️ Si `cambioContrasenaRequerido` era `true`, después de este cambio el flag queda en `false`.
@@ -653,12 +668,14 @@ curl.exe -s -i -X DELETE "http://localhost:8080/api/users/$UID" -H "Authorizatio
 ### 12.12 Casos de error (verificar comportamiento)
 
 **Auto-eliminarse → 400:**
+
 ```powershell
 curl.exe -s -i -X DELETE "http://localhost:8080/api/users/<TU_PROPIO_UUID>" -H "Authorization: Bearer $ACCESS"
 # HTTP 400 — errorCode: SELF_DELETE_NOT_ALLOWED
 ```
 
 **Email duplicado → 409:**
+
 ```powershell
 # Intentar crear otro usuario con el mismo email
 curl.exe -s -X POST http://localhost:8080/api/users -H "Content-Type: application/json" -H "Authorization: Bearer $ACCESS" -d "@body_newuser.json"
@@ -666,15 +683,16 @@ curl.exe -s -X POST http://localhost:8080/api/users -H "Content-Type: applicatio
 ```
 
 **Sin token → 401:**
+
 ```powershell
 curl.exe -s -i http://localhost:8080/api/users
 # HTTP 401 — errorCode: MISSING_TOKEN
 ```
 
 **Operador intentando acceder a ruta de admin → 403:**
+
 ```powershell
 # Con el accessToken de un OPERATOR
 curl.exe -s -i http://localhost:8080/api/users -H "Authorization: Bearer <TOKEN_OPERATOR>"
 # HTTP 403 — errorCode: INSUFFICIENT_ROLE
 ```
-

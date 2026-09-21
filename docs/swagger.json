@@ -515,7 +515,7 @@
                 "tags": [
                     "Usuarios (Admin)"
                 ],
-                "summary": "Admin: resetear 2FA del usuario",
+                "summary": "Resetear 2FA del usuario",
                 "parameters": [
                     {
                         "type": "string",
@@ -739,7 +739,7 @@
                 "tags": [
                     "Usuarios (Admin)"
                 ],
-                "summary": "Admin: resetear contraseña del usuario",
+                "summary": "Resetear contraseña del usuario",
                 "parameters": [
                     {
                         "type": "string",
@@ -825,60 +825,6 @@
                     },
                     "409": {
                         "description": "El 2FA ya está activo, requiere reset administrativo",
-                        "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/auth/2fa/relink": {
-            "post": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Invalida el secreto TOTP del usuario indicado. En su próximo login, el usuario deberá escanear un nuevo QR. Usar en su lugar `POST /users/{id}/2fa/reset`.",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Autenticación 2FA"
-                ],
-                "summary": "Admin: resetear 2FA de un usuario (endpoint legacy)",
-                "parameters": [
-                    {
-                        "description": "UUID del usuario a resetear",
-                        "name": "body",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/http.relinkRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "204": {
-                        "description": "Sin contenido"
-                    },
-                    "400": {
-                        "description": "UUID inválido",
-                        "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
-                        }
-                    },
-                    "401": {
-                        "description": "No autenticado",
-                        "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
-                        }
-                    },
-                    "403": {
-                        "description": "Sin permisos o reset fallido",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -1180,17 +1126,6 @@
             ],
             "properties": {
                 "refreshToken": {
-                    "type": "string"
-                }
-            }
-        },
-        "http.relinkRequest": {
-            "type": "object",
-            "required": [
-                "usuarioId"
-            ],
-            "properties": {
-                "usuarioId": {
                     "type": "string"
                 }
             }

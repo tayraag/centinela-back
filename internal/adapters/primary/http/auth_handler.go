@@ -8,7 +8,6 @@ import (
 	"el-centinela/internal/core/ports"
 
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 )
 
 // AuthHandler maneja los endpoints HTTP del flujo de autenticación y 2FA.
@@ -216,55 +215,3 @@ func (h *AuthHandler) RefrescarToken(c *gin.Context) {
 
 	c.JSON(http.StatusOK, result)
 }
-
-// ==========================================
-// POST /api/auth/2fa/relink
-// ==========================================
-
-// relinkRequest define el body para el reset de 2FA de un usuario.
-type relinkRequest struct {
-	UsuarioID string `json:"usuarioId" binding:"required,uuid"`
-}
-
-// SolicitarRevinculacion permite a un administrador resetear el 2FA de otro usuario.
-//
-// @Summary      Admin: resetear 2FA de un usuario (endpoint legacy)
-// @Description  Invalida el secreto TOTP del usuario indicado. En su próximo login, el usuario deberá escanear un nuevo QR. Usar en su lugar `POST /users/{id}/2fa/reset`.
-// @Tags         Autenticación 2FA
-// @Accept       json
-// @Produce      json
-// @Security     BearerAuth
-// @Param        body body relinkRequest true "UUID del usuario a resetear"
-// @Success      204 "Sin contenido"
-// @Failure      400 {object} ErrorResponse "UUID inválido"
-// @Failure      401 {object} ErrorResponse "No autenticado"
-// @Failure      403 {object} ErrorResponse "Sin permisos o reset fallido"
-// @Router       /auth/2fa/relink [post]
-func (h *AuthHandler) SolicitarRevinculacion(c *gin.Context) {
-	var req relinkRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		SendError(c, http.StatusBadRequest, "INVALID_REQUEST", "Se requiere un usuarioId válido (UUID).")
-		return
-	}
-
-	targetID, err := uuid.Parse(req.UsuarioID)
-	if err != nil {
-		SendError(c, http.StatusBadRequest, "INVALID_UUID", "El usuarioId no es un UUID válido.")
-		return
-	}
-
-	jti, _ := c.Get(middleware.ContextKeyJTI)
-	jtiStr, ok := jti.(string)
-	if !ok || jtiStr == "" {
-		SendError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "No se pudo obtener el identificador de sesión.")
-		return
-	}
-
-	if err := h.service.SolicitarRevinculacion(c.Request.Context(), jtiStr, targetID); err != nil {
-		SendError(c, http.StatusForbidden, "RELINK_FAILED", err.Error())
-		return
-	}
-
-	c.Status(http.StatusNoContent)
-}
-
