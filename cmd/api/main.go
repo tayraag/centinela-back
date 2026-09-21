@@ -77,6 +77,7 @@ func main() {
 	// 3. Inicializar adaptadores secundarios (repositorios)
 	authRepo := postgres.NewAuthRepository(db)
 	userRepo := postgres.NewUserRepository(db)
+	instanceRepo := postgres.NewInstanceRepository(db)
 
 	// 4. Inicializar servicios de dominio (inyección de dependencias)
 	authService := services.NewAuthService(authRepo)
@@ -172,8 +173,22 @@ func main() {
 			account.GET("/profile", accountHandler.ObtenerPerfil)
 			account.PUT("/profile", accountHandler.ActualizarPerfil)
 			account.PUT("/password", accountHandler.CambiarContrasena)
+		}
 
-					}
+		// ==========================================
+		// Rutas de Instancias Proxmox — pendiente de implementación
+		// ==========================================
+		// Cuando se agreguen los handlers de Proxmox VE, usar el guard así:
+		//
+		//   instances := api.Group("/instances", middleware.RequireAuth())
+		//   {
+		//       instances.GET("/:vmid",        middleware.RequireInstanceAccess(instanceRepo, "vmid"), instanceHandler.ObtenerInstancia)
+		//       instances.POST("/:vmid/start", middleware.RequireInstanceAccess(instanceRepo, "vmid"), instanceHandler.IniciarInstancia)
+		//       instances.POST("/:vmid/stop",  middleware.RequireInstanceAccess(instanceRepo, "vmid"), instanceHandler.DetenerInstancia)
+		//   }
+		//
+		// El parámetro "vmid" debe coincidir con el nombre del param de ruta (":vmid").
+		_ = instanceRepo // evitar error de compilación hasta que se conecten los handlers
 		// ==========================================
 		// Swagger UI (solo en desarrollo)
 		// ==========================================
