@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"el-centinela/internal/core/domain"
 
@@ -138,6 +139,41 @@ func (r *AuthRepository) ActualizarUltimoTotpPeriodo(ctx context.Context, usuari
 		Update("ultimo_totp_periodo", periodo)
 	if result.Error != nil {
 		return fmt.Errorf("error al actualizar último período TOTP: %w", result.Error)
+	}
+	return nil
+}
+
+// ActualizarCodigoRecuperacion guarda el código de 6 dígitos y su expiración en el usuario.
+// Si codigo y expiracion son nil, se limpian los valores (código ya utilizado o invalidado).
+func (r *AuthRepository) ActualizarCodigoRecuperacion(ctx context.Context, usuarioID uuid.UUID, codigo *string, expiracion *time.Time) error {
+	updates := map[string]interface{}{
+		"codigo_recuperacion": codigo,
+		"expiracion_codigo":   expiracion,
+	}
+	result := r.db.WithContext(ctx).
+		Model(&domain.Usuario{}).
+		Where("id = ?", usuarioID).
+		Updates(updates)
+	if result.Error != nil {
+		return fmt.Errorf("error al actualizar código de recuperación: %w", result.Error)
+	}
+	return nil
+}
+
+// ActualizarContrasenaYLimpiarCodigo cambia la contraseña, limpia el código temporal y quita el flag de cambio obligatorio.
+func (r *AuthRepository) ActualizarContrasenaYLimpiarCodigo(ctx context.Context, usuarioID uuid.UUID, hash string) error {
+	updates := map[string]interface{}{
+		"codigo_recuperacion": nil,
+		"expiracion_codigo":   nil,
+		"contrasena_hash":     hash,
+		"cambio_contrasena":   false,
+	}
+	result := r.db.WithContext(ctx).
+		Model(&domain.Usuario{}).
+		Where("id = ?", usuarioID).
+		Updates(updates)
+	if result.Error != nil {
+		return fmt.Errorf("error al actualizar contraseña: %w", result.Error)
 	}
 	return nil
 }

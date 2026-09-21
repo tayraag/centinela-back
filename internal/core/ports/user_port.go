@@ -77,10 +77,9 @@ type UsuarioDetalleDTO struct {
 
 // CrearUsuarioResult es la respuesta al crear un usuario exitosamente.
 type CrearUsuarioResult struct {
-	ID             uuid.UUID `json:"id"`
-	Rol            string    `json:"rol"`
-	Activo         bool      `json:"activo"`
-	ContrasenaTemp string    `json:"contrasenaTemp"` // Solo devuelto aquí (Plan A sin SMTP)
+	ID     uuid.UUID `json:"id"`
+	Rol    string    `json:"rol"`
+	Activo bool      `json:"activo"`
 }
 
 // ActividadDTO proyecta un registro de auditoría para la vista de actividad de un usuario.
@@ -194,8 +193,8 @@ type UserService interface {
 	// AsignarPermisos reemplaza todos los permisos de instancia de un usuario operador.
 	AsignarPermisos(ctx context.Context, usuarioID, orgID uuid.UUID, vmids []int) error
 
-	// ResetearContrasena genera una nueva contraseña temporal para el usuario.
-	ResetearContrasena(ctx context.Context, usuarioID, orgID uuid.UUID) (contrasenaTemp string, err error)
+	// ResetearContrasena genera una nueva contraseña temporal para el usuario y la envía por email.
+	ResetearContrasena(ctx context.Context, usuarioID, orgID uuid.UUID) error
 
 	// ResetearTotp invalida el 2FA del usuario, forzando revinculación en el próximo login.
 	ResetearTotp(ctx context.Context, usuarioID, orgID uuid.UUID) error

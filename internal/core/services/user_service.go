@@ -14,13 +14,18 @@ import (
 
 // userServiceImpl implementa ports.UserService.
 type userServiceImpl struct {
-	userRepo ports.UserRepository
-	authRepo ports.AuthRepository // para invalidar sesiones y resetear TOTP
+	userRepo     ports.UserRepository
+	authRepo     ports.AuthRepository // para invalidar sesiones y resetear TOTP
+	emailService ports.EmailService
 }
 
 // NewUserService crea una nueva instancia del servicio de usuarios.
-func NewUserService(userRepo ports.UserRepository, authRepo ports.AuthRepository) ports.UserService {
-	return &userServiceImpl{userRepo: userRepo, authRepo: authRepo}
+func NewUserService(userRepo ports.UserRepository, authRepo ports.AuthRepository, emailService ports.EmailService) ports.UserService {
+	return &userServiceImpl{
+		userRepo:     userRepo,
+		authRepo:     authRepo,
+		emailService: emailService,
+	}
 }
 
 // ==========================================
@@ -81,7 +86,13 @@ func (s *userServiceImpl) CrearUsuario(ctx context.Context, orgID uuid.UUID, inp
 		return nil, fmt.Errorf("error al hashear contraseña: %w", err)
 	}
 
-	// 4. Construir y persistir el usuario
+	// 4. Enviar contraseña temporal por correo ANTES de persistir
+	if err := s.emailService.EnviarContrasenaTemporal(input.EmailUsuario, contrasenaTemp); err != nil {
+		log.Printf("[USERS] error al enviar email de bienvenida a %s: %v", input.EmailUsuario, err)
+		return nil, fmt.Errorf("EMAIL_DELIVERY_FAILED: %w", err)
+	}
+
+	// 5. Construir y persistir el usuario
 	nuevoUsuario := &domain.Usuario{
 		ID:               uuid.New(),
 		OrganizacionID:   orgID,
@@ -99,13 +110,12 @@ func (s *userServiceImpl) CrearUsuario(ctx context.Context, orgID uuid.UUID, inp
 		return nil, err
 	}
 
-	log.Printf("[USERS] usuario creado | id=%s | email=%s | rol=%s", nuevoUsuario.ID, input.EmailUsuario, input.Rol)
+	log.Printf("[USERS] usuario creado y credenciales enviadas | id=%s | email=%s | rol=%s", nuevoUsuario.ID, input.EmailUsuario, input.Rol)
 
 	return &ports.CrearUsuarioResult{
-		ID:             nuevoUsuario.ID,
-		Rol:            nuevoUsuario.Rol,
-		Activo:         nuevoUsuario.Activo,
-		ContrasenaTemp: contrasenaTemp, // Solo aquí, nunca más
+		ID:     nuevoUsuario.ID,
+		Rol:    nuevoUsuario.Rol,
+		Activo: nuevoUsuario.Activo,
 	}, nil
 }
 
@@ -202,27 +212,34 @@ func (s *userServiceImpl) AsignarPermisos(ctx context.Context, usuarioID, orgID 
 	return nil
 }
 
-// ResetearContrasena genera una nueva contraseña temporal y la aplica al usuario.
-func (s *userServiceImpl) ResetearContrasena(ctx context.Context, usuarioID, orgID uuid.UUID) (string, error) {
-	if _, err := s.userRepo.BuscarUsuarioPorIDEnOrg(ctx, usuarioID, orgID); err != nil {
-		return "", err
+// ResetearContrasena genera una nueva contraseña temporal y la envía por email.
+func (s *userServiceImpl) ResetearContrasena(ctx context.Context, usuarioID, orgID uuid.UUID) error {
+	usuario, err := s.userRepo.BuscarUsuarioPorIDEnOrg(ctx, usuarioID, orgID)
+	if err != nil {
+		return err
 	}
 
 	contrasenaTemp, err := crypto.GenerarContrasenaTemp()
 	if err != nil {
-		return "", fmt.Errorf("error al generar contraseña temporal: %w", err)
+		return fmt.Errorf("error al generar contraseña temporal: %w", err)
 	}
 
 	hash, err := crypto.HashContrasena(contrasenaTemp)
 	if err != nil {
-		return "", fmt.Errorf("error al hashear contraseña: %w", err)
+		return fmt.Errorf("error al hashear contraseña: %w", err)
+	}
+
+	// Enviar correo antes de modificar la DB
+	if err := s.emailService.EnviarContrasenaTemporal(usuario.EmailUsuario, contrasenaTemp); err != nil {
+		log.Printf("[USERS] error al enviar email de reset a %s: %v", usuario.EmailUsuario, err)
+		return fmt.Errorf("EMAIL_DELIVERY_FAILED: %w", err)
 	}
 
 	if err := s.userRepo.ActualizarUsuario(ctx, usuarioID, map[string]any{
 		"contrasena_hash":   hash,
 		"cambio_contrasena": true,
 	}); err != nil {
-		return "", err
+		return err
 	}
 
 	// Invalidar sesiones para forzar re-login con la nueva clave
@@ -230,8 +247,8 @@ func (s *userServiceImpl) ResetearContrasena(ctx context.Context, usuarioID, org
 		log.Printf("[USERS] advertencia: error al invalidar sesiones al resetear contraseña %s: %v", usuarioID, err)
 	}
 
-	log.Printf("[USERS] contraseña reseteada | user=%s", usuarioID)
-	return contrasenaTemp, nil
+	log.Printf("[USERS] contraseña reseteada y enviada | user=%s", usuarioID)
+	return nil
 }
 
 // ResetearTotp invalida el 2FA del usuario, forzando revinculación en el próximo login.

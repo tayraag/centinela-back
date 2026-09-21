@@ -2,6 +2,7 @@ package ports
 
 import (
 	"context"
+	"time"
 
 	"el-centinela/internal/core/domain"
 
@@ -65,6 +66,12 @@ type AuthRepository interface {
 
 	// ActualizarUltimoTotpPeriodo guarda el período del último código TOTP usado (anti-replay).
 	ActualizarUltimoTotpPeriodo(ctx context.Context, usuarioID uuid.UUID, periodo int64) error
+
+	// ActualizarCodigoRecuperacion guarda el código de 6 dígitos y su expiración en el usuario.
+	ActualizarCodigoRecuperacion(ctx context.Context, usuarioID uuid.UUID, codigo *string, expiracion *time.Time) error
+
+	// ActualizarContrasenaYLimpiarCodigo cambia la contraseña y elimina el código temporal usado.
+	ActualizarContrasenaYLimpiarCodigo(ctx context.Context, usuarioID uuid.UUID, hash string) error
 }
 
 // ==========================================
@@ -89,4 +96,10 @@ type AuthService interface {
 
 	// CerrarSesion invalida la sesión asociada a un refresh token (logout).
 	CerrarSesion(ctx context.Context, refreshToken string) error
+
+	// SolicitarRecuperacionContrasena genera un código de 6 dígitos y lo envía por email.
+	SolicitarRecuperacionContrasena(ctx context.Context, email string) error
+
+	// ConfirmarRecuperacionContrasena valida el código de 6 dígitos y aplica la nueva contraseña.
+	ConfirmarRecuperacionContrasena(ctx context.Context, email, codigo, nuevaContrasena string) error
 }

@@ -8,6 +8,7 @@ import (
 	_ "el-centinela/docs"
 	httpHandlers "el-centinela/internal/adapters/primary/http"
 	"el-centinela/internal/adapters/primary/http/middleware"
+	"el-centinela/internal/adapters/secondary/email"
 	"el-centinela/internal/adapters/secondary/postgres"
 	"el-centinela/internal/core/services"
 
@@ -77,10 +78,11 @@ func main() {
 	// 3. Inicializar adaptadores secundarios (repositorios)
 	authRepo := postgres.NewAuthRepository(db)
 	userRepo := postgres.NewUserRepository(db)
+	emailService := email.NewMockEmailService()
 
 	// 4. Inicializar servicios de dominio (inyección de dependencias)
-	authService := services.NewAuthService(authRepo)
-	userService := services.NewUserService(userRepo, authRepo)
+	authService := services.NewAuthService(authRepo, emailService)
+	userService := services.NewUserService(userRepo, authRepo, emailService)
 
 	// 5. Inicializar handlers HTTP
 	authHandler := httpHandlers.NewAuthHandler(authService)
@@ -126,6 +128,10 @@ func main() {
 			auth.POST("/login", authHandler.Login)
 			auth.POST("/refresh", authHandler.RefrescarToken)
 			auth.POST("/logout", authHandler.Logout)
+			
+			// Recuperación de contraseña (públicas)
+			auth.POST("/password/forgot", authHandler.SolicitarRecuperacion)
+			auth.POST("/password/reset", authHandler.ConfirmarRecuperacion)
 
 			// Rutas del flujo 2FA (requieren JWT temporal pre-auth)
 			twoFA := auth.Group("/2fa", middleware.RequirePreAuth())

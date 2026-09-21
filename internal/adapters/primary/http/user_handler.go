@@ -94,7 +94,7 @@ func (h *UserHandler) ListarUsuarios(c *gin.Context) {
 // CrearUsuario crea un nuevo usuario en la organización del admin autenticado.
 //
 // @Summary      Crear usuario
-// @Description  Crea un nuevo usuario con contraseña temporal generada automáticamente. La respuesta incluye `contrasenaTemp` (solo en este momento, nunca más). El usuario deberá cambiarla en su primer login. No se envian emails (Plan A).
+// @Description  Crea un nuevo usuario con contraseña temporal generada automáticamente. La contraseña se envía al usuario por email. El usuario deberá cambiarla en su primer login.
 // @Tags         Usuarios (Admin)
 // @Accept       json
 // @Produce      json
@@ -119,6 +119,10 @@ func (h *UserHandler) CrearUsuario(c *gin.Context) {
 	orgID := extraerOrgID(c)
 	resultado, err := h.service.CrearUsuario(c.Request.Context(), orgID, input)
 	if err != nil {
+		if strings.Contains(err.Error(), "EMAIL_DELIVERY_FAILED") {
+			SendError(c, http.StatusBadGateway, "EMAIL_DELIVERY_FAILED", "Usuario no creado. El servidor de correo no está disponible.")
+			return
+		}
 		SendError(c, http.StatusConflict, "USER_CONFLICT", err.Error())
 		return
 	}
@@ -376,7 +380,7 @@ func (h *UserHandler) ResetearTotp(c *gin.Context) {
 // ResetearContrasena genera una nueva contraseña temporal para el usuario.
 //
 // @Summary      Restablecer contraseña (admin)
-// @Description  Genera una nueva contraseña temporal segura (12 caracteres, mayúscula, número y carácter especial), la hashea y la persiste. Establece `must_change_password=true` e invalida todas las sesiones activas del usuario. Devuelve `contrasenaTemp` únicamente en esta respuesta — solo su hash queda en base de datos. Requiere rol ADMIN.
+// @Description  Genera una nueva contraseña temporal segura, la hashea, la persiste y se la envía al usuario por email. Establece `must_change_password=true` e invalida todas las sesiones activas del usuario. Solo su hash queda en base de datos. Requiere rol ADMIN.
 // @Tags         Usuarios (Admin)
 // @Produce      json
 // @Security     BearerAuth
@@ -393,14 +397,17 @@ func (h *UserHandler) ResetearContrasena(c *gin.Context) {
 	}
 	orgID := extraerOrgID(c)
 
-	contrasenaTemp, err := h.service.ResetearContrasena(c.Request.Context(), id, orgID)
+	err := h.service.ResetearContrasena(c.Request.Context(), id, orgID)
 	if err != nil {
+		if strings.Contains(err.Error(), "EMAIL_DELIVERY_FAILED") {
+			SendError(c, http.StatusBadGateway, "EMAIL_DELIVERY_FAILED", "Error al enviar la contraseña por correo.")
+			return
+		}
 		SendError(c, http.StatusNotFound, "USER_NOT_FOUND", err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
-		"message":        "Contraseña restablecida. El usuario deberá cambiarla en su próximo acceso.",
-		"contrasenaTemp": contrasenaTemp,
+		"message": "Contraseña restablecida. Se ha enviado un correo al usuario.",
 	})
 }
 

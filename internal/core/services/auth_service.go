@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"log"
+	"math/rand"
 	"os"
 	"strconv"
 	"time"
@@ -19,12 +20,16 @@ import (
 
 // authServiceImpl implementa ports.AuthService.
 type authServiceImpl struct {
-	repo ports.AuthRepository
+	repo         ports.AuthRepository
+	emailService ports.EmailService
 }
 
 // NewAuthService crea una nueva instancia del servicio de autenticación.
-func NewAuthService(repo ports.AuthRepository) ports.AuthService {
-	return &authServiceImpl{repo: repo}
+func NewAuthService(repo ports.AuthRepository, emailService ports.EmailService) ports.AuthService {
+	return &authServiceImpl{
+		repo:         repo,
+		emailService: emailService,
+	}
 }
 
 // ==========================================
@@ -386,6 +391,81 @@ func (s *authServiceImpl) CerrarSesion(ctx context.Context, refreshToken string)
 	}
 
 	log.Printf("[AUTH] logout done | jti=%s", claims.ID)
+	return nil
+}
+
+// ==========================================
+// Recuperación de Contraseña
+// ==========================================
+
+// SolicitarRecuperacionContrasena genera un código temporal de 6 dígitos, lo persiste en el usuario
+// y lo envía usando el servicio de email (simulado o real).
+func (s *authServiceImpl) SolicitarRecuperacionContrasena(ctx context.Context, email string) error {
+	usuario, err := s.repo.BuscarUsuarioPorEmail(ctx, email)
+	if err != nil {
+		// Por seguridad, si el usuario no existe, fingimos éxito para no enumerar correos
+		log.Printf("[AUTH] recuperacion solicitada para email no existente: %s", email)
+		return nil
+	}
+
+	if !usuario.Activo {
+		log.Printf("[AUTH] recuperacion rechazada (inactivo): %s", email)
+		return nil
+	}
+
+	randSource := rand.New(rand.NewSource(time.Now().UnixNano()))
+	codigo := fmt.Sprintf("%06d", randSource.Intn(1000000))
+	expiracion := time.Now().Add(15 * time.Minute)
+
+	if err := s.repo.ActualizarCodigoRecuperacion(ctx, usuario.ID, &codigo, &expiracion); err != nil {
+		return fmt.Errorf("error al guardar código de recuperación: %w", err)
+	}
+
+	if err := s.emailService.EnviarCodigoRecuperacion(email, codigo); err != nil {
+		return fmt.Errorf("error al enviar el correo de recuperación: %w", err)
+	}
+
+	log.Printf("[AUTH] código de recuperación generado para %s", email)
+	return nil
+}
+
+// ConfirmarRecuperacionContrasena valida que el código temporal sea correcto y no esté expirado,
+// actualiza la contraseña y limpia el código. Invalida también todas las sesiones previas.
+func (s *authServiceImpl) ConfirmarRecuperacionContrasena(ctx context.Context, email, codigo, nuevaContrasena string) error {
+	usuario, err := s.repo.BuscarUsuarioPorEmail(ctx, email)
+	if err != nil {
+		return fmt.Errorf("código inválido o expirado")
+	}
+
+	if usuario.CodigoRecuperacion == nil || *usuario.CodigoRecuperacion != codigo {
+		return fmt.Errorf("código inválido o expirado")
+	}
+
+	if usuario.ExpiracionCodigo == nil || time.Now().After(*usuario.ExpiracionCodigo) {
+		return fmt.Errorf("el código ha expirado")
+	}
+
+	// Validar complejidad de la nueva contraseña
+	if err := crypto.ValidarComplejidadContrasena(nuevaContrasena); err != nil {
+		return err
+	}
+
+	hash, err := crypto.HashContrasena(nuevaContrasena)
+	if err != nil {
+		return fmt.Errorf("error al procesar la nueva contraseña: %w", err)
+	}
+
+	// Actualizar contraseña y limpiar el código
+	if err := s.repo.ActualizarContrasenaYLimpiarCodigo(ctx, usuario.ID, hash); err != nil {
+		return fmt.Errorf("error al guardar la nueva contraseña: %w", err)
+	}
+
+	// Invalidar sesiones para forzar re-login con la nueva clave
+	if err := s.repo.InvalidarSesionesDeUsuario(ctx, usuario.ID); err != nil {
+		log.Printf("[AUTH] advertencia: error al invalidar sesiones tras recuperar contraseña %s: %v", usuario.ID, err)
+	}
+
+	log.Printf("[AUTH] contraseña recuperada exitosamente para %s", email)
 	return nil
 }
 
