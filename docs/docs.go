@@ -1373,7 +1373,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Placeholder: la integración con Proxmox VE todavía no está implementada.",
+                "description": "Devuelve el estado actual (running/stopped, tipo, nodo) de una VM o contenedor leído en vivo desde Proxmox VE.",
                 "produces": [
                     "application/json"
                 ],
@@ -1391,14 +1391,32 @@ const docTemplate = `{
                     }
                 ],
                 "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/ports.InstanciaProxmoxDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "INVALID_VMID",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
                     "403": {
                         "description": "INSTANCE_ACCESS_DENIED — el OPERATOR no tiene este vmid asignado",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
                     },
-                    "501": {
-                        "description": "Not Implemented",
+                    "404": {
+                        "description": "INSTANCE_NOT_FOUND",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "502": {
+                        "description": "PROXMOX_UNAVAILABLE",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -1413,7 +1431,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Placeholder: la integración con Proxmox VE todavía no está implementada.",
+                "description": "Dispara el arranque de una VM o contenedor en Proxmox VE. La operación es asíncrona: devuelve el UPID de la tarea que Proxmox crea para seguir su progreso.",
                 "produces": [
                     "application/json"
                 ],
@@ -1431,14 +1449,35 @@ const docTemplate = `{
                     }
                 ],
                 "responses": {
+                    "202": {
+                        "description": "upid de la tarea creada en Proxmox",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "INVALID_VMID",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
                     "403": {
                         "description": "INSTANCE_ACCESS_DENIED — el OPERATOR no tiene este vmid asignado",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
                     },
-                    "501": {
-                        "description": "Not Implemented",
+                    "404": {
+                        "description": "INSTANCE_NOT_FOUND",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "502": {
+                        "description": "PROXMOX_UNAVAILABLE",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -1453,7 +1492,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Placeholder: la integración con Proxmox VE todavía no está implementada.",
+                "description": "Dispara el apagado forzado de una VM o contenedor en Proxmox VE. La operación es asíncrona: devuelve el UPID de la tarea que Proxmox crea para seguir su progreso.",
                 "produces": [
                     "application/json"
                 ],
@@ -1471,14 +1510,35 @@ const docTemplate = `{
                     }
                 ],
                 "responses": {
+                    "202": {
+                        "description": "upid de la tarea creada en Proxmox",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "INVALID_VMID",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
                     "403": {
                         "description": "INSTANCE_ACCESS_DENIED — el OPERATOR no tiene este vmid asignado",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
                     },
-                    "501": {
-                        "description": "Not Implemented",
+                    "404": {
+                        "description": "INSTANCE_NOT_FOUND",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "502": {
+                        "description": "PROXMOX_UNAVAILABLE",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -1806,6 +1866,28 @@ const docTemplate = `{
                 },
                 "rol": {
                     "type": "string"
+                }
+            }
+        },
+        "ports.InstanciaProxmoxDTO": {
+            "type": "object",
+            "properties": {
+                "estado": {
+                    "description": "\"running\" | \"stopped\" | ...",
+                    "type": "string"
+                },
+                "nodo": {
+                    "type": "string"
+                },
+                "nombre": {
+                    "type": "string"
+                },
+                "tipo": {
+                    "description": "\"qemu\" | \"lxc\"",
+                    "type": "string"
+                },
+                "vmid": {
+                    "type": "integer"
                 }
             }
         },

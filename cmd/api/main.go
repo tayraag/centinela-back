@@ -12,6 +12,7 @@ import (
 	"el-centinela/internal/adapters/primary/http/middleware"
 	"el-centinela/internal/adapters/secondary/email"
 	"el-centinela/internal/adapters/secondary/postgres"
+	"el-centinela/internal/adapters/secondary/proxmox"
 	"el-centinela/internal/core/services"
 
 	"github.com/gin-gonic/gin"
@@ -83,6 +84,13 @@ func main() {
 	emailService := email.NewMockEmailService()
 	auditRepo := postgres.NewAuditRepository(db)
 	instanceRepo := postgres.NewInstanceRepository(db)
+	proxmoxClient := proxmox.NewClient(
+		os.Getenv("PROXMOX_BASE_URL"),
+		os.Getenv("PROXMOX_NODE"),
+		os.Getenv("PROXMOX_USERNAME"),
+		os.Getenv("PROXMOX_PASSWORD"),
+		proxmox.BuildTLSConfig(),
+	)
 
 	// 4. Inicializar servicios de dominio (inyección de dependencias)
 	auditService := services.NewAuditService(auditRepo)
@@ -94,7 +102,7 @@ func main() {
 	userHandler := httpHandlers.NewUserHandler(userService)
 	accountHandler := httpHandlers.NewAccountHandler(userService)
 	auditHandler := httpHandlers.NewAuditHandler(auditService)
-	instanceHandler := httpHandlers.NewInstanceHandler()
+	instanceHandler := httpHandlers.NewInstanceHandler(proxmoxClient)
 
 	// 6. Configurar el Router HTTP (Gin)
 	// Usamos gin.New() para tener control total sobre los middlewares.
@@ -136,7 +144,7 @@ func main() {
 			auth.POST("/login", authHandler.Login)
 			auth.POST("/refresh", authHandler.RefrescarToken)
 			auth.POST("/logout", authHandler.Logout)
-			
+
 			// Recuperación de contraseña (públicas)
 			auth.POST("/password/forgot", authHandler.SolicitarRecuperacion)
 			auth.POST("/password/reset", authHandler.ConfirmarRecuperacion)
