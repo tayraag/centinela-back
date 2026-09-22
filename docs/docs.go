@@ -24,7 +24,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Valida la contraseña actual y aplica la nueva. Si la contraseña era temporal (` + "`" + `cambioContrasenaRequerido=true` + "`" + `), este cambio limpia ese flag y el usuario puede operar con normalidad.",
+                "description": "Valida la contraseña actual y aplica la nueva. Reglas de complejidad: entre 8 y 12 caracteres, al menos una mayúscula, un número y un carácter especial (!@#$%^\u0026*-_=+). Si la contraseña era temporal (` + "`" + `cambioContrasenaRequerido=true` + "`" + `), este cambio limpia ese flag y desbloquea el acceso al resto de la plataforma.",
                 "consumes": [
                     "application/json"
                 ],
@@ -57,7 +57,7 @@ const docTemplate = `{
                         }
                     },
                     "400": {
-                        "description": "Contraseña actual incorrecta o nueva igual a la actual",
+                        "description": "Formato inválido, contraseña actual incorrecta, nueva igual a la actual o no cumple las reglas de complejidad",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -69,6 +69,12 @@ const docTemplate = `{
                             "additionalProperties": {
                                 "type": "string"
                             }
+                        }
+                    },
+                    "403": {
+                        "description": "PASSWORD_CHANGE_REQUIRED — solo este endpoint y logout son accesibles mientras el flag esté activo",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
                         }
                     }
                 }
@@ -430,7 +436,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Crea un nuevo usuario con contraseña temporal generada automáticamente. La respuesta incluye ` + "`" + `contrasenaTemp` + "`" + ` (solo en este momento, nunca más). El usuario deberá cambiarla en su primer login. No se envian emails (Plan A).",
+                "description": "Crea un nuevo usuario con contraseña temporal generada automáticamente. La contraseña se envía al usuario por email. El usuario deberá cambiarla en su primer login.",
                 "consumes": [
                     "application/json"
                 ],
@@ -932,14 +938,14 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Genera una nueva contraseña temporal segura y la aplica. Devuelve ` + "`" + `contrasenaTemp` + "`" + ` (solo en esta respuesta). El usuario deberá cambiarla en su próximo acceso. Invalida todas sus sesiones.",
+                "description": "Genera una nueva contraseña temporal segura, la hashea, la persiste y se la envía al usuario por email. Establece ` + "`" + `must_change_password=true` + "`" + ` e invalida todas las sesiones activas del usuario. Solo su hash queda en base de datos. Requiere rol ADMIN.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "Usuarios (Admin)"
                 ],
-                "summary": "Resetear contraseña del usuario",
+                "summary": "Restablecer contraseña (admin)",
                 "parameters": [
                     {
                         "type": "string",
@@ -969,21 +975,15 @@ const docTemplate = `{
                         }
                     },
                     "403": {
-                        "description": "Forbidden",
+                        "description": "OPERATOR recibe 403 Forbidden",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
+                            "$ref": "#/definitions/http.ErrorResponse"
                         }
                     },
                     "404": {
-                        "description": "Not Found",
+                        "description": "Usuario no encontrado en la organización",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
+                            "$ref": "#/definitions/http.ErrorResponse"
                         }
                     }
                 }
@@ -1172,6 +1172,92 @@ const docTemplate = `{
                 }
             }
         },
+        "/auth/password/forgot": {
+            "post": {
+                "description": "Genera un código de 6 dígitos válido por 15 minutos y lo envía al correo del usuario. Retorna 200 OK incluso si el correo no existe para evitar enumeración.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Autenticación"
+                ],
+                "summary": "Solicitar recuperación de contraseña",
+                "parameters": [
+                    {
+                        "description": "Email del usuario",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/http.solicitarRecuperacionRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Email inválido",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/password/reset": {
+            "post": {
+                "description": "Valida el código de 6 dígitos enviado por email y establece la nueva contraseña (8-12 chars, mayúscula, número, especial). Invalida el código tras el uso o tras 3 intentos fallidos. La nueva contraseña no puede coincidir con la anterior.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Autenticación"
+                ],
+                "summary": "Confirmar recuperación de contraseña",
+                "parameters": [
+                    {
+                        "description": "Datos de recuperación",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/http.confirmarRecuperacionRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Datos inválidos, código incorrecto, demasiados intentos, contraseña débil o igual a la actual",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/auth/refresh": {
             "post": {
                 "description": "Recibe un refresh token válido y emite un nuevo access token (8h). El refresh token no cambia.",
@@ -1319,6 +1405,27 @@ const docTemplate = `{
                 }
             }
         },
+        "http.confirmarRecuperacionRequest": {
+            "type": "object",
+            "required": [
+                "codigo",
+                "email",
+                "nuevaContrasena"
+            ],
+            "properties": {
+                "codigo": {
+                    "type": "string"
+                },
+                "email": {
+                    "type": "string"
+                },
+                "nuevaContrasena": {
+                    "type": "string",
+                    "maxLength": 12,
+                    "minLength": 8
+                }
+            }
+        },
         "http.refreshRequest": {
             "type": "object",
             "required": [
@@ -1326,6 +1433,17 @@ const docTemplate = `{
             ],
             "properties": {
                 "refreshToken": {
+                    "type": "string"
+                }
+            }
+        },
+        "http.solicitarRecuperacionRequest": {
+            "type": "object",
+            "required": [
+                "email"
+            ],
+            "properties": {
+                "email": {
                     "type": "string"
                 }
             }
@@ -1448,6 +1566,7 @@ const docTemplate = `{
                 },
                 "contrasenaNueva": {
                     "type": "string",
+                    "maxLength": 12,
                     "minLength": 8
                 }
             }
@@ -1488,10 +1607,6 @@ const docTemplate = `{
             "properties": {
                 "activo": {
                     "type": "boolean"
-                },
-                "contrasenaTemp": {
-                    "description": "Solo devuelto aquí (Plan A sin SMTP)",
-                    "type": "string"
                 },
                 "id": {
                     "type": "string"

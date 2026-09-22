@@ -35,12 +35,34 @@ definitions:
     required:
     - vmids
     type: object
+  http.confirmarRecuperacionRequest:
+    properties:
+      codigo:
+        type: string
+      email:
+        type: string
+      nuevaContrasena:
+        maxLength: 12
+        minLength: 8
+        type: string
+    required:
+    - codigo
+    - email
+    - nuevaContrasena
+    type: object
   http.refreshRequest:
     properties:
       refreshToken:
         type: string
     required:
     - refreshToken
+    type: object
+  http.solicitarRecuperacionRequest:
+    properties:
+      email:
+        type: string
+    required:
+    - email
     type: object
   http.verificarTotpRequest:
     properties:
@@ -118,6 +140,7 @@ definitions:
       contrasenaActual:
         type: string
       contrasenaNueva:
+        maxLength: 12
         minLength: 8
         type: string
     required:
@@ -151,9 +174,6 @@ definitions:
     properties:
       activo:
         type: boolean
-      contrasenaTemp:
-        description: Solo devuelto aquí (Plan A sin SMTP)
-        type: string
       id:
         type: string
       rol:
@@ -293,9 +313,10 @@ paths:
     put:
       consumes:
       - application/json
-      description: Valida la contraseña actual y aplica la nueva. Si la contraseña
-        era temporal (`cambioContrasenaRequerido=true`), este cambio limpia ese flag
-        y el usuario puede operar con normalidad.
+      description: 'Valida la contraseña actual y aplica la nueva. Reglas de complejidad:
+        entre 8 y 12 caracteres, al menos una mayúscula, un número y un carácter especial
+        (!@#$%^&*-_=+). Si la contraseña era temporal (`cambioContrasenaRequerido=true`),
+        este cambio limpia ese flag y desbloquea el acceso al resto de la plataforma.'
       parameters:
       - description: Contraseña actual y nueva
         in: body
@@ -313,7 +334,8 @@ paths:
               type: string
             type: object
         "400":
-          description: Contraseña actual incorrecta o nueva igual a la actual
+          description: Formato inválido, contraseña actual incorrecta, nueva igual
+            a la actual o no cumple las reglas de complejidad
           schema:
             $ref: '#/definitions/http.ErrorResponse'
         "401":
@@ -322,6 +344,11 @@ paths:
             additionalProperties:
               type: string
             type: object
+        "403":
+          description: PASSWORD_CHANGE_REQUIRED — solo este endpoint y logout son
+            accesibles mientras el flag esté activo
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
       security:
       - BearerAuth: []
       summary: Cambiar mi contraseña
@@ -563,8 +590,8 @@ paths:
       consumes:
       - application/json
       description: Crea un nuevo usuario con contraseña temporal generada automáticamente.
-        La respuesta incluye `contrasenaTemp` (solo en este momento, nunca más). El
-        usuario deberá cambiarla en su primer login. No se envian emails (Plan A).
+        La contraseña se envía al usuario por email. El usuario deberá cambiarla en
+        su primer login.
       parameters:
       - description: Datos del nuevo usuario
         in: body
@@ -896,9 +923,10 @@ paths:
       - Usuarios (Admin)
   /admin/users/{id}/password/reset:
     post:
-      description: Genera una nueva contraseña temporal segura y la aplica. Devuelve
-        `contrasenaTemp` (solo en esta respuesta). El usuario deberá cambiarla en
-        su próximo acceso. Invalida todas sus sesiones.
+      description: Genera una nueva contraseña temporal segura, la hashea, la persiste
+        y se la envía al usuario por email. Establece `must_change_password=true`
+        e invalida todas las sesiones activas del usuario. Solo su hash queda en base
+        de datos. Requiere rol ADMIN.
       parameters:
       - description: UUID del usuario
         in: path
@@ -921,20 +949,16 @@ paths:
               type: string
             type: object
         "403":
-          description: Forbidden
+          description: OPERATOR recibe 403 Forbidden
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/http.ErrorResponse'
         "404":
-          description: Not Found
+          description: Usuario no encontrado en la organización
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/http.ErrorResponse'
       security:
       - BearerAuth: []
-      summary: Resetear contraseña del usuario
+      summary: Restablecer contraseña (admin)
       tags:
       - Usuarios (Admin)
   /auth/2fa/qr:
@@ -1061,6 +1085,68 @@ paths:
           schema:
             $ref: '#/definitions/http.ErrorResponse'
       summary: Cerrar sesión (logout)
+      tags:
+      - Autenticación
+  /auth/password/forgot:
+    post:
+      consumes:
+      - application/json
+      description: Genera un código de 6 dígitos válido por 15 minutos y lo envía
+        al correo del usuario. Retorna 200 OK incluso si el correo no existe para
+        evitar enumeración.
+      parameters:
+      - description: Email del usuario
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/http.solicitarRecuperacionRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Email inválido
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+      summary: Solicitar recuperación de contraseña
+      tags:
+      - Autenticación
+  /auth/password/reset:
+    post:
+      consumes:
+      - application/json
+      description: Valida el código de 6 dígitos enviado por email y establece la
+        nueva contraseña (8-12 chars, mayúscula, número, especial). Invalida el código
+        tras el uso o tras 3 intentos fallidos. La nueva contraseña no puede coincidir
+        con la anterior.
+      parameters:
+      - description: Datos de recuperación
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/http.confirmarRecuperacionRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Datos inválidos, código incorrecto, demasiados intentos, contraseña
+            débil o igual a la actual
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+      summary: Confirmar recuperación de contraseña
       tags:
       - Autenticación
   /auth/refresh:

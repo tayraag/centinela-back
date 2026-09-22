@@ -32,12 +32,17 @@ type Usuario struct {
 
 	Rol              string `gorm:"type:varchar(50);not null" json:"rol"` // ADMIN u OPERATOR
 	Activo           bool   `gorm:"default:true" json:"activo"`
-	CambioContrasena bool   `gorm:"default:true" json:"cambioContrasena"`
+	CambioContrasena bool   `gorm:"default:false" json:"cambioContrasenaRequerido"` // Si es true, debe cambiar la clave al loguearse
 
-	// Campos 2FA (RF-01)
+	// Campos para recuperación de contraseña
+	CodigoRecuperacion   *string    `gorm:"type:varchar(6)" json:"-"`
+	ExpiracionCodigo     *time.Time `json:"-"`
+	IntentosRecuperacion int        `gorm:"default:0" json:"-"`
+
+	// 2FA TOTP
+	SecretoTotpCifrado string `gorm:"type:text" json:"-"` // Oculto en JSON
 	TotpVinculado      bool   `gorm:"default:false" json:"totpVinculado"`
-	SecretoTotpCifrado string `gorm:"type:varchar(255)" json:"-"`          // Oculto en JSON
-	UltimoTotpPeriodo  *int64 `gorm:"type:bigint" json:"-"`                // Anti-replay: período TOTP (unix/30) del último código usado
+	UltimoTotpPeriodo  *int64 `json:"-"` // Anti-replay: guarda el periodo (time.Now().Unix() / 30) del último código usado
 
 	FechaUltimoAcceso *time.Time `json:"fechaUltimoAcceso"` // Puntero porque puede ser null inicialmente
 	FechaCreacion     time.Time  `gorm:"default:now()" json:"fechaCreacion"`

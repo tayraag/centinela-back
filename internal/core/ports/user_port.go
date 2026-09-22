@@ -77,10 +77,9 @@ type UsuarioDetalleDTO struct {
 
 // CrearUsuarioResult es la respuesta al crear un usuario exitosamente.
 type CrearUsuarioResult struct {
-	ID             uuid.UUID `json:"id"`
-	Rol            string    `json:"rol"`
-	Activo         bool      `json:"activo"`
-	ContrasenaTemp string    `json:"contrasenaTemp"` // Solo devuelto aquí (Plan A sin SMTP)
+	ID     uuid.UUID `json:"id"`
+	Rol    string    `json:"rol"`
+	Activo bool      `json:"activo"`
 }
 
 // ActividadDTO proyecta un registro de auditoría para la vista de actividad de un usuario.
@@ -128,9 +127,10 @@ type ActualizarPerfilInput struct {
 }
 
 // CambiarContrasenaInput es el body para que el usuario cambie su propia contraseña.
+// Reglas de complejidad aplicadas en la capa de servicio: mayúscula, número y carácter especial.
 type CambiarContrasenaInput struct {
 	ContrasenaActual string `json:"contrasenaActual" binding:"required"`
-	ContrasenaNueva  string `json:"contrasenaNueva"  binding:"required,min=8"`
+	ContrasenaNueva  string `json:"contrasenaNueva"  binding:"required,min=8,max=12"`
 }
 
 // ==========================================
@@ -193,7 +193,7 @@ type UserService interface {
 	// AsignarPermisos reemplaza todos los permisos de instancia de un usuario operador.
 	AsignarPermisos(ctx context.Context, usuarioID, orgID uuid.UUID, actorID uuid.UUID, vmids []int) error
 
-	// ResetearContrasena genera una nueva contraseña temporal para el usuario.
+	// ResetearContrasena genera una nueva contraseña temporal para el usuario y la envía por email.
 	ResetearContrasena(ctx context.Context, usuarioID, orgID uuid.UUID, actorID uuid.UUID) (contrasenaTemp string, err error)
 
 	// ResetearTotp invalida el 2FA del usuario, forzando revinculación en el próximo login.

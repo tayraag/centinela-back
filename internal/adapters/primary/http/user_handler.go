@@ -94,7 +94,7 @@ func (h *UserHandler) ListarUsuarios(c *gin.Context) {
 // CrearUsuario crea un nuevo usuario en la organización del admin autenticado.
 //
 // @Summary      Crear usuario
-// @Description  Crea un nuevo usuario con contraseña temporal generada automáticamente. La respuesta incluye `contrasenaTemp` (solo en este momento, nunca más). El usuario deberá cambiarla en su primer login. No se envian emails (Plan A).
+// @Description  Crea un nuevo usuario con contraseña temporal generada automáticamente. La contraseña se envía al usuario por email. El usuario deberá cambiarla en su primer login.
 // @Tags         Usuarios (Admin)
 // @Accept       json
 // @Produce      json
@@ -120,6 +120,10 @@ func (h *UserHandler) CrearUsuario(c *gin.Context) {
 	actorID := extraerUserID(c)
 	resultado, err := h.service.CrearUsuario(c.Request.Context(), orgID, actorID, input)
 	if err != nil {
+		if strings.Contains(err.Error(), "EMAIL_DELIVERY_FAILED") {
+			SendError(c, http.StatusBadGateway, "EMAIL_DELIVERY_FAILED", "Usuario no creado. El servidor de correo no está disponible.")
+			return
+		}
 		SendError(c, http.StatusConflict, "USER_CONFLICT", err.Error())
 		return
 	}
@@ -380,16 +384,16 @@ func (h *UserHandler) ResetearTotp(c *gin.Context) {
 
 // ResetearContrasena genera una nueva contraseña temporal para el usuario.
 //
-// @Summary      Resetear contraseña del usuario
-// @Description  Genera una nueva contraseña temporal segura y la aplica. Devuelve `contrasenaTemp` (solo en esta respuesta). El usuario deberá cambiarla en su próximo acceso. Invalida todas sus sesiones.
+// @Summary      Restablecer contraseña (admin)
+// @Description  Genera una nueva contraseña temporal segura, la hashea, la persiste y se la envía al usuario por email. Establece `must_change_password=true` e invalida todas las sesiones activas del usuario. Solo su hash queda en base de datos. Requiere rol ADMIN.
 // @Tags         Usuarios (Admin)
 // @Produce      json
 // @Security     BearerAuth
 // @Param        id path string true "UUID del usuario"
 // @Success      200 {object} map[string]string
 // @Failure      401 {object} map[string]string
-// @Failure      403 {object} map[string]string
-// @Failure      404 {object} map[string]string
+// @Failure      403 {object} ErrorResponse "OPERATOR recibe 403 Forbidden"
+// @Failure      404 {object} ErrorResponse "Usuario no encontrado en la organización"
 // @Router       /admin/users/{id}/password/reset [post]
 func (h *UserHandler) ResetearContrasena(c *gin.Context) {
 	id, ok := parsearUUID(c, "id")
@@ -399,14 +403,17 @@ func (h *UserHandler) ResetearContrasena(c *gin.Context) {
 	orgID := extraerOrgID(c)
 	actorID := extraerUserID(c)
 
-	contrasenaTemp, err := h.service.ResetearContrasena(c.Request.Context(), id, orgID, actorID)
+	_, err := h.service.ResetearContrasena(c.Request.Context(), id, orgID, actorID)
 	if err != nil {
+		if strings.Contains(err.Error(), "EMAIL_DELIVERY_FAILED") {
+			SendError(c, http.StatusBadGateway, "EMAIL_DELIVERY_FAILED", "Error al enviar la contraseña por correo.")
+			return
+		}
 		SendError(c, http.StatusNotFound, "USER_NOT_FOUND", err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
-		"message":        "Contraseña restablecida. El usuario deberá cambiarla en su próximo acceso.",
-		"contrasenaTemp": contrasenaTemp,
+		"message": "Contraseña restablecida. Se ha enviado un correo al usuario.",
 	})
 }
 

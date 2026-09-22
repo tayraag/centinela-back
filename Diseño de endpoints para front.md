@@ -1,9 +1,9 @@
-#### 0.1 Recuperar contraseña
+#### 0.1 Recuperar contraseña (Solicitud)
 
 El backend recibe el email, valida su formato, genera el código temporal de 6 dígitos y define su fecha de expiración.&nbsp;
 
 - El usuario presiona "Enviar enlace de recuperación" en la primera pantalla.&nbsp;
-- **POST /api/auth/recovery/request**
+- **POST /api/auth/password/forgot**
 
 **1\. Petición (Frontend ➡️ Backend)**
 
@@ -16,86 +16,62 @@ El backend recibe el email, valida su formato, genera el código temporal de 6 d
 
 **2\. Respuesta (Backend ➡️ Frontend)**&nbsp;
 
-El frontend recibe el tiempo para poder mostrar el contador.&nbsp;
+El frontend recibe un mensaje genérico para evitar ataques de enumeración (evita confirmar si el correo existe o no explícitamente).&nbsp;
 
 ```json
 {
-  "message": "Código enviado correctamente.",
-  "expires_in": 600
+  "message": "Si el correo está registrado, recibirás un código de recuperación en unos minutos."
 }
 ```
 
-#### 0.2 Recuperar contraseña (verificar identidad)
+#### 0.2 Recuperar contraseña (Verificar y Restablecer)
 
-El backend recibe el código de verificación y valida que sea correcto y no haya expirado.
+El backend recibe el email, el código de verificación y la nueva contraseña. Valida que el código sea correcto y no haya expirado, y luego establece la nueva contraseña.
 
-- Cuando el usuario ingresa los 6 dígitos y presiona "Verificar código" en la segunda pantalla. El backend recibe el email, genera el código en Redis y lo envía. Si es un reenvío, pisa la clave anterior en Redis, invalidando el código viejo y reiniciando el temporizador.&nbsp;
-- **POST /api/auth/recovery/verify**&nbsp;
+- Cuando el usuario ingresa los 6 dígitos y la nueva contraseña, y presiona "Verificar y Restablecer" en la segunda pantalla.
+- **POST /api/auth/password/reset**&nbsp;
 
 **1\. Petición (Frontend ➡️ Backend)**
 
 ```json
 {
   "email": "ejemplo@correo.com",
-  "code": "123456"
+  "codigo": "123456",
+  "nuevaContrasena": "MiSuperPassword123!"
 }
 ```
 
 &nbsp;
 
 **2\. Respuesta (Backend ➡️ Frontend)**&nbsp;
-
-Se autoriza el avance al cambio de contraseña entregando un token de recuperación.&nbsp;
-
-```
-{
-  "message": "Identidad verificada.",
-  "recoveryToken": "eyJhbGciOiJIUzI1..."
-}
-```
-
-&nbsp;
-
-```json
-// Response Error (400 Bad Request) si expiró o es incorrecto
-{
-  "error": "INVALID_CODE",
-  "message": "El código ingresado es incorrecto o ha expirado."
-}
-```
-
-(Nota: Para cumplir con el requerimiento de "Permitir reenviar el código", podemos habilitar un `POST /api/auth/recovery/resend` que reciba el email y devuelva exactamente el mismo JSON del Paso 1, invalidando el código anterior).&nbsp;
-
-#### 0.3 Recuperar contraseña (crear nueva contraseña)
-
-- Se dispara cuando el usuario completa los campos de la tercera pantalla y presiona "Restablecer contraseña".&nbsp;
-
-El backend comprueba la autorización, valida las reglas de complejidad, guarda el hash de la clave y marca la solicitud como completada.
-
-- **POST /api/auth/recovery/reset**&nbsp;
-
-**1\. Petición (Frontend ➡️ Backend)**&nbsp;
-
-```
-{
-  "recoveryToken": "eyJhbGciOiJIUzI1...",
-  "newPassword": "MiSuperPassword123!"
-}
-```
-
-&nbsp;
-
-**2\. Respuesta (Backend ➡️ Frontend)**&nbsp;
-
-```json
-{
-  "message": "Tu contraseña ha sido restablecida con éxito."
-}
-```
 
 Respuesta Exitosa (200 OK):
 
-El sistema invalida el token para impedir su reutilización y devuelve el resultado del restablecimiento.&nbsp;
+El sistema restablece la contraseña e invalida el código (de un solo uso) para impedir su reutilización. Adicionalmente, se revocan todas las sesiones activas del usuario.&nbsp;
+
+```json
+{
+  "message": "Contraseña recuperada exitosamente."
+}
+```
+
+**Respuestas de Error (400 Bad Request):**
+
+```json
+// Si el código expira, se equivoca, o intenta fuerza bruta (>3 intentos)
+{
+  "errorCode": "RESET_FAILED",
+  "message": "código inválido o expirado"
+}
+```
+
+```json
+// Si la contraseña nueva es idéntica a la anterior
+{
+  "errorCode": "RESET_FAILED",
+  "message": "la nueva contraseña no puede ser igual a la actual"
+}
+```
 
 &nbsp;
 

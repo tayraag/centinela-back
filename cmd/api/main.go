@@ -10,6 +10,7 @@ import (
 	_ "el-centinela/docs"
 	httpHandlers "el-centinela/internal/adapters/primary/http"
 	"el-centinela/internal/adapters/primary/http/middleware"
+	"el-centinela/internal/adapters/secondary/email"
 	"el-centinela/internal/adapters/secondary/postgres"
 	"el-centinela/internal/core/services"
 
@@ -79,12 +80,13 @@ func main() {
 	// 3. Inicializar adaptadores secundarios (repositorios)
 	authRepo := postgres.NewAuthRepository(db)
 	userRepo := postgres.NewUserRepository(db)
+	emailService := email.NewMockEmailService()
 	auditRepo := postgres.NewAuditRepository(db)
 
 	// 4. Inicializar servicios de dominio (inyección de dependencias)
 	auditService := services.NewAuditService(auditRepo)
-	authService := services.NewAuthService(authRepo, auditService)
-	userService := services.NewUserService(userRepo, authRepo, auditService)
+	authService := services.NewAuthService(authRepo, emailService, auditService)
+	userService := services.NewUserService(userRepo, authRepo, auditService, emailService)
 
 	// 5. Inicializar handlers HTTP
 	authHandler := httpHandlers.NewAuthHandler(authService)
@@ -132,9 +134,13 @@ func main() {
 			auth.POST("/login", authHandler.Login)
 			auth.POST("/refresh", authHandler.RefrescarToken)
 			auth.POST("/logout", authHandler.Logout)
+			
+			// Recuperación de contraseña (públicas)
+			auth.POST("/password/forgot", authHandler.SolicitarRecuperacion)
+			auth.POST("/password/reset", authHandler.ConfirmarRecuperacion)
 
 			// Rutas del flujo 2FA (requieren JWT temporal pre-auth)
-			twoFA := auth.Group("/2fa", middleware.RequirePreAuth())
+			twoFA := auth.Group("/2fa", middleware.RequirePreAuth(authRepo))
 			{
 				twoFA.GET("/qr", authHandler.ObtenerQR)
 				twoFA.POST("/verify", authHandler.VerificarTotp)
@@ -142,12 +148,12 @@ func main() {
 		}
 
 		// Roles disponibles (para el selector del formulario)
-		api.GET("/roles", middleware.RequireAuth(), middleware.RequireRole("ADMIN"), userHandler.ObtenerRoles)
+		api.GET("/roles", middleware.RequireAuth(authRepo), middleware.RequireRole("ADMIN"), userHandler.ObtenerRoles)
 
 		// ==========================================
 		// Rutas de Gestión de Usuarios (RF-09) — solo ADMIN
 		// ==========================================
-		admin := api.Group("/admin", middleware.RequireAuth(), middleware.RequireRole("ADMIN"))
+		admin := api.Group("/admin", middleware.RequireAuth(authRepo), middleware.RequireRole("ADMIN"))
 		{
 			// CRUD de usuarios
 			users := admin.Group("/users")
@@ -179,7 +185,7 @@ func main() {
 		// ==========================================
 		// Rutas de Perfil Propio (RF-09) — cualquier usuario autenticado
 		// ==========================================
-		account := api.Group("/account", middleware.RequireAuth())
+		account := api.Group("/account", middleware.RequireAuth(authRepo))
 		{
 			account.GET("/profile", accountHandler.ObtenerPerfil)
 			account.PUT("/profile", accountHandler.ActualizarPerfil)

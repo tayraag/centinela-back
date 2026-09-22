@@ -89,7 +89,10 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 		return
 	}
 
-	if err := h.service.CerrarSesion(c.Request.Context(), req.RefreshToken); err != nil {
+	jti, _ := c.Get(middleware.ContextKeyJTI)
+	jtiStr, _ := jti.(string)
+
+	if err := h.service.CerrarSesion(c.Request.Context(), req.RefreshToken, jtiStr); err != nil {
 		SendError(c, http.StatusUnauthorized, "AUTH_FAILED", "sesión inválida o ya cerrada")
 		return
 	}
@@ -216,4 +219,75 @@ func (h *AuthHandler) RefrescarToken(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, result)
+}
+
+// ==========================================
+// Recuperación de Contraseña
+// ==========================================
+
+type solicitarRecuperacionRequest struct {
+	Email string `json:"email" binding:"required,email"`
+}
+
+// SolicitarRecuperacion inicia el flujo enviando un código temporal al correo del usuario.
+//
+// @Summary      Solicitar recuperación de contraseña
+// @Description  Genera un código de 6 dígitos válido por 15 minutos y lo envía al correo del usuario. Retorna 200 OK incluso si el correo no existe para evitar enumeración.
+// @Tags         Autenticación
+// @Accept       json
+// @Produce      json
+// @Param        body body solicitarRecuperacionRequest true "Email del usuario"
+// @Success      200 {object} map[string]string
+// @Failure      400 {object} ErrorResponse "Email inválido"
+// @Router       /auth/password/forgot [post]
+func (h *AuthHandler) SolicitarRecuperacion(c *gin.Context) {
+	var req solicitarRecuperacionRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		SendError(c, http.StatusBadRequest, "INVALID_REQUEST", "Email inválido o faltante.")
+		return
+	}
+
+	if err := h.service.SolicitarRecuperacionContrasena(c.Request.Context(), req.Email); err != nil {
+		SendError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Error al procesar la solicitud.")
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Si el correo está registrado, recibirás un código de recuperación en unos minutos.",
+	})
+}
+
+type confirmarRecuperacionRequest struct {
+	Email           string `json:"email" binding:"required,email"`
+	Codigo          string `json:"codigo" binding:"required,len=6"`
+	NuevaContrasena string `json:"nuevaContrasena" binding:"required,min=8,max=12"`
+}
+
+// ConfirmarRecuperacion valida el código de recuperación y establece la nueva contraseña.
+//
+// @Summary      Confirmar recuperación de contraseña
+// @Description  Valida el código de 6 dígitos enviado por email y establece la nueva contraseña (8-12 chars, mayúscula, número, especial). Invalida el código tras el uso o tras 3 intentos fallidos. La nueva contraseña no puede coincidir con la anterior.
+// @Tags         Autenticación
+// @Accept       json
+// @Produce      json
+// @Param        body body confirmarRecuperacionRequest true "Datos de recuperación"
+// @Success      200 {object} map[string]string
+// @Failure      400 {object} ErrorResponse "Datos inválidos, código incorrecto, demasiados intentos, contraseña débil o igual a la actual"
+// @Router       /auth/password/reset [post]
+func (h *AuthHandler) ConfirmarRecuperacion(c *gin.Context) {
+	var req confirmarRecuperacionRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		SendError(c, http.StatusBadRequest, "INVALID_REQUEST", "Formato inválido. Se requiere email, código de 6 dígitos y nueva contraseña válida.")
+		return
+	}
+
+	err := h.service.ConfirmarRecuperacionContrasena(c.Request.Context(), req.Email, req.Codigo, req.NuevaContrasena)
+	if err != nil {
+		SendError(c, http.StatusBadRequest, "RESET_FAILED", err.Error())
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Contraseña actualizada exitosamente. Ya puedes iniciar sesión.",
+	})
 }
