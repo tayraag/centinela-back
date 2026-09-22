@@ -32,12 +32,28 @@ type InstanciaProxmoxDTO struct {
 	Estado string `json:"estado"` // "running" | "stopped" | ...
 }
 
+// InstanciaListadaDTO es la proyección normalizada que consume el Front en el
+// listado del inventario. Nombres de campo y valores fijados por contrato:
+// type usa "vm" (no "qemu") para las máquinas virtuales.
+type InstanciaListadaDTO struct {
+	ID     int    `json:"id"`
+	Name   string `json:"name"`
+	Type   string `json:"type"` // "vm" | "lxc"
+	Node   string `json:"node"`
+	Status string `json:"status"`
+}
+
 // ProxmoxPort define el contrato hacia la API de Proxmox VE.
 // Lo implementa internal/adapters/secondary/proxmox.
 type ProxmoxPort interface {
 	// ObtenerInstancia devuelve el estado actual de una instancia.
 	// Retorna ErrInstanciaNoEncontrada si el vmid no existe en el cluster.
 	ObtenerInstancia(ctx context.Context, vmid int) (*InstanciaProxmoxDTO, error)
+
+	// ListarInstancias devuelve el estado actual de todas las VMs y
+	// contenedores del cluster, sin ningún filtrado por permisos (eso lo
+	// resuelve el handler HTTP según el rol del usuario autenticado).
+	ListarInstancias(ctx context.Context) ([]InstanciaProxmoxDTO, error)
 
 	// IniciarInstancia arranca una VM o contenedor. Devuelve el UPID de la
 	// tarea asíncrona que crea Proxmox para esta operación.

@@ -183,10 +183,10 @@ type clusterResourcesResponse struct {
 	Data []clusterResourceEntry `json:"data"`
 }
 
-// buscarInstancia consulta cluster/resources y devuelve la entrada que
-// corresponde al vmid dado (solo entradas type=qemu o type=lxc; el endpoint
-// también devuelve nodos, storages y redes, que se descartan acá).
-func (c *Client) buscarInstancia(ctx context.Context, vmid int) (*clusterResourceEntry, error) {
+// obtenerInstancias consulta cluster/resources y devuelve únicamente las
+// entradas de instancias (type=qemu o type=lxc; el endpoint también devuelve
+// nodos, storages y redes, que se descartan acá).
+func (c *Client) obtenerInstancias(ctx context.Context) ([]clusterResourceEntry, error) {
 	raw, err := c.doRequest(ctx, http.MethodGet, "/api2/json/cluster/resources", nil)
 	if err != nil {
 		return nil, err
@@ -197,15 +197,28 @@ func (c *Client) buscarInstancia(ctx context.Context, vmid int) (*clusterResourc
 		return nil, fmt.Errorf("%w: respuesta de cluster/resources inválida: %v", ports.ErrProxmoxNoDisponible, err)
 	}
 
+	instancias := make([]clusterResourceEntry, 0, len(parsed.Data))
 	for _, entry := range parsed.Data {
-		if entry.Vmid != vmid {
-			continue
-		}
 		if entry.Type != ports.TipoInstanciaQemu && entry.Type != ports.TipoInstanciaLXC {
 			continue
 		}
-		e := entry
-		return &e, nil
+		instancias = append(instancias, entry)
+	}
+	return instancias, nil
+}
+
+// buscarInstancia devuelve la entrada de cluster/resources correspondiente al
+// vmid dado.
+func (c *Client) buscarInstancia(ctx context.Context, vmid int) (*clusterResourceEntry, error) {
+	instancias, err := c.obtenerInstancias(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, entry := range instancias {
+		if entry.Vmid == vmid {
+			e := entry
+			return &e, nil
+		}
 	}
 	return nil, ports.ErrInstanciaNoEncontrada
 }
@@ -226,6 +239,25 @@ func (c *Client) ObtenerInstancia(ctx context.Context, vmid int) (*ports.Instanc
 		Nodo:   entry.Node,
 		Estado: entry.Status,
 	}, nil
+}
+
+func (c *Client) ListarInstancias(ctx context.Context) ([]ports.InstanciaProxmoxDTO, error) {
+	entries, err := c.obtenerInstancias(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	dtos := make([]ports.InstanciaProxmoxDTO, 0, len(entries))
+	for _, entry := range entries {
+		dtos = append(dtos, ports.InstanciaProxmoxDTO{
+			Vmid:   entry.Vmid,
+			Nombre: entry.Name,
+			Tipo:   entry.Type,
+			Nodo:   entry.Node,
+			Estado: entry.Status,
+		})
+	}
+	return dtos, nil
 }
 
 func (c *Client) IniciarInstancia(ctx context.Context, vmid int) (string, error) {

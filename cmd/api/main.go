@@ -102,7 +102,7 @@ func main() {
 	userHandler := httpHandlers.NewUserHandler(userService)
 	accountHandler := httpHandlers.NewAccountHandler(userService)
 	auditHandler := httpHandlers.NewAuditHandler(auditService)
-	instanceHandler := httpHandlers.NewInstanceHandler(proxmoxClient)
+	instanceHandler := httpHandlers.NewInstanceHandler(proxmoxClient, userRepo)
 
 	// 6. Configurar el Router HTTP (Gin)
 	// Usamos gin.New() para tener control total sobre los middlewares.
@@ -208,6 +208,7 @@ func main() {
 		// ==========================================
 		instances := api.Group("/instances", middleware.RequireAuth(authRepo))
 		{
+			instances.GET("", instanceHandler.ListarInstancias)
 			instances.GET("/:vmid", middleware.RequireInstanceAccess(instanceRepo, "vmid"), instanceHandler.ObtenerInstancia)
 			instances.POST("/:vmid/start", middleware.RequireInstanceAccess(instanceRepo, "vmid"), instanceHandler.IniciarInstancia)
 			instances.POST("/:vmid/stop", middleware.RequireInstanceAccess(instanceRepo, "vmid"), instanceHandler.DetenerInstancia)

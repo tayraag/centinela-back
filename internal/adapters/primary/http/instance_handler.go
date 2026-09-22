@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"el-centinela/internal/adapters/primary/http/middleware"
 	"el-centinela/internal/core/ports"
 
 	"github.com/gin-gonic/gin"
@@ -12,12 +13,14 @@ import (
 
 // InstanceHandler maneja los endpoints HTTP de instancias Proxmox.
 type InstanceHandler struct {
-	proxmox ports.ProxmoxPort
+	proxmox  ports.ProxmoxPort
+	userRepo ports.UserRepository
 }
 
-// NewInstanceHandler crea un nuevo InstanceHandler con el cliente de Proxmox inyectado.
-func NewInstanceHandler(proxmox ports.ProxmoxPort) *InstanceHandler {
-	return &InstanceHandler{proxmox: proxmox}
+// NewInstanceHandler crea un nuevo InstanceHandler con el cliente de Proxmox y
+// el repositorio de usuarios (para el filtrado RBAC del listado) inyectados.
+func NewInstanceHandler(proxmox ports.ProxmoxPort, userRepo ports.UserRepository) *InstanceHandler {
+	return &InstanceHandler{proxmox: proxmox, userRepo: userRepo}
 }
 
 // extraerVmid parsea el parámetro de ruta :vmid. El guard RequireInstanceAccess
@@ -38,10 +41,74 @@ func mapearErrorProxmox(c *gin.Context, err error) {
 	case errors.Is(err, ports.ErrInstanciaNoEncontrada):
 		SendError(c, http.StatusNotFound, "INSTANCE_NOT_FOUND", "La instancia no existe en Proxmox.")
 	case errors.Is(err, ports.ErrProxmoxNoDisponible):
-		SendError(c, http.StatusBadGateway, "PROXMOX_UNAVAILABLE", "No se pudo completar la operación contra Proxmox VE.")
+		SendError(c, http.StatusBadGateway, "PROXMOX_UNAVAILABLE", "Error al consultar la infraestructura subyacente.")
 	default:
 		SendError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Error inesperado al comunicarse con Proxmox VE.")
 	}
+}
+
+// ==========================================
+// GET /api/instances
+// ==========================================
+
+// ListarInstancias devuelve el inventario de VMs y contenedores visible para
+// el usuario autenticado: un ADMIN ve todo el cluster, un OPERATOR solo las
+// instancias que tiene asignadas.
+//
+// @Summary      Listar instancias
+// @Description  Lee en vivo el inventario de Proxmox VE (VMs y contenedores). Un ADMIN recibe el cluster completo; un OPERATOR recibe únicamente las instancias que tiene asignadas.
+// @Tags         Instancias Proxmox
+// @Produce      json
+// @Security     BearerAuth
+// @Success      200 {array} ports.InstanciaListadaDTO
+// @Failure      502 {object} ErrorResponse "PROXMOX_UNAVAILABLE"
+// @Router       /instances [get]
+func (h *InstanceHandler) ListarInstancias(c *gin.Context) {
+	instancias, err := h.proxmox.ListarInstancias(c.Request.Context())
+	if err != nil {
+		mapearErrorProxmox(c, err)
+		return
+	}
+
+	rolVal, _ := c.Get(middleware.ContextKeyRol)
+	rol, _ := rolVal.(string)
+
+	if rol != "ADMIN" {
+		userID := extraerUserID(c)
+		vmidsPermitidos, err := h.userRepo.ListarPermisosDeUsuario(c.Request.Context(), userID)
+		if err != nil {
+			SendError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Error al consultar los permisos del usuario.")
+			return
+		}
+		permitido := make(map[int]bool, len(vmidsPermitidos))
+		for _, vmid := range vmidsPermitidos {
+			permitido[vmid] = true
+		}
+
+		filtradas := instancias[:0]
+		for _, instancia := range instancias {
+			if permitido[instancia.Vmid] {
+				filtradas = append(filtradas, instancia)
+			}
+		}
+		instancias = filtradas
+	}
+
+	resultado := make([]ports.InstanciaListadaDTO, 0, len(instancias))
+	for _, instancia := range instancias {
+		tipo := instancia.Tipo
+		if tipo == ports.TipoInstanciaQemu {
+			tipo = "vm"
+		}
+		resultado = append(resultado, ports.InstanciaListadaDTO{
+			ID:     instancia.Vmid,
+			Name:   instancia.Nombre,
+			Type:   tipo,
+			Node:   instancia.Nodo,
+			Status: instancia.Estado,
+		})
+	}
+	c.JSON(http.StatusOK, resultado)
 }
 
 // ==========================================

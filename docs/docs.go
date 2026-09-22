@@ -1366,6 +1366,40 @@ const docTemplate = `{
                 }
             }
         },
+        "/instances": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Lee en vivo el inventario de Proxmox VE (VMs y contenedores). Un ADMIN recibe el cluster completo; un OPERATOR recibe únicamente las instancias que tiene asignadas.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Instancias Proxmox"
+                ],
+                "summary": "Listar instancias",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/ports.InstanciaListadaDTO"
+                            }
+                        }
+                    },
+                    "502": {
+                        "description": "PROXMOX_UNAVAILABLE",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/instances/{vmid}": {
             "get": {
                 "security": [
@@ -1865,6 +1899,27 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "rol": {
+                    "type": "string"
+                }
+            }
+        },
+        "ports.InstanciaListadaDTO": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "integer"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "node": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "type": {
+                    "description": "\"vm\" | \"lxc\"",
                     "type": "string"
                 }
             }
