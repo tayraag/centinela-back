@@ -182,22 +182,22 @@ type UserService interface {
 	ObtenerUsuario(ctx context.Context, id, orgID uuid.UUID) (*UsuarioDetalleDTO, error)
 
 	// CrearUsuario crea un nuevo usuario con contraseña temporal generada automáticamente.
-	CrearUsuario(ctx context.Context, orgID uuid.UUID, input CrearUsuarioInput) (*CrearUsuarioResult, error)
+	CrearUsuario(ctx context.Context, orgID uuid.UUID, actorID uuid.UUID, input CrearUsuarioInput) (*CrearUsuarioResult, error)
 
 	// ActualizarUsuario actualiza parcialmente los datos de un usuario.
-	ActualizarUsuario(ctx context.Context, id, orgID uuid.UUID, input ActualizarUsuarioInput) (*UsuarioResumenDTO, error)
+	ActualizarUsuario(ctx context.Context, id, orgID uuid.UUID, actorID uuid.UUID, input ActualizarUsuarioInput) (*UsuarioResumenDTO, error)
 
 	// EliminarUsuario realiza un soft-delete del usuario y cierra todas sus sesiones.
-	EliminarUsuario(ctx context.Context, id, orgID uuid.UUID) error
+	EliminarUsuario(ctx context.Context, id, orgID uuid.UUID, actorID uuid.UUID) error
 
 	// AsignarPermisos reemplaza todos los permisos de instancia de un usuario operador.
-	AsignarPermisos(ctx context.Context, usuarioID, orgID uuid.UUID, vmids []int) error
+	AsignarPermisos(ctx context.Context, usuarioID, orgID uuid.UUID, actorID uuid.UUID, vmids []int) error
 
 	// ResetearContrasena genera una nueva contraseña temporal para el usuario y la envía por email.
-	ResetearContrasena(ctx context.Context, usuarioID, orgID uuid.UUID) error
+	ResetearContrasena(ctx context.Context, usuarioID, orgID uuid.UUID, actorID uuid.UUID) (contrasenaTemp string, err error)
 
 	// ResetearTotp invalida el 2FA del usuario, forzando revinculación en el próximo login.
-	ResetearTotp(ctx context.Context, usuarioID, orgID uuid.UUID) error
+	ResetearTotp(ctx context.Context, usuarioID, orgID uuid.UUID, actorID uuid.UUID) error
 
 	// ListarActividad devuelve el historial de acciones de un usuario.
 	ListarActividad(ctx context.Context, usuarioID, orgID uuid.UUID, filtros FiltrosActividad) ([]ActividadDTO, error)

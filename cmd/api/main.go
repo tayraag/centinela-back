@@ -79,15 +79,18 @@ func main() {
 	authRepo := postgres.NewAuthRepository(db)
 	userRepo := postgres.NewUserRepository(db)
 	emailService := email.NewMockEmailService()
+	auditRepo := postgres.NewAuditRepository(db)
 
 	// 4. Inicializar servicios de dominio (inyección de dependencias)
-	authService := services.NewAuthService(authRepo, emailService)
-	userService := services.NewUserService(userRepo, authRepo, emailService)
+	auditService := services.NewAuditService(auditRepo)
+	authService := services.NewAuthService(authRepo, emailService, auditService)
+	userService := services.NewUserService(userRepo, authRepo, auditService, emailService)
 
 	// 5. Inicializar handlers HTTP
 	authHandler := httpHandlers.NewAuthHandler(authService)
 	userHandler := httpHandlers.NewUserHandler(userService)
 	accountHandler := httpHandlers.NewAccountHandler(userService)
+	auditHandler := httpHandlers.NewAuditHandler(auditService)
 
 	// 6. Configurar el Router HTTP (Gin)
 	// Usamos gin.New() para tener control total sobre los middlewares.
@@ -168,6 +171,12 @@ func main() {
 				users.POST("/:id/2fa/reset", userHandler.ResetearTotp)
 				users.POST("/:id/password/reset", userHandler.ResetearContrasena)
 			}
+
+			// ==========================================
+			// Rutas de Auditoría (RF-08) — solo ADMIN
+			// ==========================================
+			admin.GET("/audit", auditHandler.ListarAuditoria)
+			admin.GET("/audit/export", auditHandler.ExportarAuditoria)
 		}
 
 		// ==========================================

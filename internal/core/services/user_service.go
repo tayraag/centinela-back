@@ -17,14 +17,16 @@ type userServiceImpl struct {
 	userRepo     ports.UserRepository
 	authRepo     ports.AuthRepository // para invalidar sesiones y resetear TOTP
 	emailService ports.EmailService
+	auditSvc ports.AuditService
 }
 
 // NewUserService crea una nueva instancia del servicio de usuarios.
-func NewUserService(userRepo ports.UserRepository, authRepo ports.AuthRepository, emailService ports.EmailService) ports.UserService {
+func NewUserService(userRepo ports.UserRepository, authRepo ports.AuthRepository, auditSvc ports.AuditService, emailService ports.EmailService) ports.UserService {
 	return &userServiceImpl{
 		userRepo:     userRepo,
 		authRepo:     authRepo,
 		emailService: emailService,
+		auditSvc:     auditSvc,
 	}
 }
 
@@ -58,7 +60,7 @@ func (s *userServiceImpl) ObtenerUsuario(ctx context.Context, id, orgID uuid.UUI
 
 // CrearUsuario crea un nuevo usuario con contraseña temporal generada automáticamente.
 // No envía email (Plan A): devuelve la contraseña en texto plano solo en este momento.
-func (s *userServiceImpl) CrearUsuario(ctx context.Context, orgID uuid.UUID, input ports.CrearUsuarioInput) (*ports.CrearUsuarioResult, error) {
+func (s *userServiceImpl) CrearUsuario(ctx context.Context, orgID uuid.UUID, actorID uuid.UUID, input ports.CrearUsuarioInput) (*ports.CrearUsuarioResult, error) {
 	log.Printf("[USERS] crear usuario | email=%s | rol=%s | org=%s", input.EmailUsuario, input.Rol, orgID)
 
 	// 1. Verificar unicidad de email y username en la organización
@@ -112,6 +114,13 @@ func (s *userServiceImpl) CrearUsuario(ctx context.Context, orgID uuid.UUID, inp
 
 	log.Printf("[USERS] usuario creado y credenciales enviadas | id=%s | email=%s | rol=%s", nuevoUsuario.ID, input.EmailUsuario, input.Rol)
 
+	s.auditSvc.Registrar(ctx, ports.RegistrarAuditoriaInput{
+		UsuarioID: actorID,
+		Accion:    ports.AccionCrearUsuario,
+		Resultado: ports.ResultadoExito,
+		Detalles:  map[string]any{"usuarioCreado": nuevoUsuario.ID.String(), "email": input.EmailUsuario, "rol": input.Rol},
+	})
+
 	return &ports.CrearUsuarioResult{
 		ID:     nuevoUsuario.ID,
 		Rol:    nuevoUsuario.Rol,
@@ -120,7 +129,7 @@ func (s *userServiceImpl) CrearUsuario(ctx context.Context, orgID uuid.UUID, inp
 }
 
 // ActualizarUsuario actualiza parcialmente los datos de un usuario.
-func (s *userServiceImpl) ActualizarUsuario(ctx context.Context, id, orgID uuid.UUID, input ports.ActualizarUsuarioInput) (*ports.UsuarioResumenDTO, error) {
+func (s *userServiceImpl) ActualizarUsuario(ctx context.Context, id, orgID uuid.UUID, actorID uuid.UUID, input ports.ActualizarUsuarioInput) (*ports.UsuarioResumenDTO, error) {
 	// Verificar que el usuario existe en la organización
 	usuario, err := s.userRepo.BuscarUsuarioPorIDEnOrg(ctx, id, orgID)
 	if err != nil {
@@ -173,11 +182,17 @@ func (s *userServiceImpl) ActualizarUsuario(ctx context.Context, id, orgID uuid.
 	}
 	dto := usuarioAResumenDTO(*usuarioActualizado)
 	log.Printf("[USERS] usuario actualizado | id=%s | cambios=%v", id, cambios)
+	s.auditSvc.Registrar(ctx, ports.RegistrarAuditoriaInput{
+		UsuarioID: actorID,
+		Accion:    ports.AccionActualizarUsuario,
+		Resultado: ports.ResultadoExito,
+		Detalles:  map[string]any{"usuarioAfectado": id.String(), "cambios": cambios},
+	})
 	return &dto, nil
 }
 
 // EliminarUsuario realiza un soft-delete del usuario y cierra todas sus sesiones.
-func (s *userServiceImpl) EliminarUsuario(ctx context.Context, id, orgID uuid.UUID) error {
+func (s *userServiceImpl) EliminarUsuario(ctx context.Context, id, orgID uuid.UUID, actorID uuid.UUID) error {
 	// Verificar que existe en la organización
 	if _, err := s.userRepo.BuscarUsuarioPorIDEnOrg(ctx, id, orgID); err != nil {
 		return err
@@ -194,11 +209,17 @@ func (s *userServiceImpl) EliminarUsuario(ctx context.Context, id, orgID uuid.UU
 	}
 
 	log.Printf("[USERS] usuario eliminado (soft-delete) | id=%s", id)
+	s.auditSvc.Registrar(ctx, ports.RegistrarAuditoriaInput{
+		UsuarioID: actorID,
+		Accion:    ports.AccionEliminarUsuario,
+		Resultado: ports.ResultadoExito,
+		Detalles:  map[string]any{"usuarioEliminado": id.String()},
+	})
 	return nil
 }
 
 // AsignarPermisos reemplaza todos los permisos de instancia de un usuario operador.
-func (s *userServiceImpl) AsignarPermisos(ctx context.Context, usuarioID, orgID uuid.UUID, vmids []int) error {
+func (s *userServiceImpl) AsignarPermisos(ctx context.Context, usuarioID, orgID uuid.UUID, actorID uuid.UUID, vmids []int) error {
 	// Verificar que el usuario existe en la organización
 	if _, err := s.userRepo.BuscarUsuarioPorIDEnOrg(ctx, usuarioID, orgID); err != nil {
 		return err
@@ -209,37 +230,43 @@ func (s *userServiceImpl) AsignarPermisos(ctx context.Context, usuarioID, orgID 
 	}
 
 	log.Printf("[USERS] permisos asignados | user=%s | vmids=%v", usuarioID, vmids)
+	s.auditSvc.Registrar(ctx, ports.RegistrarAuditoriaInput{
+		UsuarioID: actorID,
+		Accion:    ports.AccionAsignarPermisos,
+		Resultado: ports.ResultadoExito,
+		Detalles:  map[string]any{"usuarioAfectado": usuarioID.String(), "vmids": vmids},
+	})
 	return nil
 }
 
-// ResetearContrasena genera una nueva contraseña temporal y la envía por email.
-func (s *userServiceImpl) ResetearContrasena(ctx context.Context, usuarioID, orgID uuid.UUID) error {
+// ResetearContrasena genera una nueva contraseña temporal y la aplica al usuario.
+func (s *userServiceImpl) ResetearContrasena(ctx context.Context, usuarioID, orgID uuid.UUID, actorID uuid.UUID) (string, error) {
 	usuario, err := s.userRepo.BuscarUsuarioPorIDEnOrg(ctx, usuarioID, orgID)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	contrasenaTemp, err := crypto.GenerarContrasenaTemp()
 	if err != nil {
-		return fmt.Errorf("error al generar contraseña temporal: %w", err)
+		return "", fmt.Errorf("error al generar contraseña temporal: %w", err)
 	}
 
 	hash, err := crypto.HashContrasena(contrasenaTemp)
 	if err != nil {
-		return fmt.Errorf("error al hashear contraseña: %w", err)
+		return "", fmt.Errorf("error al hashear contraseña: %w", err)
 	}
 
 	// Enviar correo antes de modificar la DB
 	if err := s.emailService.EnviarContrasenaTemporal(usuario.EmailUsuario, contrasenaTemp); err != nil {
 		log.Printf("[USERS] error al enviar email de reset a %s: %v", usuario.EmailUsuario, err)
-		return fmt.Errorf("EMAIL_DELIVERY_FAILED: %w", err)
+		return "", fmt.Errorf("EMAIL_DELIVERY_FAILED: %w", err)
 	}
 
 	if err := s.userRepo.ActualizarUsuario(ctx, usuarioID, map[string]any{
 		"contrasena_hash":   hash,
 		"cambio_contrasena": true,
 	}); err != nil {
-		return err
+		return "", err
 	}
 
 	// Invalidar sesiones para forzar re-login con la nueva clave
@@ -248,11 +275,18 @@ func (s *userServiceImpl) ResetearContrasena(ctx context.Context, usuarioID, org
 	}
 
 	log.Printf("[USERS] contraseña reseteada y enviada | user=%s", usuarioID)
-	return nil
+	
+	s.auditSvc.Registrar(ctx, ports.RegistrarAuditoriaInput{
+		UsuarioID: actorID,
+		Accion:    ports.AccionResetearContrasena,
+		Resultado: ports.ResultadoExito,
+		Detalles:  map[string]any{"usuarioAfectado": usuarioID.String()},
+	})
+	return contrasenaTemp, nil
 }
 
 // ResetearTotp invalida el 2FA del usuario, forzando revinculación en el próximo login.
-func (s *userServiceImpl) ResetearTotp(ctx context.Context, usuarioID, orgID uuid.UUID) error {
+func (s *userServiceImpl) ResetearTotp(ctx context.Context, usuarioID, orgID uuid.UUID, actorID uuid.UUID) error {
 	if _, err := s.userRepo.BuscarUsuarioPorIDEnOrg(ctx, usuarioID, orgID); err != nil {
 		return err
 	}
@@ -267,6 +301,12 @@ func (s *userServiceImpl) ResetearTotp(ctx context.Context, usuarioID, orgID uui
 	}
 
 	log.Printf("[USERS] TOTP reseteado | user=%s", usuarioID)
+	s.auditSvc.Registrar(ctx, ports.RegistrarAuditoriaInput{
+		UsuarioID: actorID,
+		Accion:    ports.AccionResetearTotp,
+		Resultado: ports.ResultadoExito,
+		Detalles:  map[string]any{"usuarioAfectado": usuarioID.String()},
+	})
 	return nil
 }
 
@@ -283,6 +323,10 @@ func (s *userServiceImpl) ListarActividad(ctx context.Context, usuarioID, orgID 
 
 	dtos := make([]ports.ActividadDTO, len(registros))
 	for i, r := range registros {
+		detalles := ""
+		if r.Detalles != nil {
+			detalles = *r.Detalles
+		}
 		dtos[i] = ports.ActividadDTO{
 			ID:              r.ID,
 			FechaHora:       r.FechaHora,
@@ -290,7 +334,7 @@ func (s *userServiceImpl) ListarActividad(ctx context.Context, usuarioID, orgID 
 			InstanciaID:     r.InstanciaID,
 			InstanciaNombre: r.InstanciaNombre,
 			Resultado:       r.Resultado,
-			Detalles:        r.Detalles,
+			Detalles:        detalles,
 		}
 	}
 	return dtos, nil
@@ -384,6 +428,11 @@ func (s *userServiceImpl) CambiarContrasena(ctx context.Context, usuarioID uuid.
 	}
 
 	log.Printf("[USERS] contraseña cambiada | user=%s | cambio_obligatorio_resuelto=%v", usuarioID, usuario.CambioContrasena)
+	s.auditSvc.Registrar(ctx, ports.RegistrarAuditoriaInput{
+		UsuarioID: usuarioID,
+		Accion:    ports.AccionCambiarContrasena,
+		Resultado: ports.ResultadoExito,
+	})
 	return nil
 }
 

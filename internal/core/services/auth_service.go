@@ -23,13 +23,15 @@ import (
 type authServiceImpl struct {
 	repo         ports.AuthRepository
 	emailService ports.EmailService
+	auditSvc     ports.AuditService
 }
 
 // NewAuthService crea una nueva instancia del servicio de autenticación.
-func NewAuthService(repo ports.AuthRepository, emailService ports.EmailService) ports.AuthService {
+func NewAuthService(repo ports.AuthRepository, emailService ports.EmailService, auditSvc ports.AuditService) ports.AuthService {
 	return &authServiceImpl{
 		repo:         repo,
 		emailService: emailService,
+		auditSvc:     auditSvc,	
 	}
 }
 
@@ -59,6 +61,12 @@ func (s *authServiceImpl) Login(ctx context.Context, email, contrasena string) (
 	// 3. Verificar contraseña
 	if !crypto.VerificarContrasena(usuario.ContrasenaHash, contrasena) {
 		log.Printf("[AUTH] login failed | email=%s | reason=wrong_password", email)
+		s.auditSvc.Registrar(ctx, ports.RegistrarAuditoriaInput{
+			UsuarioID: usuario.ID,
+			Accion:    ports.AccionLoginFalla,
+			Resultado: ports.ResultadoFalla,
+			Detalles:  map[string]any{"razon": "contraseña incorrecta"},
+		})
 		return nil, fmt.Errorf("credenciales inválidas")
 	}
 
@@ -94,6 +102,12 @@ func (s *authServiceImpl) Login(ctx context.Context, email, contrasena string) (
 	}
 
 	log.Printf("[AUTH] login ok | user=%s | rol=%s | totp_vinculado=%v | cambio_pass=%v | jti=%s", usuario.EmailUsuario, usuario.Rol, usuario.TotpVinculado, usuario.CambioContrasena, jti)
+
+	s.auditSvc.Registrar(ctx, ports.RegistrarAuditoriaInput{
+		UsuarioID: usuario.ID,
+		Accion:    ports.AccionLogin,
+		Resultado: ports.ResultadoExito,
+	})
 
 	return &ports.LoginResult{
 		JWTTemporal:               jwtTemporal,
@@ -203,6 +217,12 @@ func (s *authServiceImpl) VerificarTotp(ctx context.Context, jtiTemporal, codigo
 	}
 	if !valido {
 		log.Printf("[2FA] totp invalid | user=%s", usuario.EmailUsuario)
+		s.auditSvc.Registrar(ctx, ports.RegistrarAuditoriaInput{
+			UsuarioID: usuario.ID,
+			Accion:    ports.Accion2FAFalla,
+			Resultado: ports.ResultadoFalla,
+			Detalles:  map[string]any{"razon": "código TOTP incorrecto"},
+		})
 		return nil, fmt.Errorf("código TOTP incorrecto")
 	}
 
@@ -293,6 +313,12 @@ func (s *authServiceImpl) VerificarTotp(ctx context.Context, jtiTemporal, codigo
 	}
 
 	log.Printf("[AUTH] tokens issued | user=%s | access_jti=%s | refresh_jti=%s | access_ttl=%s", usuario.EmailUsuario, jtiAccess, jtiRefresh, accessTTL)
+
+	s.auditSvc.Registrar(ctx, ports.RegistrarAuditoriaInput{
+		UsuarioID: usuario.ID,
+		Accion:    ports.AccionVerificar2FA,
+		Resultado: ports.ResultadoExito,
+	})
 
 	return &ports.TokenResult{
 		AccessToken:  accessToken,
@@ -426,6 +452,13 @@ func (s *authServiceImpl) CerrarSesion(ctx context.Context, refreshToken, access
 			log.Printf("[AUTH] access token revoked | access_jti=%s", accessTokenJTI)
 		}
 	}
+	
+	usuarioID, _ := uuid.Parse(claims.Subject)
+	s.auditSvc.Registrar(ctx, ports.RegistrarAuditoriaInput{
+		UsuarioID: usuarioID,
+		Accion:    ports.AccionLogout,
+		Resultado: ports.ResultadoExito,
+	})
 	
 	return nil
 }

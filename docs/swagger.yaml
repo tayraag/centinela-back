@@ -112,6 +112,29 @@ definitions:
         - OPERATOR
         type: string
     type: object
+  ports.AuditoriaDTO:
+    properties:
+      accion:
+        type: string
+      detalles:
+        type: string
+      fechaHora:
+        type: string
+      id:
+        type: string
+      instanciaId:
+        type: string
+      instanciaNombre:
+        type: string
+      nombreUsuario:
+        description: Nombre completo (JOIN con usuarios, o "[usuario eliminado]")
+        type: string
+      resultado:
+        type: string
+      usuarioId:
+        description: 'Puntero: puede ser null si el usuario fue eliminado'
+        type: string
+    type: object
   ports.CambiarContrasenaInput:
     properties:
       contrasenaActual:
@@ -174,6 +197,20 @@ definitions:
         type: string
       totpVinculado:
         type: boolean
+    type: object
+  ports.PaginaAuditoria:
+    properties:
+      items:
+        description: Registros de esta página
+        items:
+          $ref: '#/definitions/ports.AuditoriaDTO'
+        type: array
+      pagina:
+        description: Página actual
+        type: integer
+      total:
+        description: Total de registros que coinciden con los filtros
+        type: integer
     type: object
   ports.QRResult:
     properties:
@@ -379,6 +416,134 @@ paths:
       summary: Actualizar mi perfil
       tags:
       - Mi cuenta
+  /admin/audit:
+    get:
+      description: Devuelve el log de auditoría de la organización con soporte de
+        filtros, paginación y ordenamiento. Solo accesible por ADMIN.
+      parameters:
+      - description: Filtrar por UUID de usuario
+        in: query
+        name: usuarioId
+        type: string
+      - description: 'Filtrar por tipo de acción (ej: LOGIN, CREAR_USUARIO)'
+        in: query
+        name: accion
+        type: string
+      - description: Filtrar por ID de instancia Proxmox
+        in: query
+        name: instanciaId
+        type: string
+      - description: 'Filtrar por resultado: EXITO o FALLA'
+        in: query
+        name: resultado
+        type: string
+      - description: Fecha desde (YYYY-MM-DD)
+        in: query
+        name: desde
+        type: string
+      - description: Fecha hasta (YYYY-MM-DD)
+        in: query
+        name: hasta
+        type: string
+      - description: Número de página (default 1)
+        in: query
+        name: pagina
+        type: integer
+      - description: Registros por página (default 50, máx 200)
+        in: query
+        name: tamano
+        type: integer
+      - description: 'Campo de ordenamiento: fechaHora (default), accion, resultado'
+        in: query
+        name: ordenarPor
+        type: string
+      - description: 'Dirección: desc (default) o asc'
+        in: query
+        name: direccion
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/ports.PaginaAuditoria'
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Listar log de auditoría
+      tags:
+      - Auditoría (Admin)
+  /admin/audit/export:
+    get:
+      description: Exporta el log de auditoría de la organización. Aplica los mismos
+        filtros que el listado. Retorna el archivo como adjunto descargable. Solo
+        accesible por ADMIN.
+      parameters:
+      - description: Filtrar por UUID de usuario
+        in: query
+        name: usuarioId
+        type: string
+      - description: Filtrar por tipo de acción
+        in: query
+        name: accion
+        type: string
+      - description: Filtrar por ID de instancia
+        in: query
+        name: instanciaId
+        type: string
+      - description: EXITO o FALLA
+        in: query
+        name: resultado
+        type: string
+      - description: Fecha desde (YYYY-MM-DD)
+        in: query
+        name: desde
+        type: string
+      - description: Fecha hasta (YYYY-MM-DD)
+        in: query
+        name: hasta
+        type: string
+      - description: 'Formato de exportación: csv (default) o json'
+        in: query
+        name: formato
+        type: string
+      produces:
+      - text/csv
+      - application/json
+      responses:
+        "200":
+          description: Archivo CSV o JSON descargable
+          schema:
+            type: file
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Exportar log de auditoría
+      tags:
+      - Auditoría (Admin)
   /admin/users:
     get:
       description: 'Devuelve todos los usuarios de la organización del admin autenticado,
