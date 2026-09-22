@@ -187,6 +187,14 @@ func (s *userServiceImpl) EliminarUsuario(ctx context.Context, id, orgID uuid.UU
 	return nil
 }
 
+// ObtenerPermisos devuelve la lista de VMIDs asignados a un usuario.
+func (s *userServiceImpl) ObtenerPermisos(ctx context.Context, usuarioID, orgID uuid.UUID) ([]int, error) {
+	if _, err := s.userRepo.BuscarUsuarioPorIDEnOrg(ctx, usuarioID, orgID); err != nil {
+		return nil, err
+	}
+	return s.userRepo.ListarPermisosDeUsuario(ctx, usuarioID)
+}
+
 // AsignarPermisos reemplaza todos los permisos de instancia de un usuario operador.
 func (s *userServiceImpl) AsignarPermisos(ctx context.Context, usuarioID, orgID uuid.UUID, vmids []int) error {
 	// Verificar que el usuario existe en la organización

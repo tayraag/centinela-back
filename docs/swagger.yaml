@@ -35,6 +35,13 @@ definitions:
     required:
     - vmids
     type: object
+  http.permisosResponse:
+    properties:
+      vmids:
+        items:
+          type: integer
+        type: array
+    type: object
   http.refreshRequest:
     properties:
       refreshToken:
@@ -676,7 +683,48 @@ paths:
       summary: Actividad auditada del usuario
       tags:
       - Usuarios (Admin)
-  /admin/users/{id}/instances:
+  /admin/users/{id}/permissions:
+    get:
+      description: Devuelve el conjunto de VMIDs de Proxmox a los que tiene acceso
+        el usuario. Si no tiene permisos asignados, devuelve un array vacío.
+      parameters:
+      - description: UUID del usuario
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/http.permisosResponse'
+        "400":
+          description: UUID inválido
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Usuario no encontrado
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Obtener permisos de instancia del usuario
+      tags:
+      - Usuarios (Admin)
     put:
       consumes:
       - application/json

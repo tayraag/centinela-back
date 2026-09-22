@@ -653,7 +653,69 @@ const docTemplate = `{
                 }
             }
         },
-        "/admin/users/{id}/instances": {
+        "/admin/users/{id}/permissions": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Devuelve el conjunto de VMIDs de Proxmox a los que tiene acceso el usuario. Si no tiene permisos asignados, devuelve un array vacío.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Usuarios (Admin)"
+                ],
+                "summary": "Obtener permisos de instancia del usuario",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "UUID del usuario",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/http.permisosResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "UUID inválido",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Usuario no encontrado",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    }
+                }
+            },
             "put": {
                 "security": [
                     {
@@ -1117,6 +1179,17 @@ const docTemplate = `{
             "required": [
                 "vmids"
             ],
+            "properties": {
+                "vmids": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                }
+            }
+        },
+        "http.permisosResponse": {
+            "type": "object",
             "properties": {
                 "vmids": {
                     "type": "array",

@@ -154,7 +154,8 @@ func main() {
 				users.DELETE("/:id", userHandler.EliminarUsuario)
 
 				// Permisos de instancias del usuario
-				users.PUT("/:id/instances", userHandler.AsignarPermisos)
+				users.GET("/:id/permissions", userHandler.ObtenerPermisos)
+				users.PUT("/:id/permissions", userHandler.AsignarPermisos)
 
 				// Actividad del usuario (auditoría filtrada)
 				users.GET("/:id/activity", userHandler.ListarActividad)

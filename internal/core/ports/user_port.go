@@ -190,6 +190,9 @@ type UserService interface {
 	// EliminarUsuario realiza un soft-delete del usuario y cierra todas sus sesiones.
 	EliminarUsuario(ctx context.Context, id, orgID uuid.UUID) error
 
+	// ObtenerPermisos devuelve la lista de VMIDs asignados a un usuario.
+	ObtenerPermisos(ctx context.Context, usuarioID, orgID uuid.UUID) ([]int, error)
+
 	// AsignarPermisos reemplaza todos los permisos de instancia de un usuario operador.
 	AsignarPermisos(ctx context.Context, usuarioID, orgID uuid.UUID, vmids []int) error
 

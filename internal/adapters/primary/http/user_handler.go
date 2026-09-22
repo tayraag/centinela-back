@@ -243,7 +243,7 @@ func (h *UserHandler) EliminarUsuario(c *gin.Context) {
 }
 
 // ==========================================
-// PUT /api/users/:id/instances
+// PUT /api/admin/users/:id/permissions
 // ==========================================
 
 // asignarPermisosRequest define el body para la asignación de permisos de instancia.
@@ -266,7 +266,7 @@ type asignarPermisosRequest struct {
 // @Failure      401 {object} map[string]string
 // @Failure      403 {object} map[string]string
 // @Failure      404 {object} map[string]string
-// @Router       /admin/users/{id}/instances [put]
+// @Router       /admin/users/{id}/permissions [put]
 func (h *UserHandler) AsignarPermisos(c *gin.Context) {
 	id, ok := parsearUUID(c, "id")
 	if !ok {
@@ -285,6 +285,49 @@ func (h *UserHandler) AsignarPermisos(c *gin.Context) {
 		return
 	}
 	c.Status(http.StatusNoContent)
+}
+
+// ==========================================
+// GET /api/admin/users/:id/permissions
+// ==========================================
+
+// permisosResponse es la respuesta del endpoint GET /permissions.
+type permisosResponse struct {
+	Vmids []int `json:"vmids"`
+}
+
+// ObtenerPermisos devuelve la lista de VMIDs asignados a un usuario.
+//
+// @Summary      Obtener permisos de instancia del usuario
+// @Description  Devuelve el conjunto de VMIDs de Proxmox a los que tiene acceso el usuario. Si no tiene permisos asignados, devuelve un array vacío.
+// @Tags         Usuarios (Admin)
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id path string true "UUID del usuario"
+// @Success      200 {object} permisosResponse
+// @Failure      400 {object} ErrorResponse "UUID inválido"
+// @Failure      401 {object} map[string]string
+// @Failure      403 {object} map[string]string
+// @Failure      404 {object} ErrorResponse "Usuario no encontrado"
+// @Router       /admin/users/{id}/permissions [get]
+func (h *UserHandler) ObtenerPermisos(c *gin.Context) {
+	id, ok := parsearUUID(c, "id")
+	if !ok {
+		return
+	}
+	orgID := extraerOrgID(c)
+
+	vmids, err := h.service.ObtenerPermisos(c.Request.Context(), id, orgID)
+	if err != nil {
+		SendError(c, http.StatusNotFound, "USER_NOT_FOUND", "Usuario no encontrado.")
+		return
+	}
+
+	// Devolver siempre un array (nunca null) para consistencia con el front
+	if vmids == nil {
+		vmids = []int{}
+	}
+	c.JSON(http.StatusOK, permisosResponse{Vmids: vmids})
 }
 
 // ==========================================
