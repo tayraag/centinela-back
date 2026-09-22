@@ -209,7 +209,9 @@ func (h *AuthHandler) RefrescarToken(c *gin.Context) {
 
 	result, err := h.service.RefrescarToken(c.Request.Context(), req.RefreshToken)
 	if err != nil {
-		SendError(c, http.StatusUnauthorized, "REFRESH_FAILED", err.Error())
+		// Mensaje fijo: el error del servicio puede traer el detalle interno de la
+		// librería de JWT (por ejemplo "token is malformed"), que no es asunto del cliente.
+		SendError(c, http.StatusUnauthorized, "REFRESH_FAILED", "El refresh token es inválido o expiró. Iniciá sesión nuevamente.")
 		return
 	}
 
