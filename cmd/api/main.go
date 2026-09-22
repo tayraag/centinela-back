@@ -4,6 +4,8 @@ package main
 import (
 	"log"
 	"net/http"
+	"os"
+	"strings"
 
 	_ "el-centinela/docs"
 	httpHandlers "el-centinela/internal/adapters/primary/http"
@@ -96,6 +98,7 @@ func main() {
 	router := gin.New()
 	router.Use(gin.Recovery())             // Recupera de panics sin caer el servidor
 	router.Use(middleware.RequestLogger()) // Logger conciso personalizado
+	router.Use(middleware.SecurityHeaders())
 
 	// 7. Definir las rutas
 	api := router.Group("/api")
@@ -184,9 +187,14 @@ func main() {
 
 					}
 		// ==========================================
-		// Swagger UI (solo en desarrollo)
+		// Swagger UI: apagada por defecto.
+		// Estuvo publicada en PRUEBAS, donde cualquiera podía leer el contrato completo
+		// de la API. Se habilita solo con ENABLE_SWAGGER=true (pensado para desarrollo local).
 		// ==========================================
-		router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+		if strings.EqualFold(os.Getenv("ENABLE_SWAGGER"), "true") {
+			router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+			log.Println("📖 Swagger UI disponible en: http://localhost:8080/swagger/index.html")
+		}
 	}
 
 	// 8. Mismo contrato de errores para lo que no existe.
@@ -202,7 +210,6 @@ func main() {
 
 	// 9. Encender el servidor en el puerto 8080
 	log.Println("🛡️ Servidor HTTP escuchando en el puerto 8080...")
-	log.Println("📖 Swagger UI disponible en: http://localhost:8080/swagger/index.html")
 	if err := router.Run(":8080"); err != nil {
 		log.Fatalf("❌ Error al arrancar el servidor: %v", err)
 	}
