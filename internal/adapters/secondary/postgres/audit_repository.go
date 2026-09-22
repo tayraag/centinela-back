@@ -71,7 +71,10 @@ func (r *auditRepositoryImpl) Listar(ctx context.Context, orgID uuid.UUID, filtr
 		Table("auditoria a").
 		Select("a.*, u.nombre_completo").
 		Joins("LEFT JOIN usuarios u ON u.id = a.usuario_id").
-		Where("u.organizacion_id = ? OR a.usuario_id IS NULL", orgID)
+		// Solo los registros de la propia organización. Los que quedaron sin usuario
+		// (usuario eliminado) no tienen organización a la que atribuirse: se excluyen
+		// en vez de mostrarse en todas, que era lo que pasaba antes.
+		Where("u.organizacion_id = ?", orgID)
 
 	// Aplicar filtros opcionales
 	query = aplicarFiltros(query, filtros)
@@ -146,7 +149,10 @@ func (r *auditRepositoryImpl) ExportarRegistros(ctx context.Context, orgID uuid.
 		Table("auditoria a").
 		Select("a.*, u.nombre_completo").
 		Joins("LEFT JOIN usuarios u ON u.id = a.usuario_id").
-		Where("u.organizacion_id = ? OR a.usuario_id IS NULL", orgID)
+		// Solo los registros de la propia organización. Los que quedaron sin usuario
+		// (usuario eliminado) no tienen organización a la que atribuirse: se excluyen
+		// en vez de mostrarse en todas, que era lo que pasaba antes.
+		Where("u.organizacion_id = ?", orgID)
 
 	query = aplicarFiltros(query, filtros)
 
