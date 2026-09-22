@@ -94,6 +94,7 @@ func main() {
 	userHandler := httpHandlers.NewUserHandler(userService)
 	accountHandler := httpHandlers.NewAccountHandler(userService)
 	auditHandler := httpHandlers.NewAuditHandler(auditService)
+	instanceHandler := httpHandlers.NewInstanceHandler()
 
 	// 6. Configurar el Router HTTP (Gin)
 	// Usamos gin.New() para tener control total sobre los middlewares.
@@ -195,19 +196,14 @@ func main() {
 		}
 
 		// ==========================================
-		// Rutas de Instancias Proxmox — pendiente de implementación
+		// Rutas de Instancias Proxmox
 		// ==========================================
-		// Cuando se agreguen los handlers de Proxmox VE, usar el guard así:
-		//
-		//   instances := api.Group("/instances", middleware.RequireAuth())
-		//   {
-		//       instances.GET("/:vmid",        middleware.RequireInstanceAccess(instanceRepo, "vmid"), instanceHandler.ObtenerInstancia)
-		//       instances.POST("/:vmid/start", middleware.RequireInstanceAccess(instanceRepo, "vmid"), instanceHandler.IniciarInstancia)
-		//       instances.POST("/:vmid/stop",  middleware.RequireInstanceAccess(instanceRepo, "vmid"), instanceHandler.DetenerInstancia)
-		//   }
-		//
-		// El parámetro "vmid" debe coincidir con el nombre del param de ruta (":vmid").
-		_ = instanceRepo // evitar error de compilación hasta que se conecten los handlers
+		instances := api.Group("/instances", middleware.RequireAuth(authRepo))
+		{
+			instances.GET("/:vmid", middleware.RequireInstanceAccess(instanceRepo, "vmid"), instanceHandler.ObtenerInstancia)
+			instances.POST("/:vmid/start", middleware.RequireInstanceAccess(instanceRepo, "vmid"), instanceHandler.IniciarInstancia)
+			instances.POST("/:vmid/stop", middleware.RequireInstanceAccess(instanceRepo, "vmid"), instanceHandler.DetenerInstancia)
+		}
 		// ==========================================
 		// Swagger UI: apagada por defecto.
 		// Estuvo publicada en PRUEBAS, donde cualquiera podía leer el contrato completo

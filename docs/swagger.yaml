@@ -1228,6 +1228,81 @@ paths:
       summary: Renovar access token
       tags:
       - Autenticación
+  /instances/{vmid}:
+    get:
+      description: 'Placeholder: la integración con Proxmox VE todavía no está implementada.'
+      parameters:
+      - description: VMID de la instancia
+        in: path
+        name: vmid
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "403":
+          description: INSTANCE_ACCESS_DENIED — el OPERATOR no tiene este vmid asignado
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "501":
+          description: Not Implemented
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Obtener instancia
+      tags:
+      - Instancias Proxmox
+  /instances/{vmid}/start:
+    post:
+      description: 'Placeholder: la integración con Proxmox VE todavía no está implementada.'
+      parameters:
+      - description: VMID de la instancia
+        in: path
+        name: vmid
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "403":
+          description: INSTANCE_ACCESS_DENIED — el OPERATOR no tiene este vmid asignado
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "501":
+          description: Not Implemented
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Iniciar instancia
+      tags:
+      - Instancias Proxmox
+  /instances/{vmid}/stop:
+    post:
+      description: 'Placeholder: la integración con Proxmox VE todavía no está implementada.'
+      parameters:
+      - description: VMID de la instancia
+        in: path
+        name: vmid
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "403":
+          description: INSTANCE_ACCESS_DENIED — el OPERATOR no tiene este vmid asignado
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "501":
+          description: Not Implemented
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Detener instancia
+      tags:
+      - Instancias Proxmox
   /roles:
     get:
       description: Devuelve los roles definidos en el sistema (ADMIN y OPERATOR).

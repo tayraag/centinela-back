@@ -1359,6 +1359,126 @@
                 }
             }
         },
+        "/instances/{vmid}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Placeholder: la integración con Proxmox VE todavía no está implementada.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Instancias Proxmox"
+                ],
+                "summary": "Obtener instancia",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "VMID de la instancia",
+                        "name": "vmid",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "403": {
+                        "description": "INSTANCE_ACCESS_DENIED — el OPERATOR no tiene este vmid asignado",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "501": {
+                        "description": "Not Implemented",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/instances/{vmid}/start": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Placeholder: la integración con Proxmox VE todavía no está implementada.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Instancias Proxmox"
+                ],
+                "summary": "Iniciar instancia",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "VMID de la instancia",
+                        "name": "vmid",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "403": {
+                        "description": "INSTANCE_ACCESS_DENIED — el OPERATOR no tiene este vmid asignado",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "501": {
+                        "description": "Not Implemented",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/instances/{vmid}/stop": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Placeholder: la integración con Proxmox VE todavía no está implementada.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Instancias Proxmox"
+                ],
+                "summary": "Detener instancia",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "VMID de la instancia",
+                        "name": "vmid",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "403": {
+                        "description": "INSTANCE_ACCESS_DENIED — el OPERATOR no tiene este vmid asignado",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "501": {
+                        "description": "Not Implemented",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/roles": {
             "get": {
                 "security": [
