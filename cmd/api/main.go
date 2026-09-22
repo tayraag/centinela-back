@@ -189,7 +189,18 @@ func main() {
 		router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 	}
 
-	// 8. Encender el servidor en el puerto 8080
+	// 8. Mismo contrato de errores para lo que no existe.
+	// Por defecto Gin responde "404 page not found" en texto plano, que rompe el
+	// sobre JSON ({ errorCode, message }) que usa el resto de la API.
+	router.NoRoute(func(c *gin.Context) {
+		httpHandlers.SendError(c, http.StatusNotFound, "NOT_FOUND", "El recurso solicitado no existe.")
+	})
+	router.HandleMethodNotAllowed = true
+	router.NoMethod(func(c *gin.Context) {
+		httpHandlers.SendError(c, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "El método HTTP no está permitido para este recurso.")
+	})
+
+	// 9. Encender el servidor en el puerto 8080
 	log.Println("🛡️ Servidor HTTP escuchando en el puerto 8080...")
 	log.Println("📖 Swagger UI disponible en: http://localhost:8080/swagger/index.html")
 	if err := router.Run(":8080"); err != nil {
