@@ -143,7 +143,9 @@ func main() {
 			// Rutas públicas (sin autenticación)
 			auth.POST("/login", authHandler.Login)
 			auth.POST("/refresh", authHandler.RefrescarToken)
-			auth.POST("/logout", authHandler.Logout)
+
+			// Rutas protegidas (requieren JWT access)
+			auth.POST("/logout", middleware.RequireAuth(authRepo), authHandler.Logout)
 
 			// Recuperación de contraseña (públicas)
 			auth.POST("/password/forgot", authHandler.SolicitarRecuperacion)

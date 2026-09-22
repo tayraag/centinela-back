@@ -55,6 +55,9 @@ type AuthRepository interface {
 	// ActualizarSesion actualiza una sesión existente (ej: Estado2fa, Activa).
 	ActualizarSesion(ctx context.Context, sesion *domain.SesionActiva) error
 
+	// RevocarSesiones revoca múltiples sesiones en una sola operación atómica usando sus JTIs.
+	RevocarSesiones(ctx context.Context, jtis []string) error
+
 	// ActualizarTotp guarda el secreto TOTP cifrado y el estado de vinculación.
 	ActualizarTotp(ctx context.Context, usuarioID uuid.UUID, secretoCifrado string, vinculado bool) error
 

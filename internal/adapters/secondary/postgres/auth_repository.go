@@ -87,6 +87,18 @@ func (r *AuthRepository) ActualizarSesion(ctx context.Context, sesion *domain.Se
 	return nil
 }
 
+// RevocarSesiones revoca múltiples sesiones en una sola operación atómica usando sus JTIs.
+func (r *AuthRepository) RevocarSesiones(ctx context.Context, jtis []string) error {
+	result := r.db.WithContext(ctx).
+		Model(&domain.SesionActiva{}).
+		Where("jti_token IN ?", jtis).
+		Update("activa", false)
+	if result.Error != nil {
+		return fmt.Errorf("error al revocar sesiones: %w", result.Error)
+	}
+	return nil
+}
+
 // ActualizarTotp guarda el secreto TOTP cifrado y el estado de vinculación del usuario.
 func (r *AuthRepository) ActualizarTotp(ctx context.Context, usuarioID uuid.UUID, secretoCifrado string, vinculado bool) error {
 	result := r.db.WithContext(ctx).

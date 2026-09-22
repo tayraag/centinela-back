@@ -429,35 +429,29 @@ func (s *authServiceImpl) CerrarSesion(ctx context.Context, refreshToken, access
 		return fmt.Errorf("token no es del tipo refresh")
 	}
 
-	// 2. Buscar la sesión asociada al JTI
-	sesion, err := s.repo.BuscarSesionPorJTI(ctx, claims.ID)
-	if err != nil {
-		log.Printf("[AUTH] logout failed | reason=session_not_found")
-		return fmt.Errorf("sesión no válida o ya cerrada: %w", err)
+	// 2. Revocar ambas sesiones en una sola transacción
+	jtis := []string{claims.ID}
+	if accessTokenJTI != "" {
+		jtis = append(jtis, accessTokenJTI)
 	}
 
-	// 3. Desactivarla
-	sesion.Activa = false
-	if err := s.repo.ActualizarSesion(ctx, sesion); err != nil {
+	if err := s.repo.RevocarSesiones(ctx, jtis); err != nil {
+		log.Printf("[AUTH] logout failed | reason=db_error")
 		return fmt.Errorf("no se pudo cerrar la sesión: %w", err)
 	}
 
-	log.Printf("[AUTH] logout done | refresh_jti=%s", claims.ID)
-	
-	// 4. Intentar revocar también el Access Token si se proveyó
-	if accessTokenJTI != "" {
-		if sesionAccess, err := s.repo.BuscarSesionPorJTI(ctx, accessTokenJTI); err == nil {
-			sesionAccess.Activa = false
-			_ = s.repo.ActualizarSesion(ctx, sesionAccess)
-			log.Printf("[AUTH] access token revoked | access_jti=%s", accessTokenJTI)
-		}
-	}
+	log.Printf("[AUTH] logout done | refresh_jti=%s | access_jti=%s", claims.ID, accessTokenJTI)
 	
 	usuarioID, _ := uuid.Parse(claims.Subject)
 	s.auditSvc.Registrar(ctx, ports.RegistrarAuditoriaInput{
 		UsuarioID: usuarioID,
 		Accion:    ports.AccionLogout,
 		Resultado: ports.ResultadoExito,
+		Detalles: map[string]any{
+			"reason":        "user_requested",
+			"resource_type": "AUTH",
+			"resource_id":   nil,
+		},
 	})
 	
 	return nil
