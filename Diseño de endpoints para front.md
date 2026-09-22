@@ -1616,15 +1616,20 @@ Para cumplir con el requisito de "asignar, modificar o quitar acceso a una insta
 
 Petición (Frontend ➡️ Backend):
 
-**PUT /api/admin/users/{userId}/instances**
-
-&nbsp;
+**GET /api/admin/users/{id}/permissions**
 
 ```json
-[
-  { "instanceId": "qemu/100", "accessLevel": "FULL_ACCESS" },
-  { "instanceId": "lxc/101", "accessLevel": "READ_ONLY" }
-]
+{
+  "vmids": [100, 101]
+}
+```
+
+**PUT /api/admin/users/{id}/permissions**
+
+```json
+{
+  "vmids": [100, 101]
+}
 ```
 
 &nbsp;

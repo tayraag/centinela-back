@@ -82,6 +82,7 @@ func main() {
 	userRepo := postgres.NewUserRepository(db)
 	emailService := email.NewMockEmailService()
 	auditRepo := postgres.NewAuditRepository(db)
+	instanceRepo := postgres.NewInstanceRepository(db)
 
 	// 4. Inicializar servicios de dominio (inyección de dependencias)
 	auditService := services.NewAuditService(auditRepo)
@@ -165,7 +166,8 @@ func main() {
 				users.DELETE("/:id", userHandler.EliminarUsuario)
 
 				// Permisos de instancias del usuario
-				users.PUT("/:id/instances", userHandler.AsignarPermisos)
+				users.GET("/:id/permissions", userHandler.ObtenerPermisos)
+				users.PUT("/:id/permissions", userHandler.AsignarPermisos)
 
 				// Actividad del usuario (auditoría filtrada)
 				users.GET("/:id/activity", userHandler.ListarActividad)
@@ -190,8 +192,22 @@ func main() {
 			account.GET("/profile", accountHandler.ObtenerPerfil)
 			account.PUT("/profile", accountHandler.ActualizarPerfil)
 			account.PUT("/password", accountHandler.CambiarContrasena)
+		}
 
-					}
+		// ==========================================
+		// Rutas de Instancias Proxmox — pendiente de implementación
+		// ==========================================
+		// Cuando se agreguen los handlers de Proxmox VE, usar el guard así:
+		//
+		//   instances := api.Group("/instances", middleware.RequireAuth())
+		//   {
+		//       instances.GET("/:vmid",        middleware.RequireInstanceAccess(instanceRepo, "vmid"), instanceHandler.ObtenerInstancia)
+		//       instances.POST("/:vmid/start", middleware.RequireInstanceAccess(instanceRepo, "vmid"), instanceHandler.IniciarInstancia)
+		//       instances.POST("/:vmid/stop",  middleware.RequireInstanceAccess(instanceRepo, "vmid"), instanceHandler.DetenerInstancia)
+		//   }
+		//
+		// El parámetro "vmid" debe coincidir con el nombre del param de ruta (":vmid").
+		_ = instanceRepo // evitar error de compilación hasta que se conecten los handlers
 		// ==========================================
 		// Swagger UI: apagada por defecto.
 		// Estuvo publicada en PRUEBAS, donde cualquiera podía leer el contrato completo

@@ -845,7 +845,127 @@
                 }
             }
         },
-        "/admin/users/{id}/instances": {
+        "/admin/users/{id}/password/reset": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Genera una nueva contraseña temporal segura, la hashea, la persiste y se la envía al usuario por email. Establece `must_change_password=true` e invalida todas las sesiones activas del usuario. Solo su hash queda en base de datos. Requiere rol ADMIN.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Usuarios (Admin)"
+                ],
+                "summary": "Restablecer contraseña (admin)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "UUID del usuario",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "OPERATOR recibe 403 Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Usuario no encontrado en la organización",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/users/{id}/permissions": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Devuelve el conjunto de VMIDs de Proxmox a los que tiene acceso el usuario. Si no tiene permisos asignados, devuelve un array vacío.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Usuarios (Admin)"
+                ],
+                "summary": "Obtener permisos de instancia del usuario",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "UUID del usuario",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/http.permisosResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "UUID inválido",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Usuario no encontrado",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    }
+                }
+            },
             "put": {
                 "security": [
                     {
@@ -919,64 +1039,6 @@
                             "additionalProperties": {
                                 "type": "string"
                             }
-                        }
-                    }
-                }
-            }
-        },
-        "/admin/users/{id}/password/reset": {
-            "post": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Genera una nueva contraseña temporal segura, la hashea, la persiste y se la envía al usuario por email. Establece `must_change_password=true` e invalida todas las sesiones activas del usuario. Solo su hash queda en base de datos. Requiere rol ADMIN.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Usuarios (Admin)"
-                ],
-                "summary": "Restablecer contraseña (admin)",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "UUID del usuario",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "403": {
-                        "description": "OPERATOR recibe 403 Forbidden",
-                        "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
-                        }
-                    },
-                    "404": {
-                        "description": "Usuario no encontrado en la organización",
-                        "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
                         }
                     }
                 }
@@ -1416,6 +1478,17 @@
                     "type": "string",
                     "maxLength": 12,
                     "minLength": 8
+                }
+            }
+        },
+        "http.permisosResponse": {
+            "type": "object",
+            "properties": {
+                "vmids": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
                 }
             }
         },
