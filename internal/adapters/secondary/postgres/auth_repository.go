@@ -203,3 +203,15 @@ func (r *AuthRepository) ActualizarIntentosRecuperacion(ctx context.Context, usu
 	}
 	return nil
 }
+
+// ActualizarUltimoAcceso actualiza la fecha de último acceso del usuario.
+func (r *AuthRepository) ActualizarUltimoAcceso(ctx context.Context, usuarioID uuid.UUID, fecha time.Time) error {
+	result := r.db.WithContext(ctx).
+		Model(&domain.Usuario{}).
+		Where("id = ?", usuarioID).
+		Update("fecha_ultimo_acceso", fecha)
+	if result.Error != nil {
+		return fmt.Errorf("error al actualizar último acceso: %w", result.Error)
+	}
+	return nil
+}

@@ -78,6 +78,9 @@ type AuthRepository interface {
 
 	// ActualizarContrasenaYLimpiarCodigo cambia la contraseña y elimina el código temporal usado.
 	ActualizarContrasenaYLimpiarCodigo(ctx context.Context, usuarioID uuid.UUID, hash string) error
+
+	// ActualizarUltimoAcceso actualiza la fecha de último acceso del usuario.
+	ActualizarUltimoAcceso(ctx context.Context, usuarioID uuid.UUID, fecha time.Time) error
 }
 
 // ==========================================

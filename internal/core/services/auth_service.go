@@ -312,6 +312,11 @@ func (s *authServiceImpl) VerificarTotp(ctx context.Context, jtiTemporal, codigo
 		return nil, fmt.Errorf("error al guardar sesión de access: %w", err)
 	}
 
+	// 9. Actualizar la fecha de último acceso del usuario
+	if err := s.repo.ActualizarUltimoAcceso(ctx, usuario.ID, time.Now()); err != nil {
+		log.Printf("[AUTH] advertencia: no se pudo actualizar fecha de último acceso del usuario %s: %v", usuario.ID, err)
+	}
+
 	log.Printf("[AUTH] tokens issued | user=%s | access_jti=%s | refresh_jti=%s | access_ttl=%s", usuario.EmailUsuario, jtiAccess, jtiRefresh, accessTTL)
 
 	s.auditSvc.Registrar(ctx, ports.RegistrarAuditoriaInput{
