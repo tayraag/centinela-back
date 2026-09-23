@@ -602,8 +602,7 @@ curl.exe -s -X POST "http://localhost:8080/api/admin/users/$UID/password/reset" 
 
 ```json
 {
-  "message": "Contraseña restablecida. El usuario deberá cambiarla en su próximo acceso.",
-  "contrasenaTemp": "!ApskXZ#uaQ7"
+  "message": "Contraseña restablecida. Se ha enviado un correo al usuario."
 }
 ```
 

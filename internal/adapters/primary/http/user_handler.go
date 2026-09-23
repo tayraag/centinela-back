@@ -422,7 +422,7 @@ func (h *UserHandler) ResetearTotp(c *gin.Context) {
 }
 
 // ==========================================
-// POST /api/users/:id/password/reset
+// POST /api/admin/users/:id/password/reset
 // ==========================================
 
 // ResetearContrasena genera una nueva contraseña temporal para el usuario.

@@ -1717,12 +1717,11 @@ Inicia el flujo de revinculación invalidando el 2FA actual.&nbsp;
 
 **POST /api/admin/users/{userId}/password/reset**&nbsp;
 
-Genera una clave temporal, la asocia al usuario y devuelve el resultado.&nbsp;&nbsp;
+Genera una clave temporal, la asocia al usuario y se la envía por correo.&nbsp;&nbsp;
 
 ```json
 {
-  "message": "Se ha forzado el restablecimiento de contraseña.",
-  "tempPassword": "NuevaClaveSegura123!"
+  "message": "Contraseña restablecida. Se ha enviado un correo al usuario."
 }
 ```
 
