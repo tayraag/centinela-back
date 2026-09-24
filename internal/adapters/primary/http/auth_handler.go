@@ -2,6 +2,7 @@ package http
 
 import (
 	"net/http"
+	"os"
 	"strings"
 
 	"el-centinela/internal/adapters/primary/http/middleware"
@@ -18,6 +19,21 @@ type AuthHandler struct {
 // NewAuthHandler crea un nuevo AuthHandler con el servicio de autenticación inyectado.
 func NewAuthHandler(service ports.AuthService) *AuthHandler {
 	return &AuthHandler{service: service}
+}
+
+// setRefreshCookie encapsula la lógica para emitir o borrar la cookie segura del refresh token.
+func setRefreshCookie(c *gin.Context, token string, maxAge int) {
+	// En producción usar Secure=true. En desarrollo local puede ser false mediante variable de entorno.
+	secure := true
+	if os.Getenv("COOKIE_SECURE") == "false" {
+		secure = false
+	}
+	
+	// Previene envíos cross-site (protección CSRF combinada con XSS protection del HttpOnly)
+	c.SameSite(http.SameSiteStrictMode)
+	
+	// c.SetCookie(name, value, maxAge, path, domain, secure, httpOnly)
+	c.SetCookie("centinela_refresh", token, maxAge, "/api/auth", "", secure, true)
 }
 
 // ==========================================
@@ -65,37 +81,32 @@ func (h *AuthHandler) Login(c *gin.Context) {
 // POST /api/auth/logout
 // ==========================================
 
-// LogoutRequest define el body esperado para cerrar sesión.
-type LogoutRequest struct {
-	RefreshToken string `json:"refreshToken" binding:"required"`
-}
-
-// Logout invalida la sesión del usuario a partir de su refresh token.
+// Logout invalida la sesión del usuario a partir de su refresh token en la cookie.
 //
 // @Summary      Cerrar sesión (logout)
-// @Description  Invalida la sesión asociada al refresh token recibido. El frontend debe descartar los tokens locales. Responde 204 sin body.
+// @Description  Invalida la sesión asociada al refresh token en la cookie `centinela_refresh`. Emite la eliminación de la cookie y responde 204.
 // @Tags         Autenticación
-// @Accept       json
 // @Produce      json
-// @Param        body body LogoutRequest true "Token de refresco de la sesión a cerrar"
 // @Success      204 "Sin contenido"
-// @Failure      400 {object} ErrorResponse "Formato de petición inválido"
-// @Failure      401 {object} ErrorResponse "Refresh token inválido o sesión ya cerrada"
+// @Failure      401 {object} ErrorResponse "Refresh token inválido, sesión ya cerrada o cookie ausente"
 // @Router       /auth/logout [post]
 func (h *AuthHandler) Logout(c *gin.Context) {
-	var req LogoutRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		SendError(c, http.StatusBadRequest, "INVALID_REQUEST", "El formato de la petición es incorrecto. Se requiere refreshToken.")
+	refreshToken, err := c.Cookie("centinela_refresh")
+	if err != nil || refreshToken == "" {
+		SendError(c, http.StatusUnauthorized, "REFRESH_COOKIE_MISSING", "Cookie de refresh token no provista.")
 		return
 	}
 
 	jti, _ := c.Get(middleware.ContextKeyJTI)
 	jtiStr, _ := jti.(string)
 
-	if err := h.service.CerrarSesion(c.Request.Context(), req.RefreshToken, jtiStr); err != nil {
+	if err := h.service.CerrarSesion(c.Request.Context(), refreshToken, jtiStr); err != nil {
 		SendError(c, http.StatusUnauthorized, "AUTH_FAILED", "sesión inválida o ya cerrada")
 		return
 	}
+
+	// Borrar la cookie emitiendo Max-Age=-1
+	setRefreshCookie(c, "", -1)
 
 	c.Status(http.StatusNoContent)
 }
@@ -179,6 +190,9 @@ func (h *AuthHandler) VerificarTotp(c *gin.Context) {
 		return
 	}
 
+	// Emitir la cookie segura con el refresh token. Tiempo de vida: 7 días.
+	setRefreshCookie(c, result.RefreshToken, 7*24*3600)
+
 	c.JSON(http.StatusOK, result)
 }
 
@@ -186,37 +200,32 @@ func (h *AuthHandler) VerificarTotp(c *gin.Context) {
 // POST /api/auth/refresh
 // ==========================================
 
-// refreshRequest define el body para la renovación de tokens.
-type refreshRequest struct {
-	RefreshToken string `json:"refreshToken" binding:"required"`
-}
-
-// RefrescarToken valida un refresh token y emite un nuevo access token.
+// RefrescarToken valida un refresh token de la cookie y emite un nuevo access token.
 //
 // @Summary      Renovar access token
-// @Description  Recibe un refresh token válido y emite un nuevo access token (8h). El refresh token no cambia.
+// @Description  Lee el refresh token desde la cookie HTTP-Only, valida la sesión y emite un nuevo access token. Rota la cookie emitiendo un nuevo refresh token.
 // @Tags         Autenticación
-// @Accept       json
 // @Produce      json
-// @Param        body body refreshRequest true "Refresh token"
 // @Success      200 {object} ports.TokenResult
-// @Failure      400 {object} ErrorResponse "Body inválido"
-// @Failure      401 {object} ErrorResponse "Refresh token inválido o expirado"
+// @Failure      401 {object} ErrorResponse "Cookie no provista, o refresh token inválido/expirado"
 // @Router       /auth/refresh [post]
 func (h *AuthHandler) RefrescarToken(c *gin.Context) {
-	var req refreshRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		SendError(c, http.StatusBadRequest, "INVALID_REQUEST", "Se requiere el campo refreshToken.")
+	refreshToken, err := c.Cookie("centinela_refresh")
+	if err != nil || refreshToken == "" {
+		SendError(c, http.StatusUnauthorized, "REFRESH_COOKIE_MISSING", "Cookie de refresh token no provista.")
 		return
 	}
 
-	result, err := h.service.RefrescarToken(c.Request.Context(), req.RefreshToken)
+	result, err := h.service.RefrescarToken(c.Request.Context(), refreshToken)
 	if err != nil {
 		// Mensaje fijo: el error del servicio puede traer el detalle interno de la
 		// librería de JWT (por ejemplo "token is malformed"), que no es asunto del cliente.
 		SendError(c, http.StatusUnauthorized, "REFRESH_FAILED", "El refresh token es inválido o expiró. Iniciá sesión nuevamente.")
 		return
 	}
+
+	// Rotar la cookie con el nuevo refresh token emitido
+	setRefreshCookie(c, result.RefreshToken, 7*24*3600)
 
 	c.JSON(http.StatusOK, result)
 }

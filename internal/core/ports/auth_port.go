@@ -29,7 +29,7 @@ type QRResult struct {
 // TokenResult contiene el par de tokens emitidos tras autenticación completa.
 type TokenResult struct {
 	AccessToken  string `json:"accessToken"`
-	RefreshToken string `json:"refreshToken"`
+	RefreshToken string `json:"-"`
 	ExpiresIn    int64  `json:"expiresIn"` // segundos hasta expiración del access token
 }
 
