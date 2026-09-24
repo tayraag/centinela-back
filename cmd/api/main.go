@@ -13,6 +13,7 @@ import (
 	"el-centinela/internal/adapters/secondary/email"
 	"el-centinela/internal/adapters/secondary/postgres"
 	"el-centinela/internal/adapters/secondary/proxmox"
+	"el-centinela/internal/core/ports"
 	"el-centinela/internal/core/services"
 
 	"github.com/gin-gonic/gin"
@@ -211,9 +212,9 @@ func main() {
 		instances := api.Group("/instances", middleware.RequireAuth(authRepo))
 		{
 			instances.GET("", instanceHandler.ListarInstancias)
-			instances.GET("/:vmid", middleware.RequireInstanceAccess(instanceRepo, "vmid"), instanceHandler.ObtenerInstancia)
-			instances.POST("/:vmid/start", middleware.RequireInstanceAccess(instanceRepo, "vmid"), instanceHandler.IniciarInstancia)
-			instances.POST("/:vmid/stop", middleware.RequireInstanceAccess(instanceRepo, "vmid"), instanceHandler.DetenerInstancia)
+			instances.GET("/:vmid", middleware.RequireInstanceAccess(instanceRepo, "vmid", ports.NivelAccesoReadOnly), instanceHandler.ObtenerInstancia)
+			instances.POST("/:vmid/start", middleware.RequireInstanceAccess(instanceRepo, "vmid", ports.NivelAccesoFullAccess), instanceHandler.IniciarInstancia)
+			instances.POST("/:vmid/stop", middleware.RequireInstanceAccess(instanceRepo, "vmid", ports.NivelAccesoFullAccess), instanceHandler.DetenerInstancia)
 		}
 		// ==========================================
 		// Swagger UI: apagada por defecto.

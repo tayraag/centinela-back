@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"el-centinela/internal/core/domain"
+	"el-centinela/internal/core/ports"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -21,14 +22,21 @@ func NewInstanceRepository(db *gorm.DB) *InstanceRepository {
 }
 
 // VerificarAcceso devuelve true si existe una fila en permisos_instancia
-// para el par (usuario_id, vmid_proxmox). Usa COUNT para evitar cargar el registro completo.
-func (r *InstanceRepository) VerificarAcceso(ctx context.Context, userID uuid.UUID, vmid int) (bool, error) {
-	var count int64
-	err := r.db.WithContext(ctx).
+// para el par (usuario_id, vmid_proxmox) que satisfaga el nivel requerido.
+// Usa COUNT para evitar cargar el registro completo.
+func (r *InstanceRepository) VerificarAcceso(ctx context.Context, userID uuid.UUID, vmid int, nivelRequerido string) (bool, error) {
+	query := r.db.WithContext(ctx).
 		Model(&domain.PermisoInstancia{}).
-		Where("usuario_id = ? AND vmid_proxmox = ?", userID, vmid).
-		Count(&count).Error
-	if err != nil {
+		Where("usuario_id = ? AND vmid_proxmox = ?", userID, vmid)
+
+	if nivelRequerido == ports.NivelAccesoFullAccess {
+		query = query.Where("nivel_acceso = ?", ports.NivelAccesoFullAccess)
+	}
+	// Para READ_ONLY no se filtra por nivel: cualquier fila existente
+	// (READ_ONLY o FULL_ACCESS) satisface el requisito.
+
+	var count int64
+	if err := query.Count(&count).Error; err != nil {
 		return false, fmt.Errorf("error al verificar acceso a instancia: %w", err)
 	}
 	return count > 0, nil

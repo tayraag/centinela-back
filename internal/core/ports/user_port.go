@@ -157,11 +157,17 @@ type UserRepository interface {
 	// ActualizarUsuario aplica cambios parciales a un usuario existente.
 	ActualizarUsuario(ctx context.Context, id uuid.UUID, cambios map[string]any) error
 
-	// ListarPermisosDeUsuario devuelve los VMIDs a los que tiene acceso un usuario.
+	// ListarPermisosDeUsuario devuelve los VMIDs a los que tiene acceso un usuario,
+	// sin su nivel (lo usa el filtrado RBAC del listado de instancias, que solo
+	// necesita saber a cuáles vmids puede ver, no con qué nivel).
 	ListarPermisosDeUsuario(ctx context.Context, usuarioID uuid.UUID) ([]int, error)
 
+	// ListarPermisosConNivel devuelve los permisos de un usuario con su nivel
+	// de acceso, para el endpoint GET /admin/users/:id/permissions.
+	ListarPermisosConNivel(ctx context.Context, usuarioID uuid.UUID) ([]PermisoInstanciaInput, error)
+
 	// ReemplazarPermisos reemplaza atómicamente todos los permisos de un usuario.
-	ReemplazarPermisos(ctx context.Context, usuarioID uuid.UUID, vmids []int) error
+	ReemplazarPermisos(ctx context.Context, usuarioID uuid.UUID, permisos []PermisoInstanciaInput) error
 
 	// ListarActividadDeUsuario devuelve registros de auditoría filtrados por usuario.
 	ListarActividadDeUsuario(ctx context.Context, usuarioID uuid.UUID, filtros FiltrosActividad) ([]domain.Auditoria, error)
@@ -190,11 +196,11 @@ type UserService interface {
 	// EliminarUsuario realiza un soft-delete del usuario y cierra todas sus sesiones.
 	EliminarUsuario(ctx context.Context, id, orgID uuid.UUID, actorID uuid.UUID) error
 
-	// ObtenerPermisos devuelve la lista de VMIDs asignados a un usuario.
-	ObtenerPermisos(ctx context.Context, usuarioID, orgID uuid.UUID) ([]int, error)
+	// ObtenerPermisos devuelve los permisos (vmid + nivel de acceso) asignados a un usuario.
+	ObtenerPermisos(ctx context.Context, usuarioID, orgID uuid.UUID) ([]PermisoInstanciaInput, error)
 
 	// AsignarPermisos reemplaza todos los permisos de instancia de un usuario operador.
-	AsignarPermisos(ctx context.Context, usuarioID, orgID uuid.UUID, actorID uuid.UUID, vmids []int) error
+	AsignarPermisos(ctx context.Context, usuarioID, orgID uuid.UUID, actorID uuid.UUID, permisos []PermisoInstanciaInput) error
 
 	// ResetearContrasena genera una nueva contraseña temporal para el usuario y la envía por email.
 	ResetearContrasena(ctx context.Context, usuarioID, orgID uuid.UUID, actorID uuid.UUID) (contrasenaTemp string, err error)

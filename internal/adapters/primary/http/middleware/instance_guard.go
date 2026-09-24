@@ -19,14 +19,16 @@ import (
 // Parámetros:
 //   - repo: implementación de InstanceRepository para consultar permisos_instancia.
 //   - paramName: nombre del parámetro de ruta que contiene el VMID (ej: "vmid").
+//   - nivelRequerido: ports.NivelAccesoFullAccess o ports.NivelAccesoReadOnly —
+//     el nivel mínimo que necesita el OPERATOR sobre ese vmid para pasar.
 //
 // Comportamiento:
 //   - ADMIN → pasa siempre, sin consultar la base de datos.
-//   - OPERATOR con permiso sobre el vmid → pasa.
-//   - OPERATOR sin permiso → 403 INSTANCE_ACCESS_DENIED, la cadena se aborta.
+//   - OPERATOR con nivel suficiente sobre el vmid → pasa.
+//   - OPERATOR sin permiso, o con un nivel insuficiente → 403 INSTANCE_ACCESS_DENIED.
 //   - VMID no parseable como entero → 400 INVALID_VMID.
 //   - Error de BD → 500 INTERNAL_ERROR.
-func RequireInstanceAccess(repo ports.InstanceRepository, paramName string) gin.HandlerFunc {
+func RequireInstanceAccess(repo ports.InstanceRepository, paramName string, nivelRequerido string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// 1. Extraer rol del contexto (inyectado por RequireAuth)
 		rolVal, exists := c.Get(ContextKeyRol)
@@ -77,7 +79,7 @@ func RequireInstanceAccess(repo ports.InstanceRepository, paramName string) gin.
 		}
 
 		// 5. Consultar permisos_instancia
-		tieneAcceso, err := repo.VerificarAcceso(c.Request.Context(), userID, vmid)
+		tieneAcceso, err := repo.VerificarAcceso(c.Request.Context(), userID, vmid, nivelRequerido)
 		if err != nil {
 			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{
 				"errorCode": "INTERNAL_ERROR",

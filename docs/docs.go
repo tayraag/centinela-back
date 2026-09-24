@@ -917,7 +917,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Devuelve el conjunto de VMIDs de Proxmox a los que tiene acceso el usuario. Si no tiene permisos asignados, devuelve un array vacío.",
+                "description": "Devuelve las instancias de Proxmox a las que tiene acceso el usuario, con su nivel (FULL_ACCESS o READ_ONLY). Si no tiene permisos asignados, devuelve un array vacío.",
                 "produces": [
                     "application/json"
                 ],
@@ -979,7 +979,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Reemplaza atómicamente todos los permisos de instancia del usuario. Envía un array de VMIDs: ` + "`" + `{\"vmids\": [100, 102]}` + "`" + `. Para quitar todos los permisos, enviar un array vacío: ` + "`" + `{\"vmids\": []}` + "`" + `.",
+                "description": "Reemplaza atómicamente todos los permisos de instancia del usuario, con su nivel de acceso. Envía ` + "`" + `{\"permisos\": [{\"vmid\": 100, \"nivelAcceso\": \"READ_ONLY\"}]}` + "`" + `. Si se omite nivelAcceso en un ítem, se asume FULL_ACCESS. Para quitar todos los permisos, enviar ` + "`" + `{\"permisos\": []}` + "`" + `.",
                 "consumes": [
                     "application/json"
                 ],
@@ -999,7 +999,7 @@ const docTemplate = `{
                         "required": true
                     },
                     {
-                        "description": "Lista de VMIDs a asignar",
+                        "description": "Lista de permisos (vmid + nivelAcceso) a asignar",
                         "name": "body",
                         "in": "body",
                         "required": true,
@@ -1193,10 +1193,7 @@ const docTemplate = `{
         },
         "/auth/logout": {
             "post": {
-                "description": "Invalida la sesión asociada al refresh token recibido. El frontend debe descartar los tokens locales. Responde 204 sin body.",
-                "consumes": [
-                    "application/json"
-                ],
+                "description": "Invalida la sesión asociada al refresh token en la cookie ` + "`" + `centinela_refresh` + "`" + `. Emite la eliminación de la cookie y responde 204.",
                 "produces": [
                     "application/json"
                 ],
@@ -1204,29 +1201,12 @@ const docTemplate = `{
                     "Autenticación"
                 ],
                 "summary": "Cerrar sesión (logout)",
-                "parameters": [
-                    {
-                        "description": "Token de refresco de la sesión a cerrar",
-                        "name": "body",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/http.LogoutRequest"
-                        }
-                    }
-                ],
                 "responses": {
                     "204": {
                         "description": "Sin contenido"
                     },
-                    "400": {
-                        "description": "Formato de petición inválido",
-                        "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
-                        }
-                    },
                     "401": {
-                        "description": "Refresh token inválido o sesión ya cerrada",
+                        "description": "Refresh token inválido, sesión ya cerrada o cookie ausente",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -1322,10 +1302,7 @@ const docTemplate = `{
         },
         "/auth/refresh": {
             "post": {
-                "description": "Recibe un refresh token válido y emite un nuevo access token (8h). El refresh token no cambia.",
-                "consumes": [
-                    "application/json"
-                ],
+                "description": "Lee el refresh token desde la cookie HTTP-Only, valida la sesión y emite un nuevo access token. Rota la cookie emitiendo un nuevo refresh token.",
                 "produces": [
                     "application/json"
                 ],
@@ -1333,17 +1310,6 @@ const docTemplate = `{
                     "Autenticación"
                 ],
                 "summary": "Renovar access token",
-                "parameters": [
-                    {
-                        "description": "Refresh token",
-                        "name": "body",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/http.refreshRequest"
-                        }
-                    }
-                ],
                 "responses": {
                     "200": {
                         "description": "OK",
@@ -1351,14 +1317,8 @@ const docTemplate = `{
                             "$ref": "#/definitions/ports.TokenResult"
                         }
                     },
-                    "400": {
-                        "description": "Body inválido",
-                        "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
-                        }
-                    },
                     "401": {
-                        "description": "Refresh token inválido o expirado",
+                        "description": "Cookie no provista, o refresh token inválido/expirado",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -1656,27 +1616,16 @@ const docTemplate = `{
                 }
             }
         },
-        "http.LogoutRequest": {
-            "type": "object",
-            "required": [
-                "refreshToken"
-            ],
-            "properties": {
-                "refreshToken": {
-                    "type": "string"
-                }
-            }
-        },
         "http.asignarPermisosRequest": {
             "type": "object",
             "required": [
-                "vmids"
+                "permisos"
             ],
             "properties": {
-                "vmids": {
+                "permisos": {
                     "type": "array",
                     "items": {
-                        "type": "integer"
+                        "$ref": "#/definitions/ports.PermisoInstanciaInput"
                     }
                 }
             }
@@ -1705,22 +1654,11 @@ const docTemplate = `{
         "http.permisosResponse": {
             "type": "object",
             "properties": {
-                "vmids": {
+                "permisos": {
                     "type": "array",
                     "items": {
-                        "type": "integer"
+                        "$ref": "#/definitions/ports.PermisoInstanciaInput"
                     }
-                }
-            }
-        },
-        "http.refreshRequest": {
-            "type": "object",
-            "required": [
-                "refreshToken"
-            ],
-            "properties": {
-                "refreshToken": {
-                    "type": "string"
                 }
             }
         },
@@ -1995,6 +1933,17 @@ const docTemplate = `{
                 }
             }
         },
+        "ports.PermisoInstanciaInput": {
+            "type": "object",
+            "properties": {
+                "nivelAcceso": {
+                    "type": "string"
+                },
+                "vmid": {
+                    "type": "integer"
+                }
+            }
+        },
         "ports.QRResult": {
             "type": "object",
             "properties": {
@@ -2041,9 +1990,6 @@ const docTemplate = `{
                 "expiresIn": {
                     "description": "segundos hasta expiración del access token",
                     "type": "integer"
-                },
-                "refreshToken": {
-                    "type": "string"
                 }
             }
         },

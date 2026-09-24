@@ -1620,7 +1620,10 @@ Petición (Frontend ➡️ Backend):
 
 ```json
 {
-  "vmids": [100, 101]
+  "permisos": [
+    { "vmid": 100, "nivelAcceso": "FULL_ACCESS" },
+    { "vmid": 101, "nivelAcceso": "READ_ONLY" }
+  ]
 }
 ```
 
@@ -1628,9 +1631,18 @@ Petición (Frontend ➡️ Backend):
 
 ```json
 {
-  "vmids": [100, 101]
+  "permisos": [
+    { "vmid": 100, "nivelAcceso": "FULL_ACCESS" },
+    { "vmid": 101, "nivelAcceso": "READ_ONLY" }
+  ]
 }
 ```
+
+`nivelAcceso` acepta `"FULL_ACCESS"` (acceso total, incluye acciones
+destructivas como start/stop) o `"READ_ONLY"` (solo lectura de estado y
+métricas). Si se omite en un ítem, se asume `FULL_ACCESS`. Para quitar todos
+los permisos, enviar `{"permisos": []}`. **Cambio de contrato**: ya no se
+acepta el array plano viejo `{"vmids": [...]}`.
 
 &nbsp;
 

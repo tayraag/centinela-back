@@ -19,21 +19,14 @@ definitions:
     - email
     - password
     type: object
-  http.LogoutRequest:
-    properties:
-      refreshToken:
-        type: string
-    required:
-    - refreshToken
-    type: object
   http.asignarPermisosRequest:
     properties:
-      vmids:
+      permisos:
         items:
-          type: integer
+          $ref: '#/definitions/ports.PermisoInstanciaInput'
         type: array
     required:
-    - vmids
+    - permisos
     type: object
   http.confirmarRecuperacionRequest:
     properties:
@@ -52,17 +45,10 @@ definitions:
     type: object
   http.permisosResponse:
     properties:
-      vmids:
+      permisos:
         items:
-          type: integer
+          $ref: '#/definitions/ports.PermisoInstanciaInput'
         type: array
-    type: object
-  http.refreshRequest:
-    properties:
-      refreshToken:
-        type: string
-    required:
-    - refreshToken
     type: object
   http.solicitarRecuperacionRequest:
     properties:
@@ -248,6 +234,13 @@ definitions:
         description: Total de registros que coinciden con los filtros
         type: integer
     type: object
+  ports.PermisoInstanciaInput:
+    properties:
+      nivelAcceso:
+        type: string
+      vmid:
+        type: integer
+    type: object
   ports.QRResult:
     properties:
       qrBase64:
@@ -279,8 +272,6 @@ definitions:
       expiresIn:
         description: segundos hasta expiración del access token
         type: integer
-      refreshToken:
-        type: string
     type: object
   ports.UsuarioDetalleDTO:
     properties:
@@ -946,8 +937,9 @@ paths:
       - Usuarios (Admin)
   /admin/users/{id}/permissions:
     get:
-      description: Devuelve el conjunto de VMIDs de Proxmox a los que tiene acceso
-        el usuario. Si no tiene permisos asignados, devuelve un array vacío.
+      description: Devuelve las instancias de Proxmox a las que tiene acceso el usuario,
+        con su nivel (FULL_ACCESS o READ_ONLY). Si no tiene permisos asignados, devuelve
+        un array vacío.
       parameters:
       - description: UUID del usuario
         in: path
@@ -989,16 +981,17 @@ paths:
     put:
       consumes:
       - application/json
-      description: 'Reemplaza atómicamente todos los permisos de instancia del usuario.
-        Envía un array de VMIDs: `{"vmids": [100, 102]}`. Para quitar todos los permisos,
-        enviar un array vacío: `{"vmids": []}`.'
+      description: 'Reemplaza atómicamente todos los permisos de instancia del usuario,
+        con su nivel de acceso. Envía `{"permisos": [{"vmid": 100, "nivelAcceso":
+        "READ_ONLY"}]}`. Si se omite nivelAcceso en un ítem, se asume FULL_ACCESS.
+        Para quitar todos los permisos, enviar `{"permisos": []}`.'
       parameters:
       - description: UUID del usuario
         in: path
         name: id
         required: true
         type: string
-      - description: Lista de VMIDs a asignar
+      - description: Lista de permisos (vmid + nivelAcceso) a asignar
         in: body
         name: body
         required: true
@@ -1137,28 +1130,15 @@ paths:
       - Autenticación
   /auth/logout:
     post:
-      consumes:
-      - application/json
-      description: Invalida la sesión asociada al refresh token recibido. El frontend
-        debe descartar los tokens locales. Responde 204 sin body.
-      parameters:
-      - description: Token de refresco de la sesión a cerrar
-        in: body
-        name: body
-        required: true
-        schema:
-          $ref: '#/definitions/http.LogoutRequest'
+      description: Invalida la sesión asociada al refresh token en la cookie `centinela_refresh`.
+        Emite la eliminación de la cookie y responde 204.
       produces:
       - application/json
       responses:
         "204":
           description: Sin contenido
-        "400":
-          description: Formato de petición inválido
-          schema:
-            $ref: '#/definitions/http.ErrorResponse'
         "401":
-          description: Refresh token inválido o sesión ya cerrada
+          description: Refresh token inválido, sesión ya cerrada o cookie ausente
           schema:
             $ref: '#/definitions/http.ErrorResponse'
       summary: Cerrar sesión (logout)
@@ -1228,17 +1208,8 @@ paths:
       - Autenticación
   /auth/refresh:
     post:
-      consumes:
-      - application/json
-      description: Recibe un refresh token válido y emite un nuevo access token (8h).
-        El refresh token no cambia.
-      parameters:
-      - description: Refresh token
-        in: body
-        name: body
-        required: true
-        schema:
-          $ref: '#/definitions/http.refreshRequest'
+      description: Lee el refresh token desde la cookie HTTP-Only, valida la sesión
+        y emite un nuevo access token. Rota la cookie emitiendo un nuevo refresh token.
       produces:
       - application/json
       responses:
@@ -1246,12 +1217,8 @@ paths:
           description: OK
           schema:
             $ref: '#/definitions/ports.TokenResult'
-        "400":
-          description: Body inválido
-          schema:
-            $ref: '#/definitions/http.ErrorResponse'
         "401":
-          description: Refresh token inválido o expirado
+          description: Cookie no provista, o refresh token inválido/expirado
           schema:
             $ref: '#/definitions/http.ErrorResponse'
       summary: Renovar access token

@@ -80,6 +80,7 @@ type PermisoInstancia struct {
 	ID          uuid.UUID `gorm:"type:uuid;primaryKey;default:uuid_generate_v7()" json:"id"`
 	UsuarioID   uuid.UUID `gorm:"type:uuid;not null;uniqueIndex:idx_permisos_usuario_vmid" json:"usuarioId"`
 	VmidProxmox int       `gorm:"not null;uniqueIndex:idx_permisos_usuario_vmid" json:"vmidProxmox"`
+	NivelAcceso string    `gorm:"type:varchar(30);not null;default:'FULL_ACCESS';check:nivel_acceso IN ('FULL_ACCESS','READ_ONLY')" json:"nivelAcceso"`
 }
 
 // ==========================================
@@ -95,7 +96,7 @@ type Auditoria struct {
 	InstanciaNombre string `gorm:"type:varchar(255)" json:"instanciaNombre"`
 	Resultado       string `gorm:"type:varchar(50);not null;index:idx_auditoria_resultado" json:"resultado"` // EXITO o FALLA
 
-	Detalles  *string   `gorm:"type:jsonb" json:"detalles"`                                     // JSON estructurado con metadata extra (puntero para permitir NULL en PostgreSQL)
+	Detalles  *string   `gorm:"type:jsonb" json:"detalles"`                                       // JSON estructurado con metadata extra (puntero para permitir NULL en PostgreSQL)
 	FechaHora time.Time `gorm:"default:now();index:idx_auditoria_usuario_fecha" json:"fechaHora"` // Índice compuesto con usuario_id
 }
 

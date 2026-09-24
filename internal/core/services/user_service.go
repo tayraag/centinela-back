@@ -17,7 +17,7 @@ type userServiceImpl struct {
 	userRepo     ports.UserRepository
 	authRepo     ports.AuthRepository // para invalidar sesiones y resetear TOTP
 	emailService ports.EmailService
-	auditSvc ports.AuditService
+	auditSvc     ports.AuditService
 }
 
 // NewUserService crea una nueva instancia del servicio de usuarios.
@@ -218,31 +218,31 @@ func (s *userServiceImpl) EliminarUsuario(ctx context.Context, id, orgID uuid.UU
 	return nil
 }
 
-// ObtenerPermisos devuelve la lista de VMIDs asignados a un usuario.
-func (s *userServiceImpl) ObtenerPermisos(ctx context.Context, usuarioID, orgID uuid.UUID) ([]int, error) {
+// ObtenerPermisos devuelve los permisos (vmid + nivel de acceso) asignados a un usuario.
+func (s *userServiceImpl) ObtenerPermisos(ctx context.Context, usuarioID, orgID uuid.UUID) ([]ports.PermisoInstanciaInput, error) {
 	if _, err := s.userRepo.BuscarUsuarioPorIDEnOrg(ctx, usuarioID, orgID); err != nil {
 		return nil, err
 	}
-	return s.userRepo.ListarPermisosDeUsuario(ctx, usuarioID)
+	return s.userRepo.ListarPermisosConNivel(ctx, usuarioID)
 }
 
 // AsignarPermisos reemplaza todos los permisos de instancia de un usuario operador.
-func (s *userServiceImpl) AsignarPermisos(ctx context.Context, usuarioID, orgID uuid.UUID, actorID uuid.UUID, vmids []int) error {
+func (s *userServiceImpl) AsignarPermisos(ctx context.Context, usuarioID, orgID uuid.UUID, actorID uuid.UUID, permisos []ports.PermisoInstanciaInput) error {
 	// Verificar que el usuario existe en la organización
 	if _, err := s.userRepo.BuscarUsuarioPorIDEnOrg(ctx, usuarioID, orgID); err != nil {
 		return err
 	}
 
-	if err := s.userRepo.ReemplazarPermisos(ctx, usuarioID, vmids); err != nil {
+	if err := s.userRepo.ReemplazarPermisos(ctx, usuarioID, permisos); err != nil {
 		return err
 	}
 
-	log.Printf("[USERS] permisos asignados | user=%s | vmids=%v", usuarioID, vmids)
+	log.Printf("[USERS] permisos asignados | user=%s | permisos=%v", usuarioID, permisos)
 	s.auditSvc.Registrar(ctx, ports.RegistrarAuditoriaInput{
 		UsuarioID: actorID,
 		Accion:    ports.AccionAsignarPermisos,
 		Resultado: ports.ResultadoExito,
-		Detalles:  map[string]any{"usuarioAfectado": usuarioID.String(), "vmids": vmids},
+		Detalles:  map[string]any{"usuarioAfectado": usuarioID.String(), "permisos": permisos},
 	})
 	return nil
 }
@@ -283,7 +283,7 @@ func (s *userServiceImpl) ResetearContrasena(ctx context.Context, usuarioID, org
 	}
 
 	log.Printf("[USERS] contraseña reseteada y enviada | user=%s", usuarioID)
-	
+
 	s.auditSvc.Registrar(ctx, ports.RegistrarAuditoriaInput{
 		UsuarioID: actorID,
 		Accion:    ports.AccionResetearContrasena,

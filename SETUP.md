@@ -565,9 +565,14 @@ curl.exe -s "http://localhost:8080/api/admin/users/$UID" -H "Authorization: Bear
 
 ### 12.5 Asignar instancias Proxmox al operador
 
+> ⚠️ El payload cambió: ahora cada instancia lleva su `nivelAcceso`
+> (`FULL_ACCESS` o `READ_ONLY`). Ya no se acepta el array plano viejo
+> `{"vmids": [...]}` — un `PUT` con ese formato responde `400 INVALID_REQUEST`.
+> Si se omite `nivelAcceso` en un ítem, se asume `FULL_ACCESS`.
+
 ```powershell
-Set-Content body_instances.json '{"vmids":[100,102]}' -Encoding ascii -NoNewline
-curl.exe -s -i -X PUT "http://localhost:8080/api/admin/users/$UID/instances" -H "Content-Type: application/json" -H "Authorization: Bearer $ACCESS" -d "@body_instances.json"
+Set-Content body_permisos.json '{"permisos":[{"vmid":100,"nivelAcceso":"FULL_ACCESS"},{"vmid":102,"nivelAcceso":"READ_ONLY"}]}' -Encoding ascii -NoNewline
+curl.exe -s -i -X PUT "http://localhost:8080/api/admin/users/$UID/permissions" -H "Content-Type: application/json" -H "Authorization: Bearer $ACCESS" -d "@body_permisos.json"
 ```
 
 **Respuesta esperada: `HTTP/1.1 204 No Content`** (sin body)
@@ -575,9 +580,13 @@ curl.exe -s -i -X PUT "http://localhost:8080/api/admin/users/$UID/instances" -H 
 Verificar que se guardaron:
 
 ```powershell
-curl.exe -s "http://localhost:8080/api/admin/users/$UID" -H "Authorization: Bearer $ACCESS"
-# instanciasPermitidas debe ser [100, 102]
+curl.exe -s "http://localhost:8080/api/admin/users/$UID/permissions" -H "Authorization: Bearer $ACCESS"
+# {"permisos":[{"vmid":100,"nivelAcceso":"FULL_ACCESS"},{"vmid":102,"nivelAcceso":"READ_ONLY"}]}
 ```
+
+Con `nivelAcceso: "READ_ONLY"`, ese operador puede hacer `GET
+/api/instances/{vmid}` pero un `POST /api/instances/{vmid}/start` le da `403
+INSTANCE_ACCESS_DENIED`.
 
 ---
 

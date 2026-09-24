@@ -254,20 +254,22 @@ func (h *UserHandler) EliminarUsuario(c *gin.Context) {
 // ==========================================
 
 // asignarPermisosRequest define el body para la asignación de permisos de instancia.
+// nivelAcceso acepta "FULL_ACCESS" o "READ_ONLY"; si se omite en un ítem, se
+// asume "FULL_ACCESS".
 type asignarPermisosRequest struct {
-	Vmids []int `json:"vmids" binding:"required"`
+	Permisos []ports.PermisoInstanciaInput `json:"permisos" binding:"required"`
 }
 
 // AsignarPermisos reemplaza todos los permisos de instancia de un usuario operador.
 //
 // @Summary      Asignar instancias Proxmox al usuario
-// @Description  Reemplaza atómicamente todos los permisos de instancia del usuario. Envía un array de VMIDs: `{"vmids": [100, 102]}`. Para quitar todos los permisos, enviar un array vacío: `{"vmids": []}`.
+// @Description  Reemplaza atómicamente todos los permisos de instancia del usuario, con su nivel de acceso. Envía `{"permisos": [{"vmid": 100, "nivelAcceso": "READ_ONLY"}]}`. Si se omite nivelAcceso en un ítem, se asume FULL_ACCESS. Para quitar todos los permisos, enviar `{"permisos": []}`.
 // @Tags         Usuarios (Admin)
 // @Accept       json
 // @Produce      json
 // @Security     BearerAuth
 // @Param        id   path string true "UUID del usuario"
-// @Param        body body asignarPermisosRequest true "Lista de VMIDs a asignar"
+// @Param        body body asignarPermisosRequest true "Lista de permisos (vmid + nivelAcceso) a asignar"
 // @Success      204 "Sin contenido"
 // @Failure      400 {object} map[string]string
 // @Failure      401 {object} map[string]string
@@ -284,11 +286,17 @@ func (h *UserHandler) AsignarPermisos(c *gin.Context) {
 
 	var req asignarPermisosRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		SendError(c, http.StatusBadRequest, "INVALID_REQUEST", "Se requiere el campo vmids (array de enteros).")
+		SendError(c, http.StatusBadRequest, "INVALID_REQUEST", "Se requiere el campo permisos (array de {vmid, nivelAcceso}).")
 		return
 	}
 
-	if err := h.service.AsignarPermisos(c.Request.Context(), id, orgID, actorID, req.Vmids); err != nil {
+	for i, p := range req.Permisos {
+		if p.NivelAcceso == "" {
+			req.Permisos[i].NivelAcceso = ports.NivelAccesoFullAccess
+		}
+	}
+
+	if err := h.service.AsignarPermisos(c.Request.Context(), id, orgID, actorID, req.Permisos); err != nil {
 		SendError(c, http.StatusNotFound, "USER_NOT_FOUND", err.Error())
 		return
 	}
@@ -301,13 +309,13 @@ func (h *UserHandler) AsignarPermisos(c *gin.Context) {
 
 // permisosResponse es la respuesta del endpoint GET /permissions.
 type permisosResponse struct {
-	Vmids []int `json:"vmids"`
+	Permisos []ports.PermisoInstanciaInput `json:"permisos"`
 }
 
-// ObtenerPermisos devuelve la lista de VMIDs asignados a un usuario.
+// ObtenerPermisos devuelve la lista de permisos (vmid + nivel de acceso) de un usuario.
 //
 // @Summary      Obtener permisos de instancia del usuario
-// @Description  Devuelve el conjunto de VMIDs de Proxmox a los que tiene acceso el usuario. Si no tiene permisos asignados, devuelve un array vacío.
+// @Description  Devuelve las instancias de Proxmox a las que tiene acceso el usuario, con su nivel (FULL_ACCESS o READ_ONLY). Si no tiene permisos asignados, devuelve un array vacío.
 // @Tags         Usuarios (Admin)
 // @Produce      json
 // @Security     BearerAuth
@@ -325,17 +333,17 @@ func (h *UserHandler) ObtenerPermisos(c *gin.Context) {
 	}
 	orgID := extraerOrgID(c)
 
-	vmids, err := h.service.ObtenerPermisos(c.Request.Context(), id, orgID)
+	permisos, err := h.service.ObtenerPermisos(c.Request.Context(), id, orgID)
 	if err != nil {
 		SendError(c, http.StatusNotFound, "USER_NOT_FOUND", "Usuario no encontrado.")
 		return
 	}
 
 	// Devolver siempre un array (nunca null) para consistencia con el front
-	if vmids == nil {
-		vmids = []int{}
+	if permisos == nil {
+		permisos = []ports.PermisoInstanciaInput{}
 	}
-	c.JSON(http.StatusOK, permisosResponse{Vmids: vmids})
+	c.JSON(http.StatusOK, permisosResponse{Permisos: permisos})
 }
 
 // ==========================================
