@@ -30,7 +30,7 @@ func setRefreshCookie(c *gin.Context, token string, maxAge int) {
 	}
 	
 	// Previene envíos cross-site (protección CSRF combinada con XSS protection del HttpOnly)
-	c.SameSite(http.SameSiteStrictMode)
+	c.SetSameSite(http.SameSiteStrictMode)
 	
 	// c.SetCookie(name, value, maxAge, path, domain, secure, httpOnly)
 	c.SetCookie("centinela_refresh", token, maxAge, "/api/auth", "", secure, true)
