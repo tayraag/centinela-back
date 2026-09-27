@@ -2,6 +2,7 @@ package ports
 
 import (
 	"context"
+	"time"
 
 	"el-centinela/internal/core/domain"
 
@@ -28,7 +29,7 @@ type QRResult struct {
 // TokenResult contiene el par de tokens emitidos tras autenticación completa.
 type TokenResult struct {
 	AccessToken  string `json:"accessToken"`
-	RefreshToken string `json:"refreshToken"`
+	RefreshToken string `json:"-"`
 	ExpiresIn    int64  `json:"expiresIn"` // segundos hasta expiración del access token
 }
 
@@ -54,6 +55,9 @@ type AuthRepository interface {
 	// ActualizarSesion actualiza una sesión existente (ej: Estado2fa, Activa).
 	ActualizarSesion(ctx context.Context, sesion *domain.SesionActiva) error
 
+	// RevocarSesiones revoca múltiples sesiones en una sola operación atómica usando sus JTIs.
+	RevocarSesiones(ctx context.Context, jtis []string) error
+
 	// ActualizarTotp guarda el secreto TOTP cifrado y el estado de vinculación.
 	ActualizarTotp(ctx context.Context, usuarioID uuid.UUID, secretoCifrado string, vinculado bool) error
 
@@ -65,6 +69,18 @@ type AuthRepository interface {
 
 	// ActualizarUltimoTotpPeriodo guarda el período del último código TOTP usado (anti-replay).
 	ActualizarUltimoTotpPeriodo(ctx context.Context, usuarioID uuid.UUID, periodo int64) error
+
+	// ActualizarCodigoRecuperacion guarda el código de 6 dígitos y su expiración en el usuario.
+	ActualizarCodigoRecuperacion(ctx context.Context, usuarioID uuid.UUID, codigo *string, expiracion *time.Time) error
+
+	// ActualizarIntentosRecuperacion actualiza el número de intentos de recuperación fallidos.
+	ActualizarIntentosRecuperacion(ctx context.Context, usuarioID uuid.UUID, intentos int) error
+
+	// ActualizarContrasenaYLimpiarCodigo cambia la contraseña y elimina el código temporal usado.
+	ActualizarContrasenaYLimpiarCodigo(ctx context.Context, usuarioID uuid.UUID, hash string) error
+
+	// ActualizarUltimoAcceso actualiza la fecha de último acceso del usuario.
+	ActualizarUltimoAcceso(ctx context.Context, usuarioID uuid.UUID, fecha time.Time) error
 }
 
 // ==========================================
@@ -87,6 +103,16 @@ type AuthService interface {
 	// RefrescarToken valida un refresh token y emite un nuevo access token.
 	RefrescarToken(ctx context.Context, refreshToken string) (*TokenResult, error)
 
-	// CerrarSesion invalida la sesión asociada a un refresh token (logout).
-	CerrarSesion(ctx context.Context, refreshToken string) error
+	// CerrarSesion invalida la sesión asociada a un refresh token y a un access token (logout).
+	CerrarSesion(ctx context.Context, refreshToken, accessTokenJTI string) error
+
+	// RevocarSesionesUsuario invalida inmediatamente todas las sesiones activas de un usuario.
+	// Útil para flujos administrativos y reseteos críticos.
+	RevocarSesionesUsuario(ctx context.Context, usuarioID uuid.UUID) error
+
+	// SolicitarRecuperacionContrasena genera un código de 6 dígitos y lo envía por email.
+	SolicitarRecuperacionContrasena(ctx context.Context, email string) error
+
+	// ConfirmarRecuperacionContrasena valida el código de 6 dígitos y aplica la nueva contraseña.
+	ConfirmarRecuperacionContrasena(ctx context.Context, email, codigo, nuevaContrasena string) error
 }

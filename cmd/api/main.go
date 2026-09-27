@@ -4,11 +4,16 @@ package main
 import (
 	"log"
 	"net/http"
+	"os"
+	"strings"
 
 	_ "el-centinela/docs"
 	httpHandlers "el-centinela/internal/adapters/primary/http"
 	"el-centinela/internal/adapters/primary/http/middleware"
+	"el-centinela/internal/adapters/secondary/email"
 	"el-centinela/internal/adapters/secondary/postgres"
+	"el-centinela/internal/adapters/secondary/proxmox"
+	"el-centinela/internal/core/ports"
 	"el-centinela/internal/core/services"
 
 	"github.com/gin-gonic/gin"
@@ -77,18 +82,28 @@ func main() {
 	// 3. Inicializar adaptadores secundarios (repositorios)
 	authRepo := postgres.NewAuthRepository(db)
 	userRepo := postgres.NewUserRepository(db)
+	emailService := email.NewMockEmailService()
 	auditRepo := postgres.NewAuditRepository(db)
+	instanceRepo := postgres.NewInstanceRepository(db)
+	proxmoxClient := proxmox.NewClient(
+		os.Getenv("PROXMOX_BASE_URL"),
+		os.Getenv("PROXMOX_NODE"),
+		os.Getenv("PROXMOX_USERNAME"),
+		os.Getenv("PROXMOX_PASSWORD"),
+		proxmox.BuildTLSConfig(),
+	)
 
 	// 4. Inicializar servicios de dominio (inyección de dependencias)
 	auditService := services.NewAuditService(auditRepo)
-	authService := services.NewAuthService(authRepo, auditService)
-	userService := services.NewUserService(userRepo, authRepo, auditService)
+	authService := services.NewAuthService(authRepo, emailService, auditService)
+	userService := services.NewUserService(userRepo, authRepo, auditService, emailService)
 
 	// 5. Inicializar handlers HTTP
 	authHandler := httpHandlers.NewAuthHandler(authService)
 	userHandler := httpHandlers.NewUserHandler(userService)
 	accountHandler := httpHandlers.NewAccountHandler(userService)
 	auditHandler := httpHandlers.NewAuditHandler(auditService)
+	instanceHandler := httpHandlers.NewInstanceHandler(proxmoxClient, userRepo)
 
 	// 6. Configurar el Router HTTP (Gin)
 	// Usamos gin.New() para tener control total sobre los middlewares.
@@ -97,6 +112,7 @@ func main() {
 	router.Use(gin.Recovery())             // Recupera de panics sin caer el servidor
 	router.Use(middleware.RequestLogger()) // Logger conciso personalizado
 	router.Use(middleware.CORS())          // Política CORS: lista blanca de orígenes (ver ALLOWED_ORIGINS en .env)
+	router.Use(middleware.SecurityHeaders())
 
 	// 7. Definir las rutas
 	api := router.Group("/api")
@@ -129,10 +145,16 @@ func main() {
 			// Rutas públicas (sin autenticación)
 			auth.POST("/login", authHandler.Login)
 			auth.POST("/refresh", authHandler.RefrescarToken)
-			auth.POST("/logout", authHandler.Logout)
+
+			// Rutas protegidas (requieren JWT access)
+			auth.POST("/logout", middleware.RequireAuth(authRepo), authHandler.Logout)
+
+			// Recuperación de contraseña (públicas)
+			auth.POST("/password/forgot", authHandler.SolicitarRecuperacion)
+			auth.POST("/password/reset", authHandler.ConfirmarRecuperacion)
 
 			// Rutas del flujo 2FA (requieren JWT temporal pre-auth)
-			twoFA := auth.Group("/2fa", middleware.RequirePreAuth())
+			twoFA := auth.Group("/2fa", middleware.RequirePreAuth(authRepo))
 			{
 				twoFA.GET("/qr", authHandler.ObtenerQR)
 				twoFA.POST("/verify", authHandler.VerificarTotp)
@@ -140,12 +162,12 @@ func main() {
 		}
 
 		// Roles disponibles (para el selector del formulario)
-		api.GET("/roles", middleware.RequireAuth(), middleware.RequireRole("ADMIN"), userHandler.ObtenerRoles)
+		api.GET("/roles", middleware.RequireAuth(authRepo), middleware.RequireRole("ADMIN"), userHandler.ObtenerRoles)
 
 		// ==========================================
 		// Rutas de Gestión de Usuarios (RF-09) — solo ADMIN
 		// ==========================================
-		admin := api.Group("/admin", middleware.RequireAuth(), middleware.RequireRole("ADMIN"))
+		admin := api.Group("/admin", middleware.RequireAuth(authRepo), middleware.RequireRole("ADMIN"))
 		{
 			// CRUD de usuarios
 			users := admin.Group("/users")
@@ -157,7 +179,8 @@ func main() {
 				users.DELETE("/:id", userHandler.EliminarUsuario)
 
 				// Permisos de instancias del usuario
-				users.PUT("/:id/instances", userHandler.AsignarPermisos)
+				users.GET("/:id/permissions", userHandler.ObtenerPermisos)
+				users.PUT("/:id/permissions", userHandler.AsignarPermisos)
 
 				// Actividad del usuario (auditoría filtrada)
 				users.GET("/:id/activity", userHandler.ListarActividad)
@@ -177,22 +200,47 @@ func main() {
 		// ==========================================
 		// Rutas de Perfil Propio (RF-09) — cualquier usuario autenticado
 		// ==========================================
-		account := api.Group("/account", middleware.RequireAuth())
+		account := api.Group("/account", middleware.RequireAuth(authRepo))
 		{
 			account.GET("/profile", accountHandler.ObtenerPerfil)
 			account.PUT("/profile", accountHandler.ActualizarPerfil)
 			account.PUT("/password", accountHandler.CambiarContrasena)
+		}
 
-					}
 		// ==========================================
-		// Swagger UI (solo en desarrollo)
+		// Rutas de Instancias Proxmox
 		// ==========================================
-		router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+		instances := api.Group("/instances", middleware.RequireAuth(authRepo))
+		{
+			instances.GET("", instanceHandler.ListarInstancias)
+			instances.GET("/:vmid", middleware.RequireInstanceAccess(instanceRepo, "vmid", ports.NivelAccesoReadOnly), instanceHandler.ObtenerInstancia)
+			instances.POST("/:vmid/start", middleware.RequireInstanceAccess(instanceRepo, "vmid", ports.NivelAccesoFullAccess), instanceHandler.IniciarInstancia)
+			instances.POST("/:vmid/stop", middleware.RequireInstanceAccess(instanceRepo, "vmid", ports.NivelAccesoFullAccess), instanceHandler.DetenerInstancia)
+		}
+		// ==========================================
+		// Swagger UI: apagada por defecto.
+		// Estuvo publicada en PRUEBAS, donde cualquiera podía leer el contrato completo
+		// de la API. Se habilita solo con ENABLE_SWAGGER=true (pensado para desarrollo local).
+		// ==========================================
+		if strings.EqualFold(os.Getenv("ENABLE_SWAGGER"), "true") {
+			router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+			log.Println("📖 Swagger UI disponible en: http://localhost:8080/swagger/index.html")
+		}
 	}
 
-	// 8. Encender el servidor en el puerto 8080
+	// 8. Mismo contrato de errores para lo que no existe.
+	// Por defecto Gin responde "404 page not found" en texto plano, que rompe el
+	// sobre JSON ({ errorCode, message }) que usa el resto de la API.
+	router.NoRoute(func(c *gin.Context) {
+		httpHandlers.SendError(c, http.StatusNotFound, "NOT_FOUND", "El recurso solicitado no existe.")
+	})
+	router.HandleMethodNotAllowed = true
+	router.NoMethod(func(c *gin.Context) {
+		httpHandlers.SendError(c, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "El método HTTP no está permitido para este recurso.")
+	})
+
+	// 9. Encender el servidor en el puerto 8080
 	log.Println("🛡️ Servidor HTTP escuchando en el puerto 8080...")
-	log.Println("📖 Swagger UI disponible en: http://localhost:8080/swagger/index.html")
 	if err := router.Run(":8080"); err != nil {
 		log.Fatalf("❌ Error al arrancar el servidor: %v", err)
 	}

@@ -22,7 +22,7 @@ El proyecto sigue una **Arquitectura Hexagonal (Puertos y Adaptadores)** adaptad
           │
           ▼
 ┌─────────────────────┐
-│   Middleware Chain  │  RequireAuth → RequireRole → Logger
+│   Middleware Chain  │  RequireAuth → RequireRole → RequireInstanceAccess → Logger
 └──────────┬──────────┘
            │
            ▼
@@ -68,7 +68,8 @@ centinela-back/
 │   │   │   └── models.go        # Entidades: Usuario, SesionActiva, PermisoInstancia, etc.
 │   │   ├── ports/
 │   │   │   ├── auth_port.go     # Interfaces AuthRepository + AuthService + DTOs de auth
-│   │   │   └── user_port.go     # Interfaces UserRepository + UserService + DTOs de usuarios
+│   │   │   ├── user_port.go     # Interfaces UserRepository + UserService + DTOs de usuarios
+│   │   │   └── instance_port.go # Interface InstanceRepository (autorización por recurso)
 │   │   └── services/
 │   │       ├── auth_service.go  # Lógica: login, 2FA, tokens, refresh, logout
 │   │       └── user_service.go  # Lógica: CRUD usuarios, permisos, auditoría, perfil
@@ -82,13 +83,15 @@ centinela-back/
 │   │   │       ├── responses.go          # Helpers de respuestas HTTP
 │   │   │       └── middleware/
 │   │   │           ├── auth_middleware.go    # RequireAuth, RequirePreAuth, RequireRole
+│   │   │           ├── instance_guard.go     # RequireInstanceAccess (guard de VMID)
 │   │   │           └── logger_middleware.go  # Logger de peticiones HTTP
 │   │   │
 │   │   └── secondary/           # Adaptadores de SALIDA (implementan puertos del core)
 │   │       ├── postgres/
 │   │       │   ├── db.go                # InitDB(), AutoMigrate
 │   │       │   ├── auth_repository.go   # Implementa AuthRepository
-│   │       │   └── user_repository.go   # Implementa UserRepository
+│   │       │   ├── user_repository.go   # Implementa UserRepository
+│   │       │   └── instance_repository.go # Implementa InstanceRepository (VerificarAcceso)
 │   │       └── proxmox/                 # Adapter Proxmox (pendiente de implementar)
 │   │
 │   └── infrastructure/          # Utilidades técnicas transversales

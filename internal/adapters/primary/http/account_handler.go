@@ -90,20 +90,21 @@ func (h *AccountHandler) ActualizarPerfil(c *gin.Context) {
 // CambiarContrasena valida la contraseña actual y aplica la nueva.
 //
 // @Summary      Cambiar mi contraseña
-// @Description  Valida la contraseña actual y aplica la nueva. Si la contraseña era temporal (`cambioContrasenaRequerido=true`), este cambio limpia ese flag y el usuario puede operar con normalidad.
+// @Description  Valida la contraseña actual y aplica la nueva. Reglas de complejidad: entre 8 y 12 caracteres, al menos una mayúscula, un número y un carácter especial (!@#$%^&*-_=+). Si la contraseña era temporal (`cambioContrasenaRequerido=true`), este cambio limpia ese flag y desbloquea el acceso al resto de la plataforma.
 // @Tags         Mi cuenta
 // @Accept       json
 // @Produce      json
 // @Security     BearerAuth
 // @Param        body body ports.CambiarContrasenaInput true "Contraseña actual y nueva"
 // @Success      200 {object} map[string]string
-// @Failure      400 {object} ErrorResponse "Contraseña actual incorrecta o nueva igual a la actual"
+// @Failure      400 {object} ErrorResponse "Formato inválido, contraseña actual incorrecta, nueva igual a la actual o no cumple las reglas de complejidad"
 // @Failure      401 {object} map[string]string
+// @Failure      403 {object} ErrorResponse "PASSWORD_CHANGE_REQUIRED — solo este endpoint y logout son accesibles mientras el flag esté activo"
 // @Router       /account/password [put]
 func (h *AccountHandler) CambiarContrasena(c *gin.Context) {
 	var input ports.CambiarContrasenaInput
 	if err := c.ShouldBindJSON(&input); err != nil {
-		SendError(c, http.StatusBadRequest, "INVALID_REQUEST", "Se requieren contrasenaActual y contrasenaNueva (mínimo 8 caracteres).")
+		SendError(c, http.StatusBadRequest, "INVALID_REQUEST", "Se requieren contrasenaActual y contrasenaNueva (entre 8 y 12 caracteres, con mayúscula, número y carácter especial).")
 		return
 	}
 

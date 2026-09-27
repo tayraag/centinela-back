@@ -153,7 +153,8 @@ func (r *UserRepository) ActualizarUsuario(ctx context.Context, id uuid.UUID, ca
 	return nil
 }
 
-// ListarPermisosDeUsuario devuelve los VMIDs a los que tiene acceso un usuario.
+// ListarPermisosDeUsuario devuelve los VMIDs a los que tiene acceso un usuario,
+// sin su nivel (lo usa el filtrado RBAC del listado de instancias).
 func (r *UserRepository) ListarPermisosDeUsuario(ctx context.Context, usuarioID uuid.UUID) ([]int, error) {
 	var permisos []domain.PermisoInstancia
 	if err := r.db.WithContext(ctx).
@@ -169,9 +170,25 @@ func (r *UserRepository) ListarPermisosDeUsuario(ctx context.Context, usuarioID 
 	return vmids, nil
 }
 
+// ListarPermisosConNivel devuelve los permisos de un usuario junto con su nivel de acceso.
+func (r *UserRepository) ListarPermisosConNivel(ctx context.Context, usuarioID uuid.UUID) ([]ports.PermisoInstanciaInput, error) {
+	var permisos []domain.PermisoInstancia
+	if err := r.db.WithContext(ctx).
+		Where("usuario_id = ?", usuarioID).
+		Find(&permisos).Error; err != nil {
+		return nil, fmt.Errorf("error al listar permisos de usuario: %w", err)
+	}
+
+	resultado := make([]ports.PermisoInstanciaInput, len(permisos))
+	for i, p := range permisos {
+		resultado[i] = ports.PermisoInstanciaInput{Vmid: p.VmidProxmox, NivelAcceso: p.NivelAcceso}
+	}
+	return resultado, nil
+}
+
 // ReemplazarPermisos reemplaza atómicamente todos los permisos de instancia de un usuario.
 // Usa una transacción: primero borra todos, luego inserta los nuevos.
-func (r *UserRepository) ReemplazarPermisos(ctx context.Context, usuarioID uuid.UUID, vmids []int) error {
+func (r *UserRepository) ReemplazarPermisos(ctx context.Context, usuarioID uuid.UUID, permisos []ports.PermisoInstanciaInput) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// 1. Borrar todos los permisos actuales del usuario
 		if err := tx.Where("usuario_id = ?", usuarioID).
@@ -180,27 +197,28 @@ func (r *UserRepository) ReemplazarPermisos(ctx context.Context, usuarioID uuid.
 		}
 
 		// 2. Insertar los nuevos (si hay alguno)
-		if len(vmids) == 0 {
+		if len(permisos) == 0 {
 			return nil
 		}
-		
-		// 2.1 Deduplicar vmids en memoria
-		vmidsUnicos := make(map[int]bool)
-		var vmidsFiltrados []int
-		for _, v := range vmids {
-			if !vmidsUnicos[v] {
-				vmidsUnicos[v] = true
-				vmidsFiltrados = append(vmidsFiltrados, v)
+
+		// 2.1 Deduplicar por vmid en memoria (se queda con la primera aparición)
+		vmidsVistos := make(map[int]bool)
+		var permisosFiltrados []ports.PermisoInstanciaInput
+		for _, p := range permisos {
+			if !vmidsVistos[p.Vmid] {
+				vmidsVistos[p.Vmid] = true
+				permisosFiltrados = append(permisosFiltrados, p)
 			}
 		}
 
 		// 2.2 Crear los structs a insertar
-		nuevos := make([]domain.PermisoInstancia, len(vmidsFiltrados))
-		for i, vmid := range vmidsFiltrados {
+		nuevos := make([]domain.PermisoInstancia, len(permisosFiltrados))
+		for i, p := range permisosFiltrados {
 			nuevos[i] = domain.PermisoInstancia{
 				ID:          uuid.New(),
 				UsuarioID:   usuarioID,
-				VmidProxmox: vmid,
+				VmidProxmox: p.Vmid,
+				NivelAcceso: p.NivelAcceso,
 			}
 		}
 		if err := tx.Create(&nuevos).Error; err != nil {

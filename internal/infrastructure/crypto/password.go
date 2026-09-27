@@ -79,3 +79,56 @@ func GenerarContrasenaTemp() (string, error) {
 
 	return string(resultado), nil
 }
+
+// ValidarComplejidadContrasena verifica que la contraseña cumpla las reglas de seguridad:
+// - Entre 8 y 12 caracteres
+// - Al menos una letra mayúscula
+// - Al menos un dígito numérico
+// - Al menos un carácter especial (!@#$%^&*-_=+)
+// Retorna un error descriptivo si alguna regla no se cumple.
+func ValidarComplejidadContrasena(contrasena string) error {
+	if len(contrasena) < 8 {
+		return fmt.Errorf("la contraseña debe tener al menos 8 caracteres")
+	}
+	if len(contrasena) > 12 {
+		return fmt.Errorf("la contraseña no puede superar los 12 caracteres")
+	}
+
+	tieneMayuscula := false
+	tieneDigito := false
+	tieneEspecial := false
+	especiales := "!@#$%^&*-_=+"
+
+	for _, c := range contrasena {
+		switch {
+		case c >= 'A' && c <= 'Z':
+			tieneMayuscula = true
+		case c >= '0' && c <= '9':
+			tieneDigito = true
+		case containsRune(especiales, c):
+			tieneEspecial = true
+		}
+	}
+
+	if !tieneMayuscula {
+		return fmt.Errorf("la contraseña debe contener al menos una letra mayúscula")
+	}
+	if !tieneDigito {
+		return fmt.Errorf("la contraseña debe contener al menos un número")
+	}
+	if !tieneEspecial {
+		return fmt.Errorf("la contraseña debe contener al menos un carácter especial (!@#$%%^&*-_=+)")
+	}
+
+	return nil
+}
+
+// containsRune reporta si el rune r está presente en el string s.
+func containsRune(s string, r rune) bool {
+	for _, c := range s {
+		if c == r {
+			return true
+		}
+	}
+	return false
+}

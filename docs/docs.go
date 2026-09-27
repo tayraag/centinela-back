@@ -24,7 +24,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Valida la contraseña actual y aplica la nueva. Si la contraseña era temporal (` + "`" + `cambioContrasenaRequerido=true` + "`" + `), este cambio limpia ese flag y el usuario puede operar con normalidad.",
+                "description": "Valida la contraseña actual y aplica la nueva. Reglas de complejidad: entre 8 y 12 caracteres, al menos una mayúscula, un número y un carácter especial (!@#$%^\u0026*-_=+). Si la contraseña era temporal (` + "`" + `cambioContrasenaRequerido=true` + "`" + `), este cambio limpia ese flag y desbloquea el acceso al resto de la plataforma.",
                 "consumes": [
                     "application/json"
                 ],
@@ -57,7 +57,7 @@ const docTemplate = `{
                         }
                     },
                     "400": {
-                        "description": "Contraseña actual incorrecta o nueva igual a la actual",
+                        "description": "Formato inválido, contraseña actual incorrecta, nueva igual a la actual o no cumple las reglas de complejidad",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -69,6 +69,12 @@ const docTemplate = `{
                             "additionalProperties": {
                                 "type": "string"
                             }
+                        }
+                    },
+                    "403": {
+                        "description": "PASSWORD_CHANGE_REQUIRED — solo este endpoint y logout son accesibles mientras el flag esté activo",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
                         }
                     }
                 }
@@ -430,7 +436,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Crea un nuevo usuario con contraseña temporal generada automáticamente. La respuesta incluye ` + "`" + `contrasenaTemp` + "`" + ` (solo en este momento, nunca más). El usuario deberá cambiarla en su primer login. No se envian emails (Plan A).",
+                "description": "Crea un nuevo usuario con contraseña temporal generada automáticamente. La contraseña se envía al usuario por email. El usuario deberá cambiarla en su primer login.",
                 "consumes": [
                     "application/json"
                 ],
@@ -846,24 +852,21 @@ const docTemplate = `{
                 }
             }
         },
-        "/admin/users/{id}/instances": {
-            "put": {
+        "/admin/users/{id}/password/reset": {
+            "post": {
                 "security": [
                     {
                         "BearerAuth": []
                     }
                 ],
-                "description": "Reemplaza atómicamente todos los permisos de instancia del usuario. Envía un array de VMIDs: ` + "`" + `{\"vmids\": [100, 102]}` + "`" + `. Para quitar todos los permisos, enviar un array vacío: ` + "`" + `{\"vmids\": []}` + "`" + `.",
-                "consumes": [
-                    "application/json"
-                ],
+                "description": "Genera una nueva contraseña temporal segura, la hashea, la persiste y se la envía al usuario por email. Establece ` + "`" + `must_change_password=true` + "`" + ` e invalida todas las sesiones activas del usuario. Solo su hash queda en base de datos. Requiere rol ADMIN.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "Usuarios (Admin)"
                 ],
-                "summary": "Asignar instancias Proxmox al usuario",
+                "summary": "Restablecer contraseña (admin)",
                 "parameters": [
                     {
                         "type": "string",
@@ -871,28 +874,77 @@ const docTemplate = `{
                         "name": "id",
                         "in": "path",
                         "required": true
-                    },
-                    {
-                        "description": "Lista de VMIDs a asignar",
-                        "name": "body",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/http.asignarPermisosRequest"
-                        }
                     }
                 ],
                 "responses": {
-                    "204": {
-                        "description": "Sin contenido"
-                    },
-                    "400": {
-                        "description": "Bad Request",
+                    "200": {
+                        "description": "OK",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
                                 "type": "string"
                             }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "OPERATOR recibe 403 Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Usuario no encontrado en la organización",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/users/{id}/permissions": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Devuelve las instancias de Proxmox a las que tiene acceso el usuario, con su nivel (FULL_ACCESS o READ_ONLY). Si no tiene permisos asignados, devuelve un array vacío.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Usuarios (Admin)"
+                ],
+                "summary": "Obtener permisos de instancia del usuario",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "UUID del usuario",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/http.permisosResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "UUID inválido",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
                         }
                     },
                     "401": {
@@ -914,32 +966,30 @@ const docTemplate = `{
                         }
                     },
                     "404": {
-                        "description": "Not Found",
+                        "description": "Usuario no encontrado",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
+                            "$ref": "#/definitions/http.ErrorResponse"
                         }
                     }
                 }
-            }
-        },
-        "/admin/users/{id}/password/reset": {
-            "post": {
+            },
+            "put": {
                 "security": [
                     {
                         "BearerAuth": []
                     }
                 ],
-                "description": "Genera una nueva contraseña temporal segura y la aplica. Devuelve ` + "`" + `contrasenaTemp` + "`" + ` (solo en esta respuesta). El usuario deberá cambiarla en su próximo acceso. Invalida todas sus sesiones.",
+                "description": "Reemplaza atómicamente todos los permisos de instancia del usuario, con su nivel de acceso. Envía ` + "`" + `{\"permisos\": [{\"vmid\": 100, \"nivelAcceso\": \"READ_ONLY\"}]}` + "`" + `. Si se omite nivelAcceso en un ítem, se asume FULL_ACCESS. Para quitar todos los permisos, enviar ` + "`" + `{\"permisos\": []}` + "`" + `.",
+                "consumes": [
+                    "application/json"
+                ],
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "Usuarios (Admin)"
                 ],
-                "summary": "Resetear contraseña del usuario",
+                "summary": "Asignar instancias Proxmox al usuario",
                 "parameters": [
                     {
                         "type": "string",
@@ -947,11 +997,23 @@ const docTemplate = `{
                         "name": "id",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "description": "Lista de permisos (vmid + nivelAcceso) a asignar",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/http.asignarPermisosRequest"
+                        }
                     }
                 ],
                 "responses": {
-                    "200": {
-                        "description": "OK",
+                    "204": {
+                        "description": "Sin contenido"
+                    },
+                    "400": {
+                        "description": "Bad Request",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -1131,7 +1193,30 @@ const docTemplate = `{
         },
         "/auth/logout": {
             "post": {
-                "description": "Invalida la sesión asociada al refresh token recibido. El frontend debe descartar los tokens locales. Responde 204 sin body.",
+                "description": "Invalida la sesión asociada al refresh token en la cookie ` + "`" + `centinela_refresh` + "`" + `. Emite la eliminación de la cookie y responde 204.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Autenticación"
+                ],
+                "summary": "Cerrar sesión (logout)",
+                "responses": {
+                    "204": {
+                        "description": "Sin contenido"
+                    },
+                    "401": {
+                        "description": "Refresh token inválido, sesión ya cerrada o cookie ausente",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/password/forgot": {
+            "post": {
+                "description": "Genera un código de 6 dígitos válido por 15 minutos y lo envía al correo del usuario. Retorna 200 OK incluso si el correo no existe para evitar enumeración.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1141,30 +1226,73 @@ const docTemplate = `{
                 "tags": [
                     "Autenticación"
                 ],
-                "summary": "Cerrar sesión (logout)",
+                "summary": "Solicitar recuperación de contraseña",
                 "parameters": [
                     {
-                        "description": "Token de refresco de la sesión a cerrar",
+                        "description": "Email del usuario",
                         "name": "body",
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/http.LogoutRequest"
+                            "$ref": "#/definitions/http.solicitarRecuperacionRequest"
                         }
                     }
                 ],
                 "responses": {
-                    "204": {
-                        "description": "Sin contenido"
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
                     },
                     "400": {
-                        "description": "Formato de petición inválido",
+                        "description": "Email inválido",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
+                    }
+                }
+            }
+        },
+        "/auth/password/reset": {
+            "post": {
+                "description": "Valida el código de 6 dígitos enviado por email y establece la nueva contraseña (8-12 chars, mayúscula, número, especial). Invalida el código tras el uso o tras 3 intentos fallidos. La nueva contraseña no puede coincidir con la anterior.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Autenticación"
+                ],
+                "summary": "Confirmar recuperación de contraseña",
+                "parameters": [
+                    {
+                        "description": "Datos de recuperación",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/http.confirmarRecuperacionRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
                     },
-                    "401": {
-                        "description": "Refresh token inválido o sesión ya cerrada",
+                    "400": {
+                        "description": "Datos inválidos, código incorrecto, demasiados intentos, contraseña débil o igual a la actual",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -1174,10 +1302,7 @@ const docTemplate = `{
         },
         "/auth/refresh": {
             "post": {
-                "description": "Recibe un refresh token válido y emite un nuevo access token (8h). El refresh token no cambia.",
-                "consumes": [
-                    "application/json"
-                ],
+                "description": "Lee el refresh token desde la cookie HTTP-Only, valida la sesión y emite un nuevo access token. Rota la cookie emitiendo un nuevo refresh token.",
                 "produces": [
                     "application/json"
                 ],
@@ -1185,17 +1310,6 @@ const docTemplate = `{
                     "Autenticación"
                 ],
                 "summary": "Renovar access token",
-                "parameters": [
-                    {
-                        "description": "Refresh token",
-                        "name": "body",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/http.refreshRequest"
-                        }
-                    }
-                ],
                 "responses": {
                     "200": {
                         "description": "OK",
@@ -1203,14 +1317,222 @@ const docTemplate = `{
                             "$ref": "#/definitions/ports.TokenResult"
                         }
                     },
+                    "401": {
+                        "description": "Cookie no provista, o refresh token inválido/expirado",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/instances": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Lee en vivo el inventario de Proxmox VE (VMs y contenedores). Un ADMIN recibe el cluster completo; un OPERATOR recibe únicamente las instancias que tiene asignadas.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Instancias Proxmox"
+                ],
+                "summary": "Listar instancias",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/ports.InstanciaListadaDTO"
+                            }
+                        }
+                    },
+                    "502": {
+                        "description": "PROXMOX_UNAVAILABLE",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/instances/{vmid}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Devuelve el estado actual (running/stopped, tipo, nodo) de una VM o contenedor leído en vivo desde Proxmox VE.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Instancias Proxmox"
+                ],
+                "summary": "Obtener instancia",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "VMID de la instancia",
+                        "name": "vmid",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/ports.InstanciaProxmoxDTO"
+                        }
+                    },
                     "400": {
-                        "description": "Body inválido",
+                        "description": "INVALID_VMID",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
                     },
-                    "401": {
-                        "description": "Refresh token inválido o expirado",
+                    "403": {
+                        "description": "INSTANCE_ACCESS_DENIED — el OPERATOR no tiene este vmid asignado",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "INSTANCE_NOT_FOUND",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "502": {
+                        "description": "PROXMOX_UNAVAILABLE",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/instances/{vmid}/start": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Dispara el arranque de una VM o contenedor en Proxmox VE. La operación es asíncrona: devuelve el UPID de la tarea que Proxmox crea para seguir su progreso.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Instancias Proxmox"
+                ],
+                "summary": "Iniciar instancia",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "VMID de la instancia",
+                        "name": "vmid",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "upid de la tarea creada en Proxmox",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "INVALID_VMID",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "INSTANCE_ACCESS_DENIED — el OPERATOR no tiene este vmid asignado",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "INSTANCE_NOT_FOUND",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "502": {
+                        "description": "PROXMOX_UNAVAILABLE",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/instances/{vmid}/stop": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Dispara el apagado forzado de una VM o contenedor en Proxmox VE. La operación es asíncrona: devuelve el UPID de la tarea que Proxmox crea para seguir su progreso.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Instancias Proxmox"
+                ],
+                "summary": "Detener instancia",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "VMID de la instancia",
+                        "name": "vmid",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "upid de la tarea creada en Proxmox",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "INVALID_VMID",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "INSTANCE_ACCESS_DENIED — el OPERATOR no tiene este vmid asignado",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "INSTANCE_NOT_FOUND",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "502": {
+                        "description": "PROXMOX_UNAVAILABLE",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -1294,38 +1616,59 @@ const docTemplate = `{
                 }
             }
         },
-        "http.LogoutRequest": {
-            "type": "object",
-            "required": [
-                "refreshToken"
-            ],
-            "properties": {
-                "refreshToken": {
-                    "type": "string"
-                }
-            }
-        },
         "http.asignarPermisosRequest": {
             "type": "object",
             "required": [
-                "vmids"
+                "permisos"
             ],
             "properties": {
-                "vmids": {
+                "permisos": {
                     "type": "array",
                     "items": {
-                        "type": "integer"
+                        "$ref": "#/definitions/ports.PermisoInstanciaInput"
                     }
                 }
             }
         },
-        "http.refreshRequest": {
+        "http.confirmarRecuperacionRequest": {
             "type": "object",
             "required": [
-                "refreshToken"
+                "codigo",
+                "email",
+                "nuevaContrasena"
             ],
             "properties": {
-                "refreshToken": {
+                "codigo": {
+                    "type": "string"
+                },
+                "email": {
+                    "type": "string"
+                },
+                "nuevaContrasena": {
+                    "type": "string",
+                    "maxLength": 12,
+                    "minLength": 8
+                }
+            }
+        },
+        "http.permisosResponse": {
+            "type": "object",
+            "properties": {
+                "permisos": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/ports.PermisoInstanciaInput"
+                    }
+                }
+            }
+        },
+        "http.solicitarRecuperacionRequest": {
+            "type": "object",
+            "required": [
+                "email"
+            ],
+            "properties": {
+                "email": {
                     "type": "string"
                 }
             }
@@ -1448,6 +1791,7 @@ const docTemplate = `{
                 },
                 "contrasenaNueva": {
                     "type": "string",
+                    "maxLength": 12,
                     "minLength": 8
                 }
             }
@@ -1489,15 +1833,54 @@ const docTemplate = `{
                 "activo": {
                     "type": "boolean"
                 },
-                "contrasenaTemp": {
-                    "description": "Solo devuelto aquí (Plan A sin SMTP)",
-                    "type": "string"
-                },
                 "id": {
                     "type": "string"
                 },
                 "rol": {
                     "type": "string"
+                }
+            }
+        },
+        "ports.InstanciaListadaDTO": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "integer"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "node": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "type": {
+                    "description": "\"vm\" | \"lxc\"",
+                    "type": "string"
+                }
+            }
+        },
+        "ports.InstanciaProxmoxDTO": {
+            "type": "object",
+            "properties": {
+                "estado": {
+                    "description": "\"running\" | \"stopped\" | ...",
+                    "type": "string"
+                },
+                "nodo": {
+                    "type": "string"
+                },
+                "nombre": {
+                    "type": "string"
+                },
+                "tipo": {
+                    "description": "\"qemu\" | \"lxc\"",
+                    "type": "string"
+                },
+                "vmid": {
+                    "type": "integer"
                 }
             }
         },
@@ -1550,6 +1933,17 @@ const docTemplate = `{
                 }
             }
         },
+        "ports.PermisoInstanciaInput": {
+            "type": "object",
+            "properties": {
+                "nivelAcceso": {
+                    "type": "string"
+                },
+                "vmid": {
+                    "type": "integer"
+                }
+            }
+        },
         "ports.QRResult": {
             "type": "object",
             "properties": {
@@ -1596,9 +1990,6 @@ const docTemplate = `{
                 "expiresIn": {
                     "description": "segundos hasta expiración del access token",
                     "type": "integer"
-                },
-                "refreshToken": {
-                    "type": "string"
                 }
             }
         },

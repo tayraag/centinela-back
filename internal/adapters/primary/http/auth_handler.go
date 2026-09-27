@@ -2,6 +2,7 @@ package http
 
 import (
 	"net/http"
+	"os"
 	"strings"
 
 	"el-centinela/internal/adapters/primary/http/middleware"
@@ -18,6 +19,21 @@ type AuthHandler struct {
 // NewAuthHandler crea un nuevo AuthHandler con el servicio de autenticación inyectado.
 func NewAuthHandler(service ports.AuthService) *AuthHandler {
 	return &AuthHandler{service: service}
+}
+
+// setRefreshCookie encapsula la lógica para emitir o borrar la cookie segura del refresh token.
+func setRefreshCookie(c *gin.Context, token string, maxAge int) {
+	// En producción usar Secure=true. En desarrollo local puede ser false mediante variable de entorno.
+	secure := true
+	if os.Getenv("COOKIE_SECURE") == "false" {
+		secure = false
+	}
+	
+	// Previene envíos cross-site (protección CSRF combinada con XSS protection del HttpOnly)
+	c.SetSameSite(http.SameSiteStrictMode)
+	
+	// c.SetCookie(name, value, maxAge, path, domain, secure, httpOnly)
+	c.SetCookie("centinela_refresh", token, maxAge, "/api/auth", "", secure, true)
 }
 
 // ==========================================
@@ -65,34 +81,32 @@ func (h *AuthHandler) Login(c *gin.Context) {
 // POST /api/auth/logout
 // ==========================================
 
-// LogoutRequest define el body esperado para cerrar sesión.
-type LogoutRequest struct {
-	RefreshToken string `json:"refreshToken" binding:"required"`
-}
-
-// Logout invalida la sesión del usuario a partir de su refresh token.
+// Logout invalida la sesión del usuario a partir de su refresh token en la cookie.
 //
 // @Summary      Cerrar sesión (logout)
-// @Description  Invalida la sesión asociada al refresh token recibido. El frontend debe descartar los tokens locales. Responde 204 sin body.
+// @Description  Invalida la sesión asociada al refresh token en la cookie `centinela_refresh`. Emite la eliminación de la cookie y responde 204.
 // @Tags         Autenticación
-// @Accept       json
 // @Produce      json
-// @Param        body body LogoutRequest true "Token de refresco de la sesión a cerrar"
 // @Success      204 "Sin contenido"
-// @Failure      400 {object} ErrorResponse "Formato de petición inválido"
-// @Failure      401 {object} ErrorResponse "Refresh token inválido o sesión ya cerrada"
+// @Failure      401 {object} ErrorResponse "Refresh token inválido, sesión ya cerrada o cookie ausente"
 // @Router       /auth/logout [post]
 func (h *AuthHandler) Logout(c *gin.Context) {
-	var req LogoutRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		SendError(c, http.StatusBadRequest, "INVALID_REQUEST", "El formato de la petición es incorrecto. Se requiere refreshToken.")
+	refreshToken, err := c.Cookie("centinela_refresh")
+	if err != nil || refreshToken == "" {
+		SendError(c, http.StatusUnauthorized, "REFRESH_COOKIE_MISSING", "Cookie de refresh token no provista.")
 		return
 	}
 
-	if err := h.service.CerrarSesion(c.Request.Context(), req.RefreshToken); err != nil {
+	jti, _ := c.Get(middleware.ContextKeyJTI)
+	jtiStr, _ := jti.(string)
+
+	if err := h.service.CerrarSesion(c.Request.Context(), refreshToken, jtiStr); err != nil {
 		SendError(c, http.StatusUnauthorized, "AUTH_FAILED", "sesión inválida o ya cerrada")
 		return
 	}
+
+	// Borrar la cookie emitiendo Max-Age=-1
+	setRefreshCookie(c, "", -1)
 
 	c.Status(http.StatusNoContent)
 }
@@ -176,6 +190,9 @@ func (h *AuthHandler) VerificarTotp(c *gin.Context) {
 		return
 	}
 
+	// Emitir la cookie segura con el refresh token. Tiempo de vida: 7 días.
+	setRefreshCookie(c, result.RefreshToken, 7*24*3600)
+
 	c.JSON(http.StatusOK, result)
 }
 
@@ -183,35 +200,103 @@ func (h *AuthHandler) VerificarTotp(c *gin.Context) {
 // POST /api/auth/refresh
 // ==========================================
 
-// refreshRequest define el body para la renovación de tokens.
-type refreshRequest struct {
-	RefreshToken string `json:"refreshToken" binding:"required"`
-}
-
-// RefrescarToken valida un refresh token y emite un nuevo access token.
+// RefrescarToken valida un refresh token de la cookie y emite un nuevo access token.
 //
 // @Summary      Renovar access token
-// @Description  Recibe un refresh token válido y emite un nuevo access token (8h). El refresh token no cambia.
+// @Description  Lee el refresh token desde la cookie HTTP-Only, valida la sesión y emite un nuevo access token. Rota la cookie emitiendo un nuevo refresh token.
+// @Tags         Autenticación
+// @Produce      json
+// @Success      200 {object} ports.TokenResult
+// @Failure      401 {object} ErrorResponse "Cookie no provista, o refresh token inválido/expirado"
+// @Router       /auth/refresh [post]
+func (h *AuthHandler) RefrescarToken(c *gin.Context) {
+	refreshToken, err := c.Cookie("centinela_refresh")
+	if err != nil || refreshToken == "" {
+		SendError(c, http.StatusUnauthorized, "REFRESH_COOKIE_MISSING", "Cookie de refresh token no provista.")
+		return
+	}
+
+	result, err := h.service.RefrescarToken(c.Request.Context(), refreshToken)
+	if err != nil {
+		// Mensaje fijo: el error del servicio puede traer el detalle interno de la
+		// librería de JWT (por ejemplo "token is malformed"), que no es asunto del cliente.
+		SendError(c, http.StatusUnauthorized, "REFRESH_FAILED", "El refresh token es inválido o expiró. Iniciá sesión nuevamente.")
+		return
+	}
+
+	// Rotar la cookie con el nuevo refresh token emitido
+	setRefreshCookie(c, result.RefreshToken, 7*24*3600)
+
+	c.JSON(http.StatusOK, result)
+}
+
+// ==========================================
+// Recuperación de Contraseña
+// ==========================================
+
+type solicitarRecuperacionRequest struct {
+	Email string `json:"email" binding:"required,email"`
+}
+
+// SolicitarRecuperacion inicia el flujo enviando un código temporal al correo del usuario.
+//
+// @Summary      Solicitar recuperación de contraseña
+// @Description  Genera un código de 6 dígitos válido por 15 minutos y lo envía al correo del usuario. Retorna 200 OK incluso si el correo no existe para evitar enumeración.
 // @Tags         Autenticación
 // @Accept       json
 // @Produce      json
-// @Param        body body refreshRequest true "Refresh token"
-// @Success      200 {object} ports.TokenResult
-// @Failure      400 {object} ErrorResponse "Body inválido"
-// @Failure      401 {object} ErrorResponse "Refresh token inválido o expirado"
-// @Router       /auth/refresh [post]
-func (h *AuthHandler) RefrescarToken(c *gin.Context) {
-	var req refreshRequest
+// @Param        body body solicitarRecuperacionRequest true "Email del usuario"
+// @Success      200 {object} map[string]string
+// @Failure      400 {object} ErrorResponse "Email inválido"
+// @Router       /auth/password/forgot [post]
+func (h *AuthHandler) SolicitarRecuperacion(c *gin.Context) {
+	var req solicitarRecuperacionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		SendError(c, http.StatusBadRequest, "INVALID_REQUEST", "Se requiere el campo refreshToken.")
+		SendError(c, http.StatusBadRequest, "INVALID_REQUEST", "Email inválido o faltante.")
 		return
 	}
 
-	result, err := h.service.RefrescarToken(c.Request.Context(), req.RefreshToken)
+	if err := h.service.SolicitarRecuperacionContrasena(c.Request.Context(), req.Email); err != nil {
+		SendError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Error al procesar la solicitud.")
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Si el correo está registrado, recibirás un código de recuperación en unos minutos.",
+	})
+}
+
+type confirmarRecuperacionRequest struct {
+	Email           string `json:"email" binding:"required,email"`
+	Codigo          string `json:"codigo" binding:"required,len=6"`
+	NuevaContrasena string `json:"nuevaContrasena" binding:"required,min=8,max=12"`
+}
+
+// ConfirmarRecuperacion valida el código de recuperación y establece la nueva contraseña.
+//
+// @Summary      Confirmar recuperación de contraseña
+// @Description  Valida el código de 6 dígitos enviado por email y establece la nueva contraseña (8-12 chars, mayúscula, número, especial). Invalida el código tras el uso o tras 3 intentos fallidos. La nueva contraseña no puede coincidir con la anterior.
+// @Tags         Autenticación
+// @Accept       json
+// @Produce      json
+// @Param        body body confirmarRecuperacionRequest true "Datos de recuperación"
+// @Success      200 {object} map[string]string
+// @Failure      400 {object} ErrorResponse "Datos inválidos, código incorrecto, demasiados intentos, contraseña débil o igual a la actual"
+// @Router       /auth/password/reset [post]
+func (h *AuthHandler) ConfirmarRecuperacion(c *gin.Context) {
+	var req confirmarRecuperacionRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		SendError(c, http.StatusBadRequest, "INVALID_REQUEST", "Formato inválido. Se requiere email, código de 6 dígitos y nueva contraseña válida.")
+		return
+	}
+
+	err := h.service.ConfirmarRecuperacionContrasena(c.Request.Context(), req.Email, req.Codigo, req.NuevaContrasena)
 	if err != nil {
-		SendError(c, http.StatusUnauthorized, "REFRESH_FAILED", err.Error())
+		SendError(c, http.StatusBadRequest, "RESET_FAILED", err.Error())
 		return
 	}
 
-	c.JSON(http.StatusOK, result)
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Contraseña actualizada exitosamente. Ya puedes iniciar sesión.",
+	})
 }

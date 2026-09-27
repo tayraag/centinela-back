@@ -32,12 +32,17 @@ type Usuario struct {
 
 	Rol              string `gorm:"type:varchar(50);not null" json:"rol"` // ADMIN u OPERATOR
 	Activo           bool   `gorm:"default:true" json:"activo"`
-	CambioContrasena bool   `gorm:"default:true" json:"cambioContrasena"`
+	CambioContrasena bool   `gorm:"default:false" json:"cambioContrasenaRequerido"` // Si es true, debe cambiar la clave al loguearse
 
-	// Campos 2FA (RF-01)
+	// Campos para recuperación de contraseña
+	CodigoRecuperacion   *string    `gorm:"type:varchar(6)" json:"-"`
+	ExpiracionCodigo     *time.Time `json:"-"`
+	IntentosRecuperacion int        `gorm:"default:0" json:"-"`
+
+	// 2FA TOTP
+	SecretoTotpCifrado string `gorm:"type:text" json:"-"` // Oculto en JSON
 	TotpVinculado      bool   `gorm:"default:false" json:"totpVinculado"`
-	SecretoTotpCifrado string `gorm:"type:varchar(255)" json:"-"`          // Oculto en JSON
-	UltimoTotpPeriodo  *int64 `gorm:"type:bigint" json:"-"`                // Anti-replay: período TOTP (unix/30) del último código usado
+	UltimoTotpPeriodo  *int64 `json:"-"` // Anti-replay: guarda el periodo (time.Now().Unix() / 30) del último código usado
 
 	FechaUltimoAcceso *time.Time `json:"fechaUltimoAcceso"` // Puntero porque puede ser null inicialmente
 	FechaCreacion     time.Time  `gorm:"default:now()" json:"fechaCreacion"`
@@ -75,6 +80,7 @@ type PermisoInstancia struct {
 	ID          uuid.UUID `gorm:"type:uuid;primaryKey;default:uuid_generate_v7()" json:"id"`
 	UsuarioID   uuid.UUID `gorm:"type:uuid;not null;uniqueIndex:idx_permisos_usuario_vmid" json:"usuarioId"`
 	VmidProxmox int       `gorm:"not null;uniqueIndex:idx_permisos_usuario_vmid" json:"vmidProxmox"`
+	NivelAcceso string    `gorm:"type:varchar(30);not null;default:'FULL_ACCESS';check:nivel_acceso IN ('FULL_ACCESS','READ_ONLY')" json:"nivelAcceso"`
 }
 
 // ==========================================
@@ -90,7 +96,7 @@ type Auditoria struct {
 	InstanciaNombre string `gorm:"type:varchar(255)" json:"instanciaNombre"`
 	Resultado       string `gorm:"type:varchar(50);not null;index:idx_auditoria_resultado" json:"resultado"` // EXITO o FALLA
 
-	Detalles  *string   `gorm:"type:jsonb" json:"detalles"`                                     // JSON estructurado con metadata extra (puntero para permitir NULL en PostgreSQL)
+	Detalles  *string   `gorm:"type:jsonb" json:"detalles"`                                       // JSON estructurado con metadata extra (puntero para permitir NULL en PostgreSQL)
 	FechaHora time.Time `gorm:"default:now();index:idx_auditoria_usuario_fecha" json:"fechaHora"` // Índice compuesto con usuario_id
 }
 
