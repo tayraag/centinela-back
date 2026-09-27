@@ -256,6 +256,9 @@ func (h *AuthHandler) SolicitarRecuperacion(c *gin.Context) {
 		return
 	}
 
+	// Mismo criterio que Login: normalizar el email antes de buscar (la base compara exacto, case-sensitive).
+	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
+
 	if err := h.service.SolicitarRecuperacionContrasena(c.Request.Context(), req.Email); err != nil {
 		SendError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Error al procesar la solicitud.")
 		return
@@ -289,6 +292,9 @@ func (h *AuthHandler) ConfirmarRecuperacion(c *gin.Context) {
 		SendError(c, http.StatusBadRequest, "INVALID_REQUEST", "Formato inválido. Se requiere email, código de 6 dígitos y nueva contraseña válida.")
 		return
 	}
+
+	// Mismo criterio que Login: normalizar el email antes de buscar (la base compara exacto, case-sensitive).
+	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
 
 	err := h.service.ConfirmarRecuperacionContrasena(c.Request.Context(), req.Email, req.Codigo, req.NuevaContrasena)
 	if err != nil {
