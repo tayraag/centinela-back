@@ -25,11 +25,13 @@ const (
 )
 
 // Client implementa ports.ProxmoxPort hablando directo con la API REST de
-// Proxmox VE, autenticado por ticket + CSRF (el mismo mecanismo que usa la
-// web UI de Proxmox).
+// Proxmox VE. Soporta autenticación mediante API Token (recomendado por infraestructura)
+// o por ticket + CSRF (usuario y contraseña como fallback).
 type Client struct {
 	baseURL        string
 	nodePorDefecto string
+	tokenID        string
+	tokenSecret    string
 	username       string
 	password       string
 	httpClient     *http.Client
@@ -41,13 +43,20 @@ type Client struct {
 }
 
 // NewClient crea un cliente de Proxmox VE.
-// baseURL: ej. "https://100.81.49.19:8006" (sin barra final).
+// baseURL: ej. "https://10.7.93.124:8006" o "https://10.7.93.124:8006/api2/json" (se normaliza automáticamente).
 // node: nodo por defecto; hoy el cluster tiene un único nodo ("pve"), pero el
 // tipo/nodo real de cada instancia siempre se resuelve contra cluster/resources.
-func NewClient(baseURL, node, username, password string, tlsCfg *tls.Config) *Client {
+// Si tokenID y tokenSecret están definidos, se utiliza autenticación por API Token (Authorization: PVEAPIToken=...).
+// Si no, se utiliza el flujo de usuario y contraseña con tickets de sesión.
+func NewClient(baseURL, node, tokenID, tokenSecret, username, password string, tlsCfg *tls.Config) *Client {
+	cleanURL := strings.TrimRight(baseURL, "/")
+	cleanURL = strings.TrimSuffix(cleanURL, "/api2/json")
+
 	return &Client{
-		baseURL:        strings.TrimRight(baseURL, "/"),
+		baseURL:        cleanURL,
 		nodePorDefecto: node,
+		tokenID:        tokenID,
+		tokenSecret:    tokenSecret,
 		username:       username,
 		password:       password,
 		httpClient: &http.Client{
@@ -122,10 +131,6 @@ func (c *Client) ensureTicket(ctx context.Context) error {
 // body va como application/x-www-form-urlencoded (formato que espera Proxmox
 // en sus endpoints de escritura); puede ser nil para GET sin parámetros.
 func (c *Client) doRequest(ctx context.Context, method, path string, body url.Values) ([]byte, error) {
-	if err := c.ensureTicket(ctx); err != nil {
-		return nil, err
-	}
-
 	var bodyReader io.Reader
 	if body != nil {
 		bodyReader = strings.NewReader(body.Encode())
@@ -139,12 +144,22 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body url.Va
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	}
 
-	c.mu.Lock()
-	req.AddCookie(&http.Cookie{Name: "PVEAuthCookie", Value: c.ticket})
-	if method != http.MethodGet {
-		req.Header.Set("CSRFPreventionToken", c.csrfToken)
+	// Si se configuró API Token, se envía directamente en la cabecera Authorization
+	if c.tokenID != "" && c.tokenSecret != "" {
+		req.Header.Set("Authorization", fmt.Sprintf("PVEAPIToken=%s=%s", c.tokenID, c.tokenSecret))
+	} else {
+		// Fallback: autenticación por ticket + CSRF
+		if err := c.ensureTicket(ctx); err != nil {
+			return nil, err
+		}
+
+		c.mu.Lock()
+		req.AddCookie(&http.Cookie{Name: "PVEAuthCookie", Value: c.ticket})
+		if method != http.MethodGet {
+			req.Header.Set("CSRFPreventionToken", c.csrfToken)
+		}
+		c.mu.Unlock()
 	}
-	c.mu.Unlock()
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -161,7 +176,7 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body url.Va
 		return nil, ports.ErrInstanciaNoEncontrada
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("%w: HTTP %d en %s", ports.ErrProxmoxNoDisponible, resp.StatusCode, path)
+		return nil, fmt.Errorf("%w: HTTP %d en %s (%s)", ports.ErrProxmoxNoDisponible, resp.StatusCode, path, strings.TrimSpace(string(respBody)))
 	}
 
 	return respBody, nil

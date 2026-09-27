@@ -85,9 +85,16 @@ func main() {
 	emailService := email.NewMockEmailService()
 	auditRepo := postgres.NewAuditRepository(db)
 	instanceRepo := postgres.NewInstanceRepository(db)
+	proxmoxURL := os.Getenv("PROXMOX_URL")
+	if proxmoxURL == "" {
+		proxmoxURL = os.Getenv("PROXMOX_BASE_URL")
+	}
+
 	proxmoxClient := proxmox.NewClient(
-		os.Getenv("PROXMOX_BASE_URL"),
+		proxmoxURL,
 		os.Getenv("PROXMOX_NODE"),
+		os.Getenv("PROXMOX_TOKEN_ID"),
+		os.Getenv("PROXMOX_TOKEN_SECRET"),
 		os.Getenv("PROXMOX_USERNAME"),
 		os.Getenv("PROXMOX_PASSWORD"),
 		proxmox.BuildTLSConfig(),

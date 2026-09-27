@@ -40,7 +40,7 @@ func BuildTLSConfig() *tls.Config {
 		}
 	}
 
-	if strings.EqualFold(os.Getenv("PROXMOX_TLS_INSECURE"), "true") {
+	if strings.EqualFold(os.Getenv("PROXMOX_TLS_INSECURE"), "true") || strings.EqualFold(os.Getenv("PROXMOX_INSECURE_SKIP_VERIFY"), "true") {
 		return &tls.Config{InsecureSkipVerify: true}
 	}
 
