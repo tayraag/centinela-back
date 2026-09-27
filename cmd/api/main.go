@@ -111,6 +111,7 @@ func main() {
 	router := gin.New()
 	router.Use(gin.Recovery())             // Recupera de panics sin caer el servidor
 	router.Use(middleware.RequestLogger()) // Logger conciso personalizado
+	router.Use(middleware.CORS())          // Política CORS: lista blanca de orígenes (ver ALLOWED_ORIGINS en .env)
 	router.Use(middleware.SecurityHeaders())
 
 	// 7. Definir las rutas
