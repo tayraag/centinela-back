@@ -51,8 +51,16 @@ func InitDB() (*gorm.DB, error) {
 	}
 	log.Println("✅ Migración completada exitosamente")
 
-	// Aplicar trigger de inmutabilidad (RF-08) a la tabla de auditoria
+	// Aplicar función y trigger de inmutabilidad a la tabla de auditoria
 	err = db.Exec(`
+		CREATE OR REPLACE FUNCTION audit_inmutabilidad()
+		RETURNS TRIGGER AS $$
+		BEGIN
+			RAISE EXCEPTION 'Operación destructiva denegada: El registro de auditoría es inmutable. No se permiten UPDATE, DELETE o TRUNCATE.';
+			RETURN NULL;
+		END;
+		$$ LANGUAGE plpgsql;
+		
 		DO $$
 		BEGIN
 			IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_auditoria_inmutable') THEN
