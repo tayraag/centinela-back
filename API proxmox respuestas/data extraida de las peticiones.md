@@ -1,14 +1,14 @@
 > **Nota:** estas son capturas reales de la API de Proxmox, hechas con un token de prueba (`root@pam!pruebalucas`, se ve en los UPID y en `tokenid`) y cuando el nodo figuraba como `pve`. **No son la configuración que usa el backend.** La configuración oficial (pasada por la PM) es:
 >
 > ```
-> PROXMOX_URL=https://100.81.49.19:8006/api2/json
+> PROXMOX_URL=https://10.10.20.1:8006/api2/json
 > PROXMOX_NODE=proxmox
-> PROXMOX_TOKEN_ID=centi-api@pve!back-token
+> PROXMOX_TOKEN_ID=centinela-api@pve!backend-token
 > PROXMOX_TOKEN_SECRET=<pedírselo a la PM / infra, nunca commitearlo>
 > PROXMOX_INSECURE_SKIP_VERIFY=true
 > ```
 >
-> Cabecera: `Authorization: PVEAPIToken=centi-api@pve!back-token=<PROXMOX_TOKEN_SECRET>`. Detalle en `SETUP.md` → *Proxmox VE*.
+> Cabecera: `Authorization: PVEAPIToken=centinela-api@pve!backend-token=<PROXMOX_TOKEN_SECRET>`. Detalle en `SETUP.md` → *Proxmox VE*.
 
 ### RF-02: Dashboard de estado
 

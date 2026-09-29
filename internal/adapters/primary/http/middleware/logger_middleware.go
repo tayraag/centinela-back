@@ -3,8 +3,10 @@ package middleware
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -58,36 +60,69 @@ func (w *bodyLogWriter) Write(b []byte) (int, error) {
 	return w.ResponseWriter.Write(b)
 }
 
+// fragmentosSensibles: si el nombre de un campo contiene alguno de estos
+// fragmentos (sin distinguir mayúsculas), su valor se oculta en el log.
+// Cubre contrasena, contrasenaActual, contrasenaNueva, nuevaContrasena,
+// password, secretoManual, secreto_totp_cifrado, qrBase64 (el QR contiene el
+// secreto TOTP) y codigo (TOTP / recuperación).
+var fragmentosSensibles = []string{"contrasena", "password", "secreto", "qrbase64", "codigo"}
+
+// camposJWT se truncan en vez de ocultarse, para poder distinguirlos en el log.
+var camposJWT = map[string]bool{"jwtTemporal": true, "accessToken": true, "refreshToken": true}
+
 // sanitizarBody parsea el JSON y oculta campos sensibles, retornando una versión compacta.
+// Recorre objetos y arrays anidados, no solo el primer nivel.
 func sanitizarBody(data []byte) string {
 	if len(data) == 0 {
 		return ""
 	}
-	var m map[string]interface{}
-	if err := json.Unmarshal(data, &m); err != nil {
+	var v interface{}
+	if err := json.Unmarshal(data, &v); err != nil {
 		return "<non-json>"
 	}
-
-	// Ocultar campos sensibles
-	camposSensibles := []string{"contrasena", "password", "secreto_totp_cifrado", "contrasenaHash"}
-	for _, campo := range camposSensibles {
-		if _, ok := m[campo]; ok {
-			m[campo] = "***"
-		}
+	if arr, ok := v.([]interface{}); ok {
+		// Los listados pueden ser largos: se loguea solo la cantidad.
+		return fmt.Sprintf("<array de %d elementos>", len(arr))
 	}
 
-	// Truncar tokens JWT largos
-	camposJWT := []string{"jwtTemporal", "accessToken", "refreshToken", "refreshToken"}
-	for _, campo := range camposJWT {
-		if val, ok := m[campo]; ok {
-			if str, ok := val.(string); ok && len(str) > 30 {
-				m[campo] = str[:20] + "…[jwt]"
+	compact, _ := json.Marshal(sanitizarValor(v))
+	return string(compact)
+}
+
+func sanitizarValor(v interface{}) interface{} {
+	switch val := v.(type) {
+	case map[string]interface{}:
+		for campo, sub := range val {
+			switch {
+			case esSensible(campo):
+				val[campo] = "***"
+			case camposJWT[campo]:
+				if str, ok := sub.(string); ok && len(str) > 30 {
+					val[campo] = str[:20] + "…[jwt]"
+				}
+			default:
+				val[campo] = sanitizarValor(sub)
 			}
 		}
+		return val
+	case []interface{}:
+		for i, sub := range val {
+			val[i] = sanitizarValor(sub)
+		}
+		return val
+	default:
+		return v
 	}
+}
 
-	compact, _ := json.Marshal(m)
-	return string(compact)
+func esSensible(campo string) bool {
+	campo = strings.ToLower(campo)
+	for _, fragmento := range fragmentosSensibles {
+		if strings.Contains(campo, fragmento) {
+			return true
+		}
+	}
+	return false
 }
 
 // statusEmoji retorna un emoji según el código HTTP para lectura rápida en terminal.

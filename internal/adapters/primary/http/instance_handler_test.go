@@ -3,6 +3,7 @@ package http_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -194,6 +195,34 @@ func TestListarInstancias_ProxmoxInaccesible(t *testing.T) {
 		t.Fatalf("Error deserializando respuesta de error: %v", err)
 	}
 
+	if errResp["errorCode"] != "PROXMOX_UNAVAILABLE" {
+		t.Errorf("errorCode esperado PROXMOX_UNAVAILABLE, obtenido: %v", errResp["errorCode"])
+	}
+}
+
+func TestListarInstancias_ProxmoxTimeout(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	mockPx := &mockProxmoxPort{
+		errListar: fmt.Errorf("%w: %w", ports.ErrProxmoxNoDisponible, ports.ErrProxmoxTimeout),
+	}
+	handler := adaptersHttp.NewInstanceHandler(mockPx, &mockUserRepository{})
+
+	router := gin.New()
+	router.GET("/api/instances", func(c *gin.Context) {
+		c.Set(string(middleware.ContextKeyRol), "ADMIN")
+		c.Set(string(middleware.ContextKeyUserID), uuid.New().String())
+	}, handler.ListarInstancias)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/api/instances", nil)
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusGatewayTimeout {
+		t.Fatalf("Código esperado 504 Gateway Timeout, obtenido %d", w.Code)
+	}
+	var errResp map[string]interface{}
+	_ = json.Unmarshal(w.Body.Bytes(), &errResp)
 	if errResp["errorCode"] != "PROXMOX_UNAVAILABLE" {
 		t.Errorf("errorCode esperado PROXMOX_UNAVAILABLE, obtenido: %v", errResp["errorCode"])
 	}

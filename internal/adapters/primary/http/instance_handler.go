@@ -44,6 +44,9 @@ func mapearErrorProxmox(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, ports.ErrInstanciaNoEncontrada):
 		SendError(c, http.StatusNotFound, "INSTANCE_NOT_FOUND", "La instancia no existe en Proxmox.")
+	case errors.Is(err, ports.ErrProxmoxTimeout):
+		log.Printf("⏱️  Proxmox no respondió a tiempo [%s]: %v", ruta, err)
+		SendError(c, http.StatusGatewayTimeout, "PROXMOX_UNAVAILABLE", "Error al consultar la infraestructura subyacente.")
 	case errors.Is(err, ports.ErrProxmoxCredenciales):
 		log.Printf("🔑 Proxmox rechazó el API Token [%s]: %v", ruta, err)
 		SendError(c, http.StatusBadGateway, "PROXMOX_UNAVAILABLE", "Error al consultar la infraestructura subyacente.")
@@ -72,6 +75,7 @@ func mapearErrorProxmox(c *gin.Context, err error) {
 // @Success      200 {array} ports.InstanciaListadaDTO
 // @Failure      500 {object} ErrorResponse "INTERNAL_ERROR — error al consultar los permisos del usuario"
 // @Failure      502 {object} ErrorResponse "PROXMOX_UNAVAILABLE"
+// @Failure      504 {object} ErrorResponse "PROXMOX_UNAVAILABLE — Proxmox no respondió a tiempo"
 // @Router       /instances [get]
 func (h *InstanceHandler) ListarInstancias(c *gin.Context) {
 	instancias, err := h.proxmox.ListarInstancias(c.Request.Context())
@@ -138,6 +142,7 @@ func (h *InstanceHandler) ListarInstancias(c *gin.Context) {
 // @Failure      403 {object} ErrorResponse "INSTANCE_ACCESS_DENIED — el OPERATOR no tiene este vmid asignado"
 // @Failure      404 {object} ErrorResponse "INSTANCE_NOT_FOUND"
 // @Failure      502 {object} ErrorResponse "PROXMOX_UNAVAILABLE"
+// @Failure      504 {object} ErrorResponse "PROXMOX_UNAVAILABLE — Proxmox no respondió a tiempo"
 // @Router       /instances/{vmid} [get]
 func (h *InstanceHandler) ObtenerInstancia(c *gin.Context) {
 	vmid, ok := extraerVmid(c)
@@ -170,6 +175,7 @@ func (h *InstanceHandler) ObtenerInstancia(c *gin.Context) {
 // @Failure      403 {object} ErrorResponse "INSTANCE_ACCESS_DENIED — el OPERATOR no tiene este vmid asignado"
 // @Failure      404 {object} ErrorResponse "INSTANCE_NOT_FOUND"
 // @Failure      502 {object} ErrorResponse "PROXMOX_UNAVAILABLE"
+// @Failure      504 {object} ErrorResponse "PROXMOX_UNAVAILABLE — Proxmox no respondió a tiempo"
 // @Router       /instances/{vmid}/start [post]
 func (h *InstanceHandler) IniciarInstancia(c *gin.Context) {
 	vmid, ok := extraerVmid(c)
@@ -202,6 +208,7 @@ func (h *InstanceHandler) IniciarInstancia(c *gin.Context) {
 // @Failure      403 {object} ErrorResponse "INSTANCE_ACCESS_DENIED — el OPERATOR no tiene este vmid asignado; INSTANCE_PROTECTED — la instancia es infraestructura de El Centinela"
 // @Failure      404 {object} ErrorResponse "INSTANCE_NOT_FOUND"
 // @Failure      502 {object} ErrorResponse "PROXMOX_UNAVAILABLE"
+// @Failure      504 {object} ErrorResponse "PROXMOX_UNAVAILABLE — Proxmox no respondió a tiempo"
 // @Router       /instances/{vmid}/stop [post]
 func (h *InstanceHandler) DetenerInstancia(c *gin.Context) {
 	vmid, ok := extraerVmid(c)

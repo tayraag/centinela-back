@@ -1246,6 +1246,10 @@ paths:
           description: PROXMOX_UNAVAILABLE
           schema:
             $ref: '#/definitions/http.ErrorResponse'
+        "504":
+          description: PROXMOX_UNAVAILABLE — Proxmox no respondió a tiempo
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
       security:
       - BearerAuth: []
       summary: Listar instancias
@@ -1282,6 +1286,10 @@ paths:
             $ref: '#/definitions/http.ErrorResponse'
         "502":
           description: PROXMOX_UNAVAILABLE
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "504":
+          description: PROXMOX_UNAVAILABLE — Proxmox no respondió a tiempo
           schema:
             $ref: '#/definitions/http.ErrorResponse'
       security:
@@ -1325,6 +1333,10 @@ paths:
           description: PROXMOX_UNAVAILABLE
           schema:
             $ref: '#/definitions/http.ErrorResponse'
+        "504":
+          description: PROXMOX_UNAVAILABLE — Proxmox no respondió a tiempo
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
       security:
       - BearerAuth: []
       summary: Iniciar instancia
@@ -1365,6 +1377,10 @@ paths:
             $ref: '#/definitions/http.ErrorResponse'
         "502":
           description: PROXMOX_UNAVAILABLE
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "504":
+          description: PROXMOX_UNAVAILABLE — Proxmox no respondió a tiempo
           schema:
             $ref: '#/definitions/http.ErrorResponse'
       security:

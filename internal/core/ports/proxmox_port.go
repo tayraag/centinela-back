@@ -28,6 +28,10 @@ var ErrProxmoxNoDisponible = errors.New("Proxmox VE no disponible")
 // permite distinguir en los logs un token mal configurado de un Proxmox caído.
 var ErrProxmoxCredenciales = errors.New("credenciales de Proxmox rechazadas o no configuradas")
 
+// ErrProxmoxTimeout indica que Proxmox no respondió a tiempo. Viaja envuelto
+// junto con ErrProxmoxNoDisponible; hacia el cliente HTTP se responde 504.
+var ErrProxmoxTimeout = errors.New("Proxmox VE no respondió a tiempo")
+
 // InstanciaProxmoxDTO proyecta el estado de una instancia (VM o contenedor)
 // leído desde la API de Proxmox.
 type InstanciaProxmoxDTO struct {

@@ -4,9 +4,11 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -33,11 +35,11 @@ type Client struct {
 }
 
 // NewClient crea un cliente de Proxmox VE.
-// baseURL: ej. "https://100.81.49.19:8006" o "https://100.81.49.19:8006/api2/json"
+// baseURL: ej. "https://10.10.20.1:8006" o "https://10.10.20.1:8006/api2/json"
 // (el sufijo /api2/json se normaliza).
 // node: nodo por defecto; el tipo/nodo real de cada instancia siempre se
 // resuelve contra cluster/resources.
-// tokenID/tokenSecret: API Token de servicio (ej. "centi-api@pve!back-token").
+// tokenID/tokenSecret: API Token de servicio (ej. "centinela-api@pve!backend-token").
 // Si falta alguno de los dos, toda operación falla con ErrProxmoxCredenciales
 // sin llegar a llamar a Proxmox.
 func NewClient(baseURL, node, tokenID, tokenSecret string, tlsCfg *tls.Config) *Client {
@@ -93,6 +95,10 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body url.Va
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
+		var netErr net.Error
+		if errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &netErr) && netErr.Timeout()) {
+			return nil, fmt.Errorf("%w: %w: %v", ports.ErrProxmoxNoDisponible, ports.ErrProxmoxTimeout, err)
+		}
 		return nil, fmt.Errorf("%w: %v", ports.ErrProxmoxNoDisponible, err)
 	}
 	defer resp.Body.Close()

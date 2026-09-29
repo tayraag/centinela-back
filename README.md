@@ -58,6 +58,7 @@ centinela-back/
 ├── cmd/
 │   ├── api/
 │   │   └── main.go              # Punto de entrada: wiring, router, arranque HTTP
+│   ├── proxmox-simulador/       # Simulador de Proxmox para desarrollar sin red (docs/simulador-proxmox.md)
 │   └── seed/                    # Scripts de seed de datos iniciales
 │
 ├── docs/                        # Archivos generados por Swaggo (NO editar a mano)

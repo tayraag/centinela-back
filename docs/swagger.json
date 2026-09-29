@@ -1355,6 +1355,12 @@
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
+                    },
+                    "504": {
+                        "description": "PROXMOX_UNAVAILABLE — Proxmox no respondió a tiempo",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
                     }
                 }
             }
@@ -1410,6 +1416,12 @@
                     },
                     "502": {
                         "description": "PROXMOX_UNAVAILABLE",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "504": {
+                        "description": "PROXMOX_UNAVAILABLE — Proxmox no respondió a tiempo",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -1474,6 +1486,12 @@
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
+                    },
+                    "504": {
+                        "description": "PROXMOX_UNAVAILABLE — Proxmox no respondió a tiempo",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
                     }
                 }
             }
@@ -1532,6 +1550,12 @@
                     },
                     "502": {
                         "description": "PROXMOX_UNAVAILABLE",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "504": {
+                        "description": "PROXMOX_UNAVAILABLE — Proxmox no respondió a tiempo",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }

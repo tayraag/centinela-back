@@ -18,20 +18,25 @@ Contiene el cliente HTTP específico que habla directamente con la API de Proxmo
 Configuración oficial (pasada por la PM). La tabla completa de variables está en `SETUP.md` → *Proxmox VE*.
 
 ```
-PROXMOX_URL=https://100.81.49.19:8006/api2/json
+PROXMOX_URL=https://10.10.20.1:8006/api2/json      # servidor (red interna vmbr1)
+# PROXMOX_URL=http://localhost:8081/api2/json      # local, con go run ./cmd/proxmox-simulador
 PROXMOX_NODE=proxmox
-PROXMOX_TOKEN_ID=centi-api@pve!back-token
+PROXMOX_TOKEN_ID=centinela-api@pve!backend-token
 PROXMOX_TOKEN_SECRET=<pedírselo a la PM / infra, nunca commitearlo>
 PROXMOX_INSECURE_SKIP_VERIFY=true
 ```
 
-Autenticación: **solo API Token**, enviado en cada request como
+Autenticación: **solo API Token** del usuario de servicio `centinela-api@pve` (mínimo privilegio), enviado en cada request como
 
 ```
-Authorization: PVEAPIToken=centi-api@pve!back-token=<PROXMOX_TOKEN_SECRET>
+Authorization: PVEAPIToken=centinela-api@pve!backend-token=<PROXMOX_TOKEN_SECRET>
 ```
 
 Si falta el token, el cliente no llama a Proxmox y devuelve `ErrProxmoxCredenciales`.
+
+## Desarrollo local sin red
+
+`cmd/proxmox-simulador` es un simulador de Proxmox que responde igual que el real (a partir de las capturas de `API proxmox respuestas/`) y exige el mismo token del `.env`. `simulador_test.go` incluye tests de contrato que corren este cliente contra el simulador. Ver [docs/simulador-proxmox.md](../../../../docs/simulador-proxmox.md).
 
 ## Endpoints de Proxmox que se usan
 
@@ -48,7 +53,8 @@ Si falta el token, el cliente no llama a Proxmox y devuelve `ErrProxmoxCredencia
 | Situación                                  | Error del puerto                                      | HTTP hacia el cliente         |
 | ------------------------------------------ | ----------------------------------------------------- | ----------------------------- |
 | Token rechazado (401/403) o sin configurar | `ErrProxmoxCredenciales` + `ErrProxmoxNoDisponible`   | `502 PROXMOX_UNAVAILABLE`     |
-| Red, timeout, 5xx o 404 (URL mal escrita)  | `ErrProxmoxNoDisponible`                              | `502 PROXMOX_UNAVAILABLE`     |
+| Proxmox no responde a tiempo               | `ErrProxmoxTimeout` + `ErrProxmoxNoDisponible`        | `504 PROXMOX_UNAVAILABLE`     |
+| Red, 5xx o 404 (URL mal escrita)           | `ErrProxmoxNoDisponible`                              | `502 PROXMOX_UNAVAILABLE`     |
 | vmid inexistente en `cluster/resources`    | `ErrInstanciaNoEncontrada`                            | `404 INSTANCE_NOT_FOUND`      |
 
 El detalle nunca llega al cliente, pero `mapearErrorProxmox` lo registra en el log del servidor.

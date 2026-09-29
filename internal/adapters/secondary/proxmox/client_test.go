@@ -7,13 +7,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"el-centinela/internal/adapters/secondary/proxmox"
 	"el-centinela/internal/core/ports"
 )
 
 const (
-	tokenIDValido     = "centi-api@pve!back-token"
+	tokenIDValido     = "centinela-api@pve!backend-token"
 	tokenSecretValido = "secret-12345"
 )
 
@@ -149,5 +150,25 @@ func TestClient_ListarInstancias_ProxmoxCaido(t *testing.T) {
 	}
 	if errors.Is(err, ports.ErrProxmoxCredenciales) {
 		t.Errorf("Un 500 de Proxmox no debe reportarse como error de credenciales: %v", err)
+	}
+}
+
+func TestClient_ListarInstancias_Timeout(t *testing.T) {
+	// Servidor que tarda más que el deadline del contexto
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(200 * time.Millisecond)
+	}))
+	defer server.Close()
+
+	client := proxmox.NewClient(server.URL, "pve1", tokenIDValido, tokenSecretValido, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	_, err := client.ListarInstancias(ctx)
+	if !errors.Is(err, ports.ErrProxmoxTimeout) {
+		t.Fatalf("Se esperaba ErrProxmoxTimeout, pero se obtuvo: %v", err)
+	}
+	if !errors.Is(err, ports.ErrProxmoxNoDisponible) {
+		t.Errorf("El timeout debe envolver también ErrProxmoxNoDisponible: %v", err)
 	}
 }

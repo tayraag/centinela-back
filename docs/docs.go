@@ -1362,6 +1362,12 @@ const docTemplate = `{
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
+                    },
+                    "504": {
+                        "description": "PROXMOX_UNAVAILABLE — Proxmox no respondió a tiempo",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
                     }
                 }
             }
@@ -1417,6 +1423,12 @@ const docTemplate = `{
                     },
                     "502": {
                         "description": "PROXMOX_UNAVAILABLE",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "504": {
+                        "description": "PROXMOX_UNAVAILABLE — Proxmox no respondió a tiempo",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -1481,6 +1493,12 @@ const docTemplate = `{
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
+                    },
+                    "504": {
+                        "description": "PROXMOX_UNAVAILABLE — Proxmox no respondió a tiempo",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
                     }
                 }
             }
@@ -1539,6 +1557,12 @@ const docTemplate = `{
                     },
                     "502": {
                         "description": "PROXMOX_UNAVAILABLE",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "504": {
+                        "description": "PROXMOX_UNAVAILABLE — Proxmox no respondió a tiempo",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }

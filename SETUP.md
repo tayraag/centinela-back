@@ -45,32 +45,53 @@ Editar `.env` con valores reales. Los campos obligatorios son:
 
 ### Proxmox VE
 
-Configuración oficial pasada por la PM. El backend se autentica **solo** con el API Token de servicio (no hay login con usuario/contraseña).
+Configuración oficial pasada por la PM. El backend se autentica **solo** con el API Token del usuario de servicio `centinela-api@pve` (mínimo privilegio, RNF-01, con separación de privilegios activa). No hay login con usuario/contraseña ni tokens de `root`.
 
 | Variable                       | Descripción                                                                 | Valor                                    |
 | ------------------------------ | --------------------------------------------------------------------------- | ---------------------------------------- |
-| `PROXMOX_URL`                  | URL de la API de Proxmox (accesible por Tailscale). `/api2/json` opcional   | `https://100.81.49.19:8006/api2/json`    |
+| `PROXMOX_URL`                  | URL de la API de Proxmox. `/api2/json` opcional (ver entornos abajo)        | `https://10.10.20.1:8006/api2/json`      |
 | `PROXMOX_NODE`                 | Nodo del cluster                                                            | `proxmox`                                |
-| `PROXMOX_TOKEN_ID`             | ID del API Token de servicio                                                | `centi-api@pve!back-token`               |
+| `PROXMOX_TOKEN_ID`             | ID del API Token de servicio                                                | `centinela-api@pve!backend-token`        |
 | `PROXMOX_TOKEN_SECRET`         | Secreto del API Token. **Pedírselo a la PM / infra, nunca commitearlo**     | `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`   |
 | `PROXMOX_INSECURE_SKIP_VERIFY` | Saltea la verificación TLS (certificado autofirmado)                        | `true`                                   |
 | `PROXMOX_PROTECTED_VMIDS`      | Opcional. VMIDs que no se pueden apagar desde la API. Vacío = `100`–`105`   | *(vacío)*                                |
+| `PROXMOX_SIM_*`                | Opcionales. Configuración del simulador (solo desarrollo local)             | ver `docs/simulador-proxmox.md`          |
 
 Cada request a Proxmox lleva la cabecera:
 
 ```
-Authorization: PVEAPIToken=centi-api@pve!back-token=<PROXMOX_TOKEN_SECRET>
+Authorization: PVEAPIToken=centinela-api@pve!backend-token=<PROXMOX_TOKEN_SECRET>
 ```
 
 Con API Token Proxmox no exige `CSRFPreventionToken`, ni siquiera en los `POST`.
 
-Para verificar la conexión contra el Proxmox real (requiere acceso por Tailscale a `100.81.49.19:8006` y el secreto cargado en `.env`):
+**Entornos:**
+
+- **Servidor desplegado:** `PROXMOX_URL=https://10.10.20.1:8006/api2/json`. El contenedor del backend comparte la red interna (`vmbr1`) con el hipervisor, así que llega directo, sin Tailscale.
+- **Desarrollo local (sin red hacia Proxmox):** usar el **simulador de Proxmox**, que responde igual que el real (a partir de las capturas de `API proxmox respuestas/`) y exige el mismo token del `.env`:
+
+  ```bash
+  # .env → PROXMOX_URL=http://localhost:8081/api2/json
+  go run ./cmd/proxmox-simulador   # terminal 1: simulador en :8081
+  go run ./cmd/api                 # terminal 2: la API
+  ```
+
+  Qué imita, qué instancias trae, cómo se comporta y cómo simular fallas: **[docs/simulador-proxmox.md](docs/simulador-proxmox.md)**.
+
+**Tests:**
 
 ```bash
+# Unitarios, sin red: Proxmox simulado con httptest (token, filtrado, errores 502/504)
+go test ./internal/adapters/secondary/proxmox/ ./internal/adapters/primary/http/... -v
+
+# Simulador + contrato con el cliente del backend
+go test ./cmd/proxmox-simulador/ -v
+
+# Integración contra el Proxmox real: requiere red hacia PROXMOX_URL y el secreto real en .env
 go test ./internal/adapters/secondary/proxmox/ -run Integracion -v
 ```
 
-Si Proxmox falla, la API responde `502 PROXMOX_UNAVAILABLE` sin detalles, y el motivo real queda en el log del servidor: 🔑 = token rechazado o sin configurar, ⚠️ = red o `PROXMOX_URL` mal configurada. Un listado vacío sin error suele indicar que al token le falta el permiso `VM.Audit`.
+**Errores:** si Proxmox falla, la API responde `502 PROXMOX_UNAVAILABLE` (o `504` si no respondió a tiempo) sin detalles, y el motivo real queda en el log del servidor: 🔑 = token rechazado o sin configurar, ⏱️ = timeout, ⚠️ = red o `PROXMOX_URL` mal configurada. Un listado vacío sin error suele indicar que al token le falta el permiso `VM.Audit`.
 
 ---
 
