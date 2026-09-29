@@ -50,7 +50,7 @@ type Usuario struct {
 	// Relaciones Has-Many (Para Foreign Keys)
 	SesionesActivas   []SesionActiva     `gorm:"foreignKey:UsuarioID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;" json:"-"`
 	PermisosInstancia []PermisoInstancia `gorm:"foreignKey:UsuarioID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;" json:"-"`
-	Auditorias        []Auditoria        `gorm:"foreignKey:UsuarioID;constraint:OnUpdate:CASCADE,OnDelete:SET NULL;" json:"-"`
+	Auditorias        []Auditoria        `gorm:"foreignKey:UsuarioID;constraint:OnUpdate:CASCADE,OnDelete:RESTRICT;" json:"-"`
 	TareasAsincronas  []TareaAsincrona   `gorm:"foreignKey:UsuarioID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;" json:"-"`
 	Notificaciones    []Notificacion     `gorm:"foreignKey:UsuarioID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;" json:"-"`
 }

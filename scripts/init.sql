@@ -15,3 +15,12 @@ BEGIN
   RETURN encode(uuid_bytes, 'hex')::uuid;
 END;
 $$ LANGUAGE plpgsql VOLATILE;
+
+-- Función para garantizar inmutabilidad en la tabla de auditoría (RF-08)
+CREATE OR REPLACE FUNCTION audit_inmutabilidad()
+RETURNS TRIGGER AS $$
+BEGIN
+    RAISE EXCEPTION 'Operación destructiva denegada: El registro de auditoría es inmutable. No se permiten UPDATE, DELETE o TRUNCATE.';
+    RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;

@@ -51,6 +51,31 @@ func InitDB() (*gorm.DB, error) {
 	}
 	log.Println("✅ Migración completada exitosamente")
 
+	// Aplicar trigger de inmutabilidad (RF-08) a la tabla de auditoria
+	err = db.Exec(`
+		DO $$
+		BEGIN
+			IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_auditoria_inmutable') THEN
+				CREATE TRIGGER trg_auditoria_inmutable
+				BEFORE UPDATE OR DELETE OR TRUNCATE ON auditoria
+				FOR EACH STATEMENT
+				EXECUTE FUNCTION audit_inmutabilidad();
+			END IF;
+		END
+		$$;
+	`).Error
+	if err != nil {
+		return nil, fmt.Errorf("error al aplicar trigger de inmutabilidad: %w", err)
+	}
+	log.Println("🔒 Inmutabilidad de auditoría garantizada mediante trigger")
+
+	// Revocar privilegios destructivos al usuario actual (defensa en profundidad)
+	if err := db.Exec(`REVOKE UPDATE, DELETE, TRUNCATE ON auditoria FROM CURRENT_USER;`).Error; err != nil {
+		log.Printf("⚠️ No se pudieron revocar los privilegios sobre auditoria: %v", err)
+	} else {
+		log.Println("🛡️ Privilegios destructivos revocados sobre la tabla de auditoría")
+	}
+
 	seedAdminPorDefecto(db)
 
 	return db, nil
