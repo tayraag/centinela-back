@@ -1351,6 +1351,12 @@ const docTemplate = `{
                             }
                         }
                     },
+                    "500": {
+                        "description": "INTERNAL_ERROR — error al consultar los permisos del usuario",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
                     "502": {
                         "description": "PROXMOX_UNAVAILABLE",
                         "schema": {
@@ -1520,7 +1526,7 @@ const docTemplate = `{
                         }
                     },
                     "403": {
-                        "description": "INSTANCE_ACCESS_DENIED — el OPERATOR no tiene este vmid asignado",
+                        "description": "INSTANCE_ACCESS_DENIED — el OPERATOR no tiene este vmid asignado; INSTANCE_PROTECTED — la instancia es infraestructura de El Centinela",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }

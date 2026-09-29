@@ -33,8 +33,6 @@ func TestIntegracionProxmoxReal(t *testing.T) {
 		os.Getenv("PROXMOX_NODE"),
 		tokenID,
 		tokenSecret,
-		os.Getenv("PROXMOX_USERNAME"),
-		os.Getenv("PROXMOX_PASSWORD"),
 		proxmox.BuildTLSConfig(),
 	)
 

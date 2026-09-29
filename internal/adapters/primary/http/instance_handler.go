@@ -2,6 +2,7 @@ package http
 
 import (
 	"errors"
+	"log"
 	"net/http"
 	"strconv"
 
@@ -36,13 +37,21 @@ func extraerVmid(c *gin.Context) (int, bool) {
 }
 
 // mapearErrorProxmox traduce los errores de ports.ProxmoxPort al contrato HTTP.
+// El detalle del error nunca llega al cliente, pero se registra en el log para
+// poder diagnosticar la causa real (token rechazado, red, URL mal configurada).
 func mapearErrorProxmox(c *gin.Context, err error) {
+	ruta := c.Request.Method + " " + c.Request.URL.Path
 	switch {
 	case errors.Is(err, ports.ErrInstanciaNoEncontrada):
 		SendError(c, http.StatusNotFound, "INSTANCE_NOT_FOUND", "La instancia no existe en Proxmox.")
+	case errors.Is(err, ports.ErrProxmoxCredenciales):
+		log.Printf("🔑 Proxmox rechazó el API Token [%s]: %v", ruta, err)
+		SendError(c, http.StatusBadGateway, "PROXMOX_UNAVAILABLE", "Error al consultar la infraestructura subyacente.")
 	case errors.Is(err, ports.ErrProxmoxNoDisponible):
+		log.Printf("⚠️  Proxmox no disponible [%s]: %v", ruta, err)
 		SendError(c, http.StatusBadGateway, "PROXMOX_UNAVAILABLE", "Error al consultar la infraestructura subyacente.")
 	default:
+		log.Printf("❌ Error inesperado de Proxmox [%s]: %v", ruta, err)
 		SendError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Error inesperado al comunicarse con Proxmox VE.")
 	}
 }
@@ -61,6 +70,7 @@ func mapearErrorProxmox(c *gin.Context, err error) {
 // @Produce      json
 // @Security     BearerAuth
 // @Success      200 {array} ports.InstanciaListadaDTO
+// @Failure      500 {object} ErrorResponse "INTERNAL_ERROR — error al consultar los permisos del usuario"
 // @Failure      502 {object} ErrorResponse "PROXMOX_UNAVAILABLE"
 // @Router       /instances [get]
 func (h *InstanceHandler) ListarInstancias(c *gin.Context) {
@@ -189,7 +199,7 @@ func (h *InstanceHandler) IniciarInstancia(c *gin.Context) {
 // @Param        vmid path int true "VMID de la instancia"
 // @Success      202 {object} map[string]string "upid de la tarea creada en Proxmox"
 // @Failure      400 {object} ErrorResponse "INVALID_VMID"
-// @Failure      403 {object} ErrorResponse "INSTANCE_ACCESS_DENIED — el OPERATOR no tiene este vmid asignado"
+// @Failure      403 {object} ErrorResponse "INSTANCE_ACCESS_DENIED — el OPERATOR no tiene este vmid asignado; INSTANCE_PROTECTED — la instancia es infraestructura de El Centinela"
 // @Failure      404 {object} ErrorResponse "INSTANCE_NOT_FOUND"
 // @Failure      502 {object} ErrorResponse "PROXMOX_UNAVAILABLE"
 // @Router       /instances/{vmid}/stop [post]

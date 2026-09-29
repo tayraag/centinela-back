@@ -22,6 +22,12 @@ var ErrInstanciaNoEncontrada = errors.New("instancia no encontrada en Proxmox")
 // la API de Proxmox (red, autenticación o error del lado de Proxmox).
 var ErrProxmoxNoDisponible = errors.New("Proxmox VE no disponible")
 
+// ErrProxmoxCredenciales indica que Proxmox rechazó el API Token (401/403) o
+// que el token no está configurado. Siempre viaja envuelto junto con
+// ErrProxmoxNoDisponible: hacia el cliente HTTP se responde el mismo 502, pero
+// permite distinguir en los logs un token mal configurado de un Proxmox caído.
+var ErrProxmoxCredenciales = errors.New("credenciales de Proxmox rechazadas o no configuradas")
+
 // InstanciaProxmoxDTO proyecta el estado de una instancia (VM o contenedor)
 // leído desde la API de Proxmox.
 type InstanciaProxmoxDTO struct {
