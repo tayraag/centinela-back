@@ -84,6 +84,7 @@ centinela-back/
 │   │   │       └── middleware/
 │   │   │           ├── auth_middleware.go    # RequireAuth, RequirePreAuth, RequireRole
 │   │   │           ├── instance_guard.go     # RequireInstanceAccess (guard de VMID)
+│   │   │           ├── protected_instance.go # RejectProtectedInstance (VMIDs de infraestructura)
 │   │   │           └── logger_middleware.go  # Logger de peticiones HTTP
 │   │   │
 │   │   └── secondary/           # Adaptadores de SALIDA (implementan puertos del core)
@@ -92,7 +93,9 @@ centinela-back/
 │   │       │   ├── auth_repository.go   # Implementa AuthRepository
 │   │       │   ├── user_repository.go   # Implementa UserRepository
 │   │       │   └── instance_repository.go # Implementa InstanceRepository (VerificarAcceso)
-│   │       └── proxmox/                 # Adapter Proxmox (pendiente de implementar)
+│   │       └── proxmox/                 # Adapter Proxmox VE (API Token), ver su README.md
+│   │           ├── client.go            # Implementa ProxmoxPort
+│   │           └── tls.go               # Verificación TLS (fingerprint / skip verify)
 │   │
 │   └── infrastructure/          # Utilidades técnicas transversales
 │       └── crypto/

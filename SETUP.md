@@ -43,6 +43,35 @@ Editar `.env` con valores reales. Los campos obligatorios son:
 
 > **Seguridad**: El `.env` ya está en `.gitignore`. Nunca lo commitees.
 
+### Proxmox VE
+
+Configuración oficial pasada por la PM. El backend se autentica **solo** con el API Token de servicio (no hay login con usuario/contraseña).
+
+| Variable                       | Descripción                                                                 | Valor                                    |
+| ------------------------------ | --------------------------------------------------------------------------- | ---------------------------------------- |
+| `PROXMOX_URL`                  | URL de la API de Proxmox (accesible por Tailscale). `/api2/json` opcional   | `https://100.81.49.19:8006/api2/json`    |
+| `PROXMOX_NODE`                 | Nodo del cluster                                                            | `proxmox`                                |
+| `PROXMOX_TOKEN_ID`             | ID del API Token de servicio                                                | `centi-api@pve!back-token`               |
+| `PROXMOX_TOKEN_SECRET`         | Secreto del API Token. **Pedírselo a la PM / infra, nunca commitearlo**     | `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`   |
+| `PROXMOX_INSECURE_SKIP_VERIFY` | Saltea la verificación TLS (certificado autofirmado)                        | `true`                                   |
+| `PROXMOX_PROTECTED_VMIDS`      | Opcional. VMIDs que no se pueden apagar desde la API. Vacío = `100`–`105`   | *(vacío)*                                |
+
+Cada request a Proxmox lleva la cabecera:
+
+```
+Authorization: PVEAPIToken=centi-api@pve!back-token=<PROXMOX_TOKEN_SECRET>
+```
+
+Con API Token Proxmox no exige `CSRFPreventionToken`, ni siquiera en los `POST`.
+
+Para verificar la conexión contra el Proxmox real (requiere acceso por Tailscale a `100.81.49.19:8006` y el secreto cargado en `.env`):
+
+```bash
+go test ./internal/adapters/secondary/proxmox/ -run Integracion -v
+```
+
+Si Proxmox falla, la API responde `502 PROXMOX_UNAVAILABLE` sin detalles, y el motivo real queda en el log del servidor: 🔑 = token rechazado o sin configurar, ⚠️ = red o `PROXMOX_URL` mal configurada. Un listado vacío sin error suele indicar que al token le falta el permiso `VM.Audit`.
+
 ---
 
 ## 3. Levantar PostgreSQL con Docker
