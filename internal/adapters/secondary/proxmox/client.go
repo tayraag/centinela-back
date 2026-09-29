@@ -6,49 +6,41 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
-	"sync"
 	"time"
 
 	"el-centinela/internal/core/ports"
 )
 
-// ticketTTL es la vigencia real de un ticket de autenticación de Proxmox VE.
-// Refrescamos un poco antes de que venza para no arriesgarnos a que una
-// request en curso se quede con un ticket vencido a mitad de camino.
 const (
-	ticketTTL          = 2 * time.Hour
-	ticketRefreshAhead = 10 * time.Minute
-	requestTimeout     = 10 * time.Second
+	requestTimeout = 10 * time.Second
+	// maxDetalleError limita cuánto del cuerpo de una respuesta de error de
+	// Proxmox se incluye en el error (y por lo tanto en el log).
+	maxDetalleError = 200
 )
 
 // Client implementa ports.ProxmoxPort hablando directo con la API REST de
-// Proxmox VE. Soporta autenticación mediante API Token (recomendado por infraestructura)
-// o por ticket + CSRF (usuario y contraseña como fallback).
+// Proxmox VE, autenticado con un API Token de servicio.
 type Client struct {
 	baseURL        string
 	nodePorDefecto string
 	tokenID        string
 	tokenSecret    string
-	username       string
-	password       string
 	httpClient     *http.Client
-
-	mu         sync.Mutex
-	ticket     string
-	csrfToken  string
-	obtenidoEn time.Time
 }
 
 // NewClient crea un cliente de Proxmox VE.
-// baseURL: ej. "https://10.7.93.124:8006" o "https://10.7.93.124:8006/api2/json" (se normaliza automáticamente).
-// node: nodo por defecto; hoy el cluster tiene un único nodo ("pve"), pero el
-// tipo/nodo real de cada instancia siempre se resuelve contra cluster/resources.
-// Si tokenID y tokenSecret están definidos, se utiliza autenticación por API Token (Authorization: PVEAPIToken=...).
-// Si no, se utiliza el flujo de usuario y contraseña con tickets de sesión.
-func NewClient(baseURL, node, tokenID, tokenSecret, username, password string, tlsCfg *tls.Config) *Client {
+// baseURL: ej. "https://100.81.49.19:8006" o "https://100.81.49.19:8006/api2/json"
+// (el sufijo /api2/json se normaliza).
+// node: nodo por defecto; el tipo/nodo real de cada instancia siempre se
+// resuelve contra cluster/resources.
+// tokenID/tokenSecret: API Token de servicio (ej. "centi-api@pve!back-token").
+// Si falta alguno de los dos, toda operación falla con ErrProxmoxCredenciales
+// sin llegar a llamar a Proxmox.
+func NewClient(baseURL, node, tokenID, tokenSecret string, tlsCfg *tls.Config) *Client {
 	cleanURL := strings.TrimRight(baseURL, "/")
 	cleanURL = strings.TrimSuffix(cleanURL, "/api2/json")
 
@@ -57,8 +49,6 @@ func NewClient(baseURL, node, tokenID, tokenSecret, username, password string, t
 		nodePorDefecto: node,
 		tokenID:        tokenID,
 		tokenSecret:    tokenSecret,
-		username:       username,
-		password:       password,
 		httpClient: &http.Client{
 			Timeout:   requestTimeout,
 			Transport: &http.Transport{TLSClientConfig: tlsCfg},
@@ -68,59 +58,9 @@ func NewClient(baseURL, node, tokenID, tokenSecret, username, password string, t
 
 var _ ports.ProxmoxPort = (*Client)(nil)
 
-// ==========================================
-// Autenticación (ticket + CSRF)
-// ==========================================
-
-type ticketResponse struct {
-	Data struct {
-		Ticket              string `json:"ticket"`
-		CSRFPreventionToken string `json:"CSRFPreventionToken"`
-	} `json:"data"`
-}
-
-// ensureTicket obtiene un ticket nuevo si no hay uno cacheado o está por vencer.
-func (c *Client) ensureTicket(ctx context.Context) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.ticket != "" && time.Since(c.obtenidoEn) < ticketTTL-ticketRefreshAhead {
-		return nil
-	}
-
-	form := url.Values{
-		"username": {c.username},
-		"password": {c.password},
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		c.baseURL+"/api2/json/access/ticket", strings.NewReader(form.Encode()))
-	if err != nil {
-		return fmt.Errorf("%w: %v", ports.ErrProxmoxNoDisponible, err)
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("%w: %v", ports.ErrProxmoxNoDisponible, err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("%w: login rechazado (HTTP %d)", ports.ErrProxmoxNoDisponible, resp.StatusCode)
-	}
-
-	var parsed ticketResponse
-	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
-		return fmt.Errorf("%w: respuesta de login inválida: %v", ports.ErrProxmoxNoDisponible, err)
-	}
-	if parsed.Data.Ticket == "" {
-		return fmt.Errorf("%w: login sin ticket en la respuesta", ports.ErrProxmoxNoDisponible)
-	}
-
-	c.ticket = parsed.Data.Ticket
-	c.csrfToken = parsed.Data.CSRFPreventionToken
-	c.obtenidoEn = time.Now()
-	return nil
+// TokenConfigurado indica si el cliente tiene un API Token completo.
+func (c *Client) TokenConfigurado() bool {
+	return c.tokenID != "" && c.tokenSecret != ""
 }
 
 // ==========================================
@@ -131,6 +71,11 @@ func (c *Client) ensureTicket(ctx context.Context) error {
 // body va como application/x-www-form-urlencoded (formato que espera Proxmox
 // en sus endpoints de escritura); puede ser nil para GET sin parámetros.
 func (c *Client) doRequest(ctx context.Context, method, path string, body url.Values) ([]byte, error) {
+	if !c.TokenConfigurado() {
+		return nil, fmt.Errorf("%w: %w: PROXMOX_TOKEN_ID/PROXMOX_TOKEN_SECRET sin configurar",
+			ports.ErrProxmoxNoDisponible, ports.ErrProxmoxCredenciales)
+	}
+
 	var bodyReader io.Reader
 	if body != nil {
 		bodyReader = strings.NewReader(body.Encode())
@@ -143,23 +88,8 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body url.Va
 	if body != nil {
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	}
-
-	// Si se configuró API Token, se envía directamente en la cabecera Authorization
-	if c.tokenID != "" && c.tokenSecret != "" {
-		req.Header.Set("Authorization", fmt.Sprintf("PVEAPIToken=%s=%s", c.tokenID, c.tokenSecret))
-	} else {
-		// Fallback: autenticación por ticket + CSRF
-		if err := c.ensureTicket(ctx); err != nil {
-			return nil, err
-		}
-
-		c.mu.Lock()
-		req.AddCookie(&http.Cookie{Name: "PVEAuthCookie", Value: c.ticket})
-		if method != http.MethodGet {
-			req.Header.Set("CSRFPreventionToken", c.csrfToken)
-		}
-		c.mu.Unlock()
-	}
+	// Con API Token Proxmox no exige CSRFPreventionToken, ni siquiera en POST.
+	req.Header.Set("Authorization", fmt.Sprintf("PVEAPIToken=%s=%s", c.tokenID, c.tokenSecret))
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -172,14 +102,30 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body url.Va
 		return nil, fmt.Errorf("%w: %v", ports.ErrProxmoxNoDisponible, err)
 	}
 
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, ports.ErrInstanciaNoEncontrada
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("%w: HTTP %d en %s (%s)", ports.ErrProxmoxNoDisponible, resp.StatusCode, path, strings.TrimSpace(string(respBody)))
+	switch {
+	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
+		return nil, fmt.Errorf("%w: %w: HTTP %d en %s (%s)",
+			ports.ErrProxmoxNoDisponible, ports.ErrProxmoxCredenciales, resp.StatusCode, path, detalle(respBody))
+	case resp.StatusCode == http.StatusNotFound:
+		// Las rutas que armamos existen siempre en Proxmox (el vmid ya se
+		// resolvió contra cluster/resources), así que un 404 indica una
+		// PROXMOX_URL mal configurada, no una instancia inexistente.
+		return nil, fmt.Errorf("%w: HTTP 404 en %s, revisar PROXMOX_URL", ports.ErrProxmoxNoDisponible, path)
+	case resp.StatusCode != http.StatusOK:
+		return nil, fmt.Errorf("%w: HTTP %d en %s (%s)",
+			ports.ErrProxmoxNoDisponible, resp.StatusCode, path, detalle(respBody))
 	}
 
 	return respBody, nil
+}
+
+// detalle recorta el cuerpo de una respuesta de error para incluirlo en el log.
+func detalle(body []byte) string {
+	s := strings.TrimSpace(string(body))
+	if len(s) > maxDetalleError {
+		return s[:maxDetalleError] + "..."
+	}
+	return s
 }
 
 // ==========================================
@@ -260,6 +206,13 @@ func (c *Client) ListarInstancias(ctx context.Context) ([]ports.InstanciaProxmox
 	entries, err := c.obtenerInstancias(ctx)
 	if err != nil {
 		return nil, err
+	}
+
+	// cluster/resources solo devuelve lo que el token puede ver: si le falta
+	// VM.Audit responde 200 con la lista vacía en vez de un error.
+	if len(entries) == 0 {
+		log.Println("⚠️  Proxmox: cluster/resources no devolvió ninguna VM ni contenedor. " +
+			"Si el cluster tiene instancias, revisar que el token tenga VM.Audit (y su propia ACL si usa separación de privilegios).")
 	}
 
 	dtos := make([]ports.InstanciaProxmoxDTO, 0, len(entries))

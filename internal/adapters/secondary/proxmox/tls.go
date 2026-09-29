@@ -15,8 +15,10 @@ import (
 //  1. PROXMOX_TLS_FINGERPRINT seteada: se pinnea el certificado por su huella
 //     SHA-256 (acepta el formato con ":" que muestra la UI de Proxmox o sin
 //     separadores). Es el modo que se va a usar en el entorno real.
-//  2. PROXMOX_TLS_INSECURE=true: se saltea toda verificación (InsecureSkipVerify).
-//     Solo pensado para mientras no tengamos el fingerprint real a mano.
+//  2. PROXMOX_INSECURE_SKIP_VERIFY=true: se saltea toda verificación
+//     (InsecureSkipVerify). Solo pensado para mientras no tengamos el
+//     fingerprint real a mano. PROXMOX_TLS_INSECURE=true se sigue aceptando
+//     como nombre viejo de la misma variable.
 //  3. Ninguna de las dos: verificación TLS estándar (fallará contra un
 //     certificado autofirmado, a propósito — no hay bypass silencioso).
 func BuildTLSConfig() *tls.Config {
@@ -40,7 +42,7 @@ func BuildTLSConfig() *tls.Config {
 		}
 	}
 
-	if strings.EqualFold(os.Getenv("PROXMOX_TLS_INSECURE"), "true") || strings.EqualFold(os.Getenv("PROXMOX_INSECURE_SKIP_VERIFY"), "true") {
+	if strings.EqualFold(os.Getenv("PROXMOX_INSECURE_SKIP_VERIFY"), "true") || strings.EqualFold(os.Getenv("PROXMOX_TLS_INSECURE"), "true") {
 		return &tls.Config{InsecureSkipVerify: true}
 	}
 

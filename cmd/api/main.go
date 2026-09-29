@@ -95,10 +95,16 @@ func main() {
 		os.Getenv("PROXMOX_NODE"),
 		os.Getenv("PROXMOX_TOKEN_ID"),
 		os.Getenv("PROXMOX_TOKEN_SECRET"),
-		os.Getenv("PROXMOX_USERNAME"),
-		os.Getenv("PROXMOX_PASSWORD"),
 		proxmox.BuildTLSConfig(),
 	)
+	if !proxmoxClient.TokenConfigurado() {
+		log.Println("⚠️  PROXMOX_TOKEN_ID/PROXMOX_TOKEN_SECRET sin configurar: los endpoints de /api/instances van a responder 502")
+	}
+
+	vmidsProtegidos, err := middleware.ParseVmidsProtegidos(os.Getenv("PROXMOX_PROTECTED_VMIDS"))
+	if err != nil {
+		log.Fatalf("❌ PROXMOX_PROTECTED_VMIDS inválida: %v", err)
+	}
 
 	// 4. Inicializar servicios de dominio (inyección de dependencias)
 	auditService := services.NewAuditService(auditRepo)
@@ -222,7 +228,8 @@ func main() {
 			instances.GET("", instanceHandler.ListarInstancias)
 			instances.GET("/:vmid", middleware.RequireInstanceAccess(instanceRepo, "vmid", ports.NivelAccesoReadOnly), instanceHandler.ObtenerInstancia)
 			instances.POST("/:vmid/start", middleware.RequireInstanceAccess(instanceRepo, "vmid", ports.NivelAccesoFullAccess), instanceHandler.IniciarInstancia)
-			instances.POST("/:vmid/stop", middleware.RequireInstanceAccess(instanceRepo, "vmid", ports.NivelAccesoFullAccess), instanceHandler.DetenerInstancia)
+			// Las acciones destructivas llevan además RejectProtectedInstance (VMIDs de infraestructura).
+			instances.POST("/:vmid/stop", middleware.RequireInstanceAccess(instanceRepo, "vmid", ports.NivelAccesoFullAccess), middleware.RejectProtectedInstance(vmidsProtegidos, "vmid"), instanceHandler.DetenerInstancia)
 		}
 		// ==========================================
 		// Swagger UI: apagada por defecto.

@@ -429,7 +429,8 @@ centinela-back/
 | GET    | `/api/admin/users/:id`                | `RequireAuth` + `RequireRole("ADMIN")` | Detalle con instanciasPermitidas                  |
 | PUT    | `/api/admin/users/:id`                | `RequireAuth` + `RequireRole("ADMIN")` | Actualizar nombre/email/rol/estado                |
 | DELETE | `/api/admin/users/:id`                | `RequireAuth` + `RequireRole("ADMIN")` | Soft-delete + cierra sesiones                     |
-| PUT    | `/api/admin/users/:id/instances`      | `RequireAuth` + `RequireRole("ADMIN")` | Reemplazar permisos de instancias                 |
+| GET    | `/api/admin/users/:id/permissions`    | `RequireAuth` + `RequireRole("ADMIN")` | Permisos de instancias con su nivel de acceso     |
+| PUT    | `/api/admin/users/:id/permissions`    | `RequireAuth` + `RequireRole("ADMIN")` | Reemplazar permisos de instancias                 |
 | GET    | `/api/admin/users/:id/activity`       | `RequireAuth` + `RequireRole("ADMIN")` | Auditoría filtrada del usuario                    |
 | POST   | `/api/admin/users/:id/2fa/reset`      | `RequireAuth` + `RequireRole("ADMIN")` | Resetear TOTP del usuario                         |
 | POST   | `/api/admin/users/:id/password/reset` | `RequireAuth` + `RequireRole("ADMIN")` | Nueva contraseña temporal                         |
