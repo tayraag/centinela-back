@@ -18,6 +18,12 @@ const (
 // ErrInstanciaNoEncontrada indica que el vmid no existe en el cluster de Proxmox.
 var ErrInstanciaNoEncontrada = errors.New("instancia no encontrada en Proxmox")
 
+// ErrInstanciaOcupada indica que Proxmox rechazó la operación porque la
+// instancia está bloqueada por otra tarea en curso ("can't lock file ..." o
+// "VM 110 is locked (...)"). Proxmox está en línea: no es un error de
+// infraestructura, así que NO envuelve ErrProxmoxNoDisponible.
+var ErrInstanciaOcupada = errors.New("la instancia está ocupada con otra tarea")
+
 // ErrProxmoxNoDisponible indica que no se pudo completar la operación contra
 // la API de Proxmox (red, autenticación o error del lado de Proxmox).
 var ErrProxmoxNoDisponible = errors.New("Proxmox VE no disponible")

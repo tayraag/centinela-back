@@ -642,3 +642,21 @@ func TestFidelidad_401Canonico(t *testing.T) {
 		t.Errorf("El backend debe reconocer el 401 canónico como credenciales rechazadas: %v", err)
 	}
 }
+
+// Dos acciones de energía seguidas sobre la misma instancia: el cliente del
+// backend traduce el "can't lock file" del simulador a ErrInstanciaOcupada.
+func TestContrato_ClienteDelBackend_InstanciaOcupada(t *testing.T) {
+	e := nuevoEntorno(t, "")
+	cliente := e.cliente()
+	if _, err := cliente.IniciarInstancia(context.Background(), 110); err != nil {
+		t.Fatal(err)
+	}
+	_, err := cliente.DetenerInstancia(context.Background(), 110)
+	if !errors.Is(err, ports.ErrInstanciaOcupada) || errors.Is(err, ports.ErrProxmoxNoDisponible) {
+		t.Fatalf("La segunda acción inmediata debe dar ErrInstanciaOcupada (no Proxmox caído): %v", err)
+	}
+	e.avanzar(3 * time.Second)
+	if _, err := cliente.DetenerInstancia(context.Background(), 110); err != nil {
+		t.Errorf("Cuando termina la primera tarea, la instancia se libera: %v", err)
+	}
+}

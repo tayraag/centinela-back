@@ -138,7 +138,7 @@ La duración se cambia con `PROXMOX_SIM_DURACION_TAREA` (en segundos; con `0` la
 | --------- | ------------------------------------------- |
 | Encender algo que ya está encendido | La tarea se acepta, pero termina con `exitstatus: "VM 9003 already running"`. |
 | `shutdown` o `reboot` de algo apagado | La tarea termina con `exitstatus: "VM 110 not running"`. |
-| Dos acciones seguidas sobre la misma instancia | La segunda da `500 can't lock file '/var/lock/qemu-server/lock-110.conf' - got timeout`. |
+| Dos acciones seguidas sobre la misma instancia | La segunda da `500 can't lock file '/var/lock/qemu-server/lock-110.conf' - got timeout`. La API del backend lo traduce a `409 INSTANCE_BUSY`. |
 | Editar o sacar un snapshot mientras se crea o hace rollback | `500 VM 100 is locked (snapshot)`. |
 | Snapshot con nombre repetido | `500 snapshot name 'x' already used`. |
 | Crear con un VMID que ya existe (VMs y contenedores comparten IDs) | `500 unable to create VM 115 - VM 115 already exists on node 'proxmox'`. |

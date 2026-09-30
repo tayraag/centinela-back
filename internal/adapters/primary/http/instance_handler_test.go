@@ -21,6 +21,7 @@ import (
 type mockProxmoxPort struct {
 	instancias []ports.InstanciaProxmoxDTO
 	errListar  error
+	errAccion  error // error de IniciarInstancia / DetenerInstancia
 }
 
 func (m *mockProxmoxPort) ObtenerInstancia(ctx context.Context, vmid int) (*ports.InstanciaProxmoxDTO, error) {
@@ -35,10 +36,16 @@ func (m *mockProxmoxPort) ListarInstancias(ctx context.Context) ([]ports.Instanc
 }
 
 func (m *mockProxmoxPort) IniciarInstancia(ctx context.Context, vmid int) (string, error) {
+	if m.errAccion != nil {
+		return "", m.errAccion
+	}
 	return "UPID:test:start", nil
 }
 
 func (m *mockProxmoxPort) DetenerInstancia(ctx context.Context, vmid int) (string, error) {
+	if m.errAccion != nil {
+		return "", m.errAccion
+	}
 	return "UPID:test:stop", nil
 }
 
@@ -236,5 +243,29 @@ func TestListarInstancias_ProxmoxTimeout(t *testing.T) {
 	_ = json.Unmarshal(w.Body.Bytes(), &errResp)
 	if errResp["errorCode"] != "PROXMOX_UNAVAILABLE" {
 		t.Errorf("errorCode esperado PROXMOX_UNAVAILABLE, obtenido: %v", errResp["errorCode"])
+	}
+}
+
+// DoD: un bloqueo de Proxmox responde 409 INSTANCE_BUSY, no 502 PROXMOX_UNAVAILABLE.
+func TestAccionesDeEnergia_InstanciaOcupadaEs409(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	mockPx := &mockProxmoxPort{errAccion: fmt.Errorf("%w: can't lock file '/var/lock/qemu-server/lock-110.conf' - got timeout", ports.ErrInstanciaOcupada)}
+	handler := adaptersHttp.NewInstanceHandler(mockPx, &mockUserRepository{}, seguimientoNulo{})
+
+	router := gin.New()
+	router.POST("/api/instances/:vmid/start", handler.IniciarInstancia)
+	router.POST("/api/instances/:vmid/stop", handler.DetenerInstancia)
+
+	for _, ruta := range []string{"/api/instances/110/start", "/api/instances/110/stop"} {
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodPost, ruta, nil)
+		router.ServeHTTP(w, req)
+
+		var cuerpo map[string]string
+		_ = json.Unmarshal(w.Body.Bytes(), &cuerpo)
+		if w.Code != http.StatusConflict || cuerpo["errorCode"] != "INSTANCE_BUSY" ||
+			cuerpo["message"] != "La instancia se encuentra ejecutando otra tarea. Aguarde a que finalice." {
+			t.Errorf("%s: se esperaba 409 INSTANCE_BUSY, vino %d %v", ruta, w.Code, cuerpo)
+		}
 	}
 }

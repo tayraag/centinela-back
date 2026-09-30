@@ -60,6 +60,9 @@ func mapearErrorProxmox(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, ports.ErrInstanciaNoEncontrada):
 		SendError(c, http.StatusNotFound, "INSTANCE_NOT_FOUND", "La instancia no existe en Proxmox.")
+	case errors.Is(err, ports.ErrInstanciaOcupada):
+		log.Printf("⏳ Instancia ocupada [%s]: %v", ruta, err)
+		SendError(c, http.StatusConflict, "INSTANCE_BUSY", "La instancia se encuentra ejecutando otra tarea. Aguarde a que finalice.")
 	case errors.Is(err, ports.ErrProxmoxTimeout):
 		log.Printf("⏱️  Proxmox no respondió a tiempo [%s]: %v", ruta, err)
 		SendError(c, http.StatusGatewayTimeout, "PROXMOX_UNAVAILABLE", "Error al consultar la infraestructura subyacente.")
@@ -190,6 +193,7 @@ func (h *InstanceHandler) ObtenerInstancia(c *gin.Context) {
 // @Failure      400 {object} ErrorResponse "INVALID_VMID"
 // @Failure      403 {object} ErrorResponse "INSTANCE_ACCESS_DENIED — el OPERATOR no tiene este vmid asignado"
 // @Failure      404 {object} ErrorResponse "INSTANCE_NOT_FOUND"
+// @Failure      409 {object} ErrorResponse "INSTANCE_BUSY — la instancia está ejecutando otra tarea (Proxmox la tiene bloqueada)"
 // @Failure      502 {object} ErrorResponse "PROXMOX_UNAVAILABLE"
 // @Failure      504 {object} ErrorResponse "PROXMOX_UNAVAILABLE — Proxmox no respondió a tiempo"
 // @Router       /instances/{vmid}/start [post]
@@ -223,6 +227,7 @@ func (h *InstanceHandler) IniciarInstancia(c *gin.Context) {
 // @Failure      400 {object} ErrorResponse "INVALID_VMID"
 // @Failure      403 {object} ErrorResponse "INSTANCE_ACCESS_DENIED — el OPERATOR no tiene este vmid asignado; INSTANCE_PROTECTED — la instancia es infraestructura de El Centinela"
 // @Failure      404 {object} ErrorResponse "INSTANCE_NOT_FOUND"
+// @Failure      409 {object} ErrorResponse "INSTANCE_BUSY — la instancia está ejecutando otra tarea (Proxmox la tiene bloqueada)"
 // @Failure      502 {object} ErrorResponse "PROXMOX_UNAVAILABLE"
 // @Failure      504 {object} ErrorResponse "PROXMOX_UNAVAILABLE — Proxmox no respondió a tiempo"
 // @Router       /instances/{vmid}/stop [post]

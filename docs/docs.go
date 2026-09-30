@@ -1557,6 +1557,12 @@ const docTemplate = `{
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
                     },
+                    "409": {
+                        "description": "INSTANCE_BUSY — la instancia está ejecutando otra tarea (Proxmox la tiene bloqueada)",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
                     "502": {
                         "description": "PROXMOX_UNAVAILABLE",
                         "schema": {
@@ -1620,6 +1626,12 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "INSTANCE_NOT_FOUND",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "INSTANCE_BUSY — la instancia está ejecutando otra tarea (Proxmox la tiene bloqueada)",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }

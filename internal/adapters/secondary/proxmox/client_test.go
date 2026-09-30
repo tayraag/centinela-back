@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -170,5 +171,54 @@ func TestClient_ListarInstancias_Timeout(t *testing.T) {
 	}
 	if !errors.Is(err, ports.ErrProxmoxNoDisponible) {
 		t.Errorf("El timeout debe envolver también ErrProxmoxNoDisponible: %v", err)
+	}
+}
+
+// proxmoxQueRechaza responde a cualquier request con un 500. Si enLineaDeEstado
+// es true, pone el mensaje en la línea de estado HTTP (como el Proxmox real) y
+// el cuerpo {"data":null}; si no, lo pone en el cuerpo (como el simulador).
+func proxmoxQueRechaza(t *testing.T, mensaje string, enLineaDeEstado bool) *proxmox.Client {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !enLineaDeEstado {
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": nil, "message": mensaje + "\n"})
+			return
+		}
+		conn, buf, _ := w.(http.Hijacker).Hijack()
+		defer conn.Close()
+		cuerpo := `{"data":null}`
+		fmt.Fprintf(buf, "HTTP/1.1 500 %s\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s", mensaje, len(cuerpo), cuerpo)
+		_ = buf.Flush()
+	}))
+	t.Cleanup(server.Close)
+	return proxmox.NewClient(server.URL, "pve1", tokenIDValido, tokenSecretValido, nil)
+}
+
+func TestClient_BloqueoDeProxmoxEsInstanciaOcupada(t *testing.T) {
+	mensajes := []string{
+		"can't lock file '/var/lock/qemu-server/lock-110.conf' - got timeout",
+		"VM 100 is locked (snapshot)",
+		"CT 101 is locked (backup)",
+	}
+	for _, mensaje := range mensajes {
+		for _, enLinea := range []bool{false, true} {
+			_, err := proxmoxQueRechaza(t, mensaje, enLinea).ListarInstancias(context.Background())
+			if !errors.Is(err, ports.ErrInstanciaOcupada) {
+				t.Errorf("%q (en línea de estado: %v): se esperaba ErrInstanciaOcupada, vino %v", mensaje, enLinea, err)
+			}
+			if errors.Is(err, ports.ErrProxmoxNoDisponible) {
+				t.Errorf("%q: un bloqueo NO es Proxmox caído (no debe terminar en 502)", mensaje)
+			}
+		}
+	}
+}
+
+func TestClient_Otro500SigueSiendoNoDisponible(t *testing.T) {
+	for _, enLinea := range []bool{false, true} {
+		_, err := proxmoxQueRechaza(t, "unable to read config", enLinea).ListarInstancias(context.Background())
+		if !errors.Is(err, ports.ErrProxmoxNoDisponible) || errors.Is(err, ports.ErrInstanciaOcupada) {
+			t.Errorf("Un 500 que no es de bloqueo debe seguir siendo ErrProxmoxNoDisponible: %v", err)
+		}
 	}
 }

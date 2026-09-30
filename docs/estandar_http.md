@@ -52,6 +52,20 @@ Cuando la API devuelva un error (códigos 400 a 500), el cuerpo de la respuesta 
 - CONFLICT: La operación no se puede realizar por el estado actual del recurso.
 - INTERNAL_ERROR: Error inesperado del servidor.
 
+### ErrorCode de instancias Proxmox
+
+| HTTP | errorCode | Cuándo |
+| ---- | --------- | ------ |
+| 400 | `INVALID_VMID` | El vmid de la ruta no es un número. |
+| 403 | `INSTANCE_ACCESS_DENIED` | El OPERATOR no tiene permiso (o nivel suficiente) sobre la instancia. |
+| 403 | `INSTANCE_PROTECTED` | La instancia es infraestructura de El Centinela (VMID 100–105) y no se puede apagar. |
+| 404 | `INSTANCE_NOT_FOUND` | El vmid no existe en Proxmox. |
+| 409 | `INSTANCE_BUSY` | La instancia está ejecutando otra tarea (Proxmox la tiene bloqueada, por ejemplo un `start` seguido de un `stop`). Reintentar cuando llegue el `TASK_FINISHED` de la tarea anterior. |
+| 502 | `PROXMOX_UNAVAILABLE` | Proxmox no está disponible: red caída, token rechazado o error del propio Proxmox. |
+| 504 | `PROXMOX_UNAVAILABLE` | Proxmox no respondió a tiempo. |
+
+`INSTANCE_BUSY` **no** indica una falla de infraestructura: Proxmox está en línea y la acción se puede volver a pedir.
+
 ## Detalle de Códigos 2xx — Éxito
 
 ### 200 OK
@@ -158,6 +172,7 @@ El recurso existe pero su estado actual impide la operación.
 - DELETE /bloques/{id} → 409 si el bloque tiene turnos activos
 - POST /reservas-temporales → 409 si el slot no tiene disponibilidad
 - POST /lista-espera → 409 si ya existe una inscripción activa para ese trámite
+- POST /api/instances/{vmid}/stop → 409 `INSTANCE_BUSY` si la instancia todavía está procesando un `start`
 
 **Distinción con 400 y 404:**
 - *Situación:* Datos del request inválidos o malformados → **400**

@@ -109,6 +109,8 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body url.Va
 	}
 
 	switch {
+	case resp.StatusCode == http.StatusInternalServerError && esBloqueo(resp.Status, respBody):
+		return nil, fmt.Errorf("%w: %s (%s)", ports.ErrInstanciaOcupada, path, mensajeProxmox(resp.Status, respBody))
 	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
 		return nil, fmt.Errorf("%w: %w: HTTP %d en %s (%s)",
 			ports.ErrProxmoxNoDisponible, ports.ErrProxmoxCredenciales, resp.StatusCode, path, detalle(respBody))
@@ -123,6 +125,36 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body url.Va
 	}
 
 	return respBody, nil
+}
+
+// patronesBloqueo son los mensajes con los que Proxmox rechaza una operación
+// porque la instancia está ocupada con otra tarea:
+//   - can't lock file '/var/lock/qemu-server/lock-110.conf' - got timeout
+//   - VM 110 is locked (snapshot) / CT 101 is locked (backup)
+var patronesBloqueo = []string{"can't lock file", "is locked"}
+
+// esBloqueo busca los patrones de bloqueo en la línea de estado HTTP (donde
+// Proxmox pone el mensaje de error) y en el cuerpo de la respuesta.
+func esBloqueo(status string, body []byte) bool {
+	texto := strings.ToLower(status + " " + string(body))
+	for _, patron := range patronesBloqueo {
+		if strings.Contains(texto, patron) {
+			return true
+		}
+	}
+	return false
+}
+
+// mensajeProxmox devuelve el mensaje de error de Proxmox para el log: el del
+// cuerpo ({"message": ...}) si viene, o el de la línea de estado.
+func mensajeProxmox(status string, body []byte) string {
+	var parsed struct {
+		Message string `json:"message"`
+	}
+	if json.Unmarshal(body, &parsed) == nil && strings.TrimSpace(parsed.Message) != "" {
+		return strings.TrimSpace(parsed.Message)
+	}
+	return status
 }
 
 // detalle recorta el cuerpo de una respuesta de error para incluirlo en el log.

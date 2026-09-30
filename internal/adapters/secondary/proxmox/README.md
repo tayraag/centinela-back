@@ -54,8 +54,9 @@ Si falta el token, el cliente no llama a Proxmox y devuelve `ErrProxmoxCredencia
 | ------------------------------------------ | ----------------------------------------------------- | ----------------------------- |
 | Token rechazado (401/403) o sin configurar | `ErrProxmoxCredenciales` + `ErrProxmoxNoDisponible`   | `502 PROXMOX_UNAVAILABLE`     |
 | Proxmox no responde a tiempo               | `ErrProxmoxTimeout` + `ErrProxmoxNoDisponible`        | `504 PROXMOX_UNAVAILABLE`     |
-| Red, 5xx o 404 (URL mal escrita)           | `ErrProxmoxNoDisponible`                              | `502 PROXMOX_UNAVAILABLE`     |
+| Red, otros 5xx o 404 (URL mal escrita)     | `ErrProxmoxNoDisponible`                              | `502 PROXMOX_UNAVAILABLE`     |
 | vmid inexistente en `cluster/resources`    | `ErrInstanciaNoEncontrada`                            | `404 INSTANCE_NOT_FOUND`      |
+| 500 con `can't lock file` o `is locked` (instancia ocupada con otra tarea) | `ErrInstanciaOcupada` (no envuelve `ErrProxmoxNoDisponible`) | `409 INSTANCE_BUSY` |
 
 El detalle nunca llega al cliente, pero `mapearErrorProxmox` lo registra en el log del servidor.
 
