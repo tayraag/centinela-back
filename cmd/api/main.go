@@ -2,10 +2,10 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"os"
-	"strconv"
 	"strings"
 
 	_ "el-centinela/docs"
@@ -88,7 +88,7 @@ func main() {
 	emailService := email.NewMockEmailService()
 	auditRepo := postgres.NewAuditRepository(db)
 	instanceRepo := postgres.NewInstanceRepository(db)
-	sesionCache := conectarAlmacenSesiones()
+	kvStore := conectarRedis()
 	proxmoxURL := os.Getenv("PROXMOX_URL")
 	if proxmoxURL == "" {
 		proxmoxURL = os.Getenv("PROXMOX_BASE_URL")
@@ -112,8 +112,8 @@ func main() {
 
 	// 4. Inicializar servicios de dominio (inyección de dependencias)
 	auditService := services.NewAuditService(auditRepo)
-	authService := services.NewAuthService(authRepo, sesionCache, emailService, auditService)
-	userService := services.NewUserService(userRepo, authRepo, sesionCache, auditService, emailService)
+	authService := services.NewAuthService(authRepo, kvStore, emailService, auditService)
+	userService := services.NewUserService(userRepo, authRepo, kvStore, auditService, emailService)
 
 	// 5. Inicializar handlers HTTP
 	authHandler := httpHandlers.NewAuthHandler(authService)
@@ -264,29 +264,23 @@ func main() {
 	}
 }
 
-// conectarAlmacenSesiones elige dónde viven las sesiones efímeras (pre-2FA y
-// réplica de las sesiones activas): Redis si REDIS_ADDR está definida y
-// responde; si no, el respaldo en memoria, para que el login siga funcionando
-// en un servidor que todavía no tiene Redis.
-func conectarAlmacenSesiones() ports.SesionCache {
-	addr := os.Getenv("REDIS_ADDR")
-	if addr == "" {
-		log.Println("⚠️  REDIS_ADDR sin configurar: sesiones efímeras en MEMORIA (se pierden al reiniciar la API)")
-		return memoria.NewSesionCache()
-	}
-	db := 0
-	if v := os.Getenv("REDIS_DB"); v != "" {
-		n, err := strconv.Atoi(v)
-		if err != nil || n < 0 {
-			log.Fatalf("❌ REDIS_DB inválida (%q): debe ser un número de base, ej. 0", v)
-		}
-		db = n
-	}
-	cache, err := redis.Conectar(addr, os.Getenv("REDIS_PASSWORD"), db)
+// conectarRedis inicializa el almacén clave-valor y Pub/Sub del backend
+// (ports.KeyValueStore). Se crea una sola vez acá y se inyecta en los servicios.
+//
+// Si Redis no responde, la API NO aborta: arranca en MODO DEGRADADO con el
+// adaptador en memoria (sesiones y Pub/Sub dentro de este proceso), para no
+// dejar sin login a un entorno que todavía no tiene Redis. Ver docs/redis.md.
+func conectarRedis() ports.KeyValueStore {
+	cfg, err := redis.ConfigDesdeEntorno()
 	if err != nil {
-		log.Printf("⚠️  %v: sesiones efímeras en MEMORIA (se pierden al reiniciar la API)", err)
-		return memoria.NewSesionCache()
+		log.Fatalf("[FATAL] %v", err)
 	}
-	log.Printf("✅ Conexión exitosa a Redis (%s, base %d)", addr, db)
-	return cache
+	store, err := redis.Conectar(context.Background(), cfg)
+	if err != nil {
+		log.Printf("[WARN] %v", err)
+		log.Println("[WARN] MODO DEGRADADO: Redis no disponible. Sesiones y Pub/Sub en la memoria de este proceso: se pierden al reiniciar la API y no se comparten entre instancias (ver docs/redis.md).")
+		return memoria.Nuevo()
+	}
+	log.Println("[INFO] Conexión con Redis establecida exitosamente.")
+	return store
 }

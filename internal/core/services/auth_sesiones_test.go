@@ -2,6 +2,7 @@ package services_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sync"
 	"testing"
@@ -155,7 +156,7 @@ var (
 type entornoAuth struct {
 	svc          ports.AuthService
 	repo         *repoSesiones
-	cache        *memoria.SesionCache
+	kv           *memoria.KVStore
 	secretoTOTP  string
 	periodoUsado int64
 }
@@ -179,9 +180,9 @@ func nuevoEntornoAuth(t *testing.T) *entornoAuth {
 		},
 		sesiones: map[uuid.UUID]*domain.SesionActiva{},
 	}
-	cache := memoria.NewSesionCache()
+	kv := memoria.Nuevo()
 	return &entornoAuth{
-		svc: services.NewAuthService(repo, cache, nil, auditoriaNula{}), repo: repo, cache: cache, secretoTOTP: clave.Secret(),
+		svc: services.NewAuthService(repo, kv, nil, auditoriaNula{}), repo: repo, kv: kv, secretoTOTP: clave.Secret(),
 	}
 }
 
@@ -201,6 +202,16 @@ func (e *entornoAuth) login(t *testing.T) (*ports.TokenResult, *crypto.JWTClaims
 		t.Fatalf("VerificarTotp: %v", err)
 	}
 	return tokens, pre
+}
+
+// sesionEnAlmacen lee auth:session:<id> tal como quedó en el almacén.
+func (e *entornoAuth) sesionEnAlmacen(sid uuid.UUID) (map[string]any, error) {
+	payload, err := e.kv.Get(context.Background(), "auth:session:"+sid.String())
+	if err != nil {
+		return nil, err
+	}
+	var m map[string]any
+	return m, json.Unmarshal([]byte(payload), &m)
 }
 
 func claimsDe(t *testing.T, token string) *crypto.JWTClaims {
@@ -242,8 +253,8 @@ func TestUnaSesionUnaFila_LoginMas10Renovaciones(t *testing.T) {
 	if e.repo.sesiones[sid].JtiAccess != c.ID {
 		t.Error("La fila debe tener el jti_access del último access emitido")
 	}
-	if cacheada, err := e.cache.ObtenerSesion(context.Background(), sid); err != nil || cacheada.JtiAccess != c.ID {
-		t.Errorf("La réplica en el almacén debe tener el último jti_access: %+v, %v", cacheada, err)
+	if cacheada, err := e.sesionEnAlmacen(sid); err != nil || cacheada["jti_access"] != c.ID {
+		t.Errorf("La réplica en auth:session:<id> debe tener el último jti_access: %+v, %v", cacheada, err)
 	}
 }
 
@@ -259,7 +270,7 @@ func TestPre2FA_SoloEnElAlmacenEfimero(t *testing.T) {
 	if e.repo.inserts != 0 {
 		t.Fatalf("El login no debe escribir en sesiones_activas, hubo %d INSERT", e.repo.inserts)
 	}
-	if usuario, err := e.cache.ObtenerPre2FA(context.Background(), pre.ID); err != nil || usuario != e.repo.usuario.ID {
+	if usuario, err := e.kv.Get(context.Background(), "auth:pre2fa:"+pre.ID); err != nil || usuario != e.repo.usuario.ID.String() {
 		t.Fatalf("auth:pre2fa:<jti> debe existir con el usuario: %v, %v", usuario, err)
 	}
 	if err := e.svc.VerificarSesionPreAuth(context.Background(), pre.ID); err != nil {
@@ -270,7 +281,7 @@ func TestPre2FA_SoloEnElAlmacenEfimero(t *testing.T) {
 	if _, err := e.svc.VerificarTotp(context.Background(), pre.ID, codigo); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.cache.ObtenerPre2FA(context.Background(), pre.ID); !errors.Is(err, ports.ErrSesionNoEncontrada) {
+	if _, err := e.kv.Get(context.Background(), "auth:pre2fa:"+pre.ID); !errors.Is(err, ports.ErrClaveNoEncontrada) {
 		t.Error("Después del 2FA la clave auth:pre2fa:<jti> debe estar eliminada")
 	}
 	if err := e.svc.VerificarSesionPreAuth(context.Background(), pre.ID); err == nil {
@@ -313,7 +324,7 @@ func TestCerrarSesion_InvalidaEnAmbosLados(t *testing.T) {
 	if e.repo.sesiones[sid].Activa {
 		t.Error("La fila debe quedar con activa = false")
 	}
-	if _, err := e.cache.ObtenerSesion(context.Background(), sid); !errors.Is(err, ports.ErrSesionNoEncontrada) {
+	if _, err := e.sesionEnAlmacen(sid); !errors.Is(err, ports.ErrClaveNoEncontrada) {
 		t.Error("auth:session:<id> debe estar eliminada")
 	}
 	if err := e.svc.VerificarSesionAccess(context.Background(), sid, c.ID); err == nil {
@@ -361,11 +372,11 @@ func TestVerificarAccess_RespaldoEnPostgreSQL(t *testing.T) {
 	c := claimsDe(t, tokens.AccessToken)
 	sid := uuid.MustParse(c.SesionID)
 
-	_ = e.cache.EliminarSesiones(context.Background(), sid) // simula que Redis la perdió
+	_ = e.kv.Del(context.Background(), "auth:session:"+sid.String()) // simula que Redis la perdió
 	if err := e.svc.VerificarSesionAccess(context.Background(), sid, c.ID); err != nil {
 		t.Fatalf("Con la sesión solo en PostgreSQL debe seguir siendo válida: %v", err)
 	}
-	if _, err := e.cache.ObtenerSesion(context.Background(), sid); err != nil {
+	if _, err := e.sesionEnAlmacen(sid); err != nil {
 		t.Error("Después de validar contra PostgreSQL la sesión debe volver a estar en el almacén")
 	}
 }
@@ -409,5 +420,27 @@ func TestRefresh_TokenSinSesion(t *testing.T) {
 		"secreto-jwt-de-prueba-con-mas-de-32-caracteres", time.Hour)
 	if _, err := e.svc.RefrescarToken(context.Background(), viejo); err == nil {
 		t.Error("Un refresh sin sid debe ser rechazado")
+	}
+}
+
+// Si llegan varias verificaciones 2FA a la vez con el mismo token temporal,
+// GETDEL garantiza que una sola cree la sesión.
+func TestVerificarTotp_ConcurrenteCreaUnaSolaSesion(t *testing.T) {
+	e := nuevoEntornoAuth(t)
+	res, _ := e.svc.Login(context.Background(), emailPrueba, contrasenaPrueba)
+	pre := claimsDe(t, res.JWTTemporal)
+	codigo, _ := totp.GenerateCode(e.secretoTOTP, time.Now())
+
+	var wg sync.WaitGroup
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, _ = e.svc.VerificarTotp(context.Background(), pre.ID, codigo)
+		}()
+	}
+	wg.Wait()
+	if e.repo.inserts != 1 {
+		t.Fatalf("10 verificaciones simultáneas del mismo token deben crear 1 sola sesión, crearon %d", e.repo.inserts)
 	}
 }

@@ -79,7 +79,7 @@ func TestIntegracion_UnaSesionUnaFila(t *testing.T) {
 	})
 
 	ctx := context.Background()
-	svc := services.NewAuthService(NewAuthRepository(db), memoria.NewSesionCache(), nil, auditoriaNula{})
+	svc := services.NewAuthService(NewAuthRepository(db), memoria.Nuevo(), nil, auditoriaNula{})
 	contar := func() (total, activas int64) {
 		db.Model(&domain.SesionActiva{}).Where("usuario_id = ?", usuario.ID).Count(&total)
 		db.Model(&domain.SesionActiva{}).Where("usuario_id = ? AND activa = true", usuario.ID).Count(&activas)

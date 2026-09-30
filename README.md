@@ -94,9 +94,9 @@ centinela-back/
 │   │       │   ├── auth_repository.go   # Implementa AuthRepository
 │   │       │   ├── user_repository.go   # Implementa UserRepository
 │   │       │   └── instance_repository.go # Implementa InstanceRepository (VerificarAcceso)
-│   │       ├── redis/                   # Implementa SesionCache sobre Redis (sesiones con TTL)
-│   │       ├── memoria/                 # Implementa SesionCache en memoria (respaldo si no hay Redis)
-│   │       ├── cachetest/               # Test de contrato común a redis/ y memoria/
+│   │       ├── redis/                   # Implementa KeyValueStore sobre Redis (clave-valor + Pub/Sub), ver docs/redis.md
+│   │       ├── memoria/                 # Implementa KeyValueStore en memoria (modo degradado si no hay Redis)
+│   │       ├── kvtest/                  # Test de contrato común a redis/ y memoria/
 │   │       └── proxmox/                 # Adapter Proxmox VE (API Token), ver su README.md
 │   │           ├── client.go            # Implementa ProxmoxPort
 │   │           └── tls.go               # Verificación TLS (fingerprint / skip verify)

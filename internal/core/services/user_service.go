@@ -16,17 +16,17 @@ import (
 type userServiceImpl struct {
 	userRepo     ports.UserRepository
 	authRepo     ports.AuthRepository // para invalidar sesiones y resetear TOTP
-	sesiones     ports.SesionCache    // para que las sesiones revocadas se borren también de Redis
+	sesiones     almacenSesiones      // para que las sesiones revocadas se borren también de Redis
 	emailService ports.EmailService
 	auditSvc     ports.AuditService
 }
 
 // NewUserService crea una nueva instancia del servicio de usuarios.
-func NewUserService(userRepo ports.UserRepository, authRepo ports.AuthRepository, sesiones ports.SesionCache, auditSvc ports.AuditService, emailService ports.EmailService) ports.UserService {
+func NewUserService(userRepo ports.UserRepository, authRepo ports.AuthRepository, kv ports.KeyValueStore, auditSvc ports.AuditService, emailService ports.EmailService) ports.UserService {
 	return &userServiceImpl{
 		userRepo:     userRepo,
 		authRepo:     authRepo,
-		sesiones:     sesiones,
+		sesiones:     almacenSesiones{kv: kv},
 		emailService: emailService,
 		auditSvc:     auditSvc,
 	}

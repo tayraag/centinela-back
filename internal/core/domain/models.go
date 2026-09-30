@@ -62,7 +62,7 @@ type Usuario struct {
 // SesionActiva es una sesión de un navegador: 1 sesión = 1 fila. Se crea al
 // superar el 2FA; cada renovación del access token actualiza JtiAccess en esta
 // misma fila y el logout la marca como inactiva. La fase pre-2FA no se guarda
-// acá: vive solo en el almacén efímero (ports.SesionCache).
+// acá: vive solo en el almacén efímero (ports.KeyValueStore, clave auth:pre2fa:<jti>).
 type SesionActiva struct {
 	ID        uuid.UUID `gorm:"type:uuid;primaryKey;default:uuid_generate_v7()" json:"id"` // session_id (claim "sid" de los tokens)
 	UsuarioID uuid.UUID `gorm:"type:uuid;not null;index" json:"usuarioId"`

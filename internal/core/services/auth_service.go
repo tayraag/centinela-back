@@ -31,16 +31,16 @@ const ttlPre2FA = 5 * time.Minute
 // misma fila y el logout la desactiva.
 type authServiceImpl struct {
 	repo         ports.AuthRepository
-	sesiones     ports.SesionCache
+	sesiones     almacenSesiones
 	emailService ports.EmailService
 	auditSvc     ports.AuditService
 }
 
 // NewAuthService crea una nueva instancia del servicio de autenticación.
-func NewAuthService(repo ports.AuthRepository, sesiones ports.SesionCache, emailService ports.EmailService, auditSvc ports.AuditService) ports.AuthService {
+func NewAuthService(repo ports.AuthRepository, kv ports.KeyValueStore, emailService ports.EmailService, auditSvc ports.AuditService) ports.AuthService {
 	return &authServiceImpl{
 		repo:         repo,
-		sesiones:     sesiones,
+		sesiones:     almacenSesiones{kv: kv},
 		emailService: emailService,
 		auditSvc:     auditSvc,
 	}
@@ -84,7 +84,7 @@ func (s *authServiceImpl) Login(ctx context.Context, email, contrasena string) (
 	// 4. Registrar la sesión temporal pre-2FA SOLO en el almacén efímero, nunca en
 	//    PostgreSQL: SET auth:pre2fa:<jti> <usuario_id> EX 300
 	jti := uuid.New().String()
-	if err := s.sesiones.GuardarPre2FA(ctx, jti, usuario.ID, ttlPre2FA); err != nil {
+	if err := s.sesiones.guardarPre2FA(ctx, jti, usuario.ID, ttlPre2FA); err != nil {
 		log.Printf("[AUTH] login failed | email=%s | reason=session_store_error | err=%v", email, err)
 		return nil, fmt.Errorf("no se pudo iniciar la sesión, intentá nuevamente")
 	}
@@ -246,15 +246,15 @@ func (s *authServiceImpl) VerificarTotp(ctx context.Context, jtiTemporal, codigo
 		}
 	}
 
-	// 4. Consumir la sesión temporal de inmediato: DEL auth:pre2fa:<jti>.
-	//    Si llegan dos verificaciones a la vez con el mismo token, solo una la encuentra.
-	consumida, err := s.sesiones.EliminarPre2FA(ctx, jtiTemporal)
-	if err != nil {
+	// 4. Consumir la sesión temporal de inmediato con GETDEL auth:pre2fa:<jti>
+	//    (lee y borra en un solo paso): si llegan dos verificaciones a la vez
+	//    con el mismo token, solo una la obtiene.
+	if _, err := s.sesiones.consumirPre2FA(ctx, jtiTemporal); err != nil {
+		if errors.Is(err, errNoEncontrada) {
+			return nil, fmt.Errorf("sesión ya fue verificada")
+		}
 		log.Printf("[2FA] verify failed | user=%s | reason=session_store_error | err=%v", usuario.EmailUsuario, err)
 		return nil, fmt.Errorf("no se pudo completar la verificación, intentá nuevamente")
-	}
-	if !consumida {
-		return nil, fmt.Errorf("sesión ya fue verificada")
 	}
 
 	// 5. Emitir access y refresh token, ambos atados a la misma sesión (claim "sid")
@@ -453,7 +453,7 @@ func (s *authServiceImpl) CerrarSesion(ctx context.Context, refreshToken string)
 	}
 
 	// 3. DEL auth:session:<session_id>
-	if err := s.sesiones.EliminarSesiones(ctx, sesionID); err != nil {
+	if err := s.sesiones.eliminarSesiones(ctx, sesionID); err != nil {
 		log.Printf("[AUTH] logout: sesión %s cerrada en PostgreSQL pero no en el almacén efímero: %v", sesionID, err)
 		return fmt.Errorf("no se pudo cerrar la sesión por completo, intentá nuevamente")
 	}
@@ -499,14 +499,14 @@ func (s *authServiceImpl) VerificarSesionPreAuth(ctx context.Context, jti string
 // si la sesión no está (se reinició, se desalojó o Redis no responde) consulta
 // PostgreSQL, que es la fuente de verdad, y vuelve a replicarla.
 func (s *authServiceImpl) VerificarSesionAccess(ctx context.Context, sesionID uuid.UUID, jtiAccess string) error {
-	cacheada, err := s.sesiones.ObtenerSesion(ctx, sesionID)
+	cacheada, err := s.sesiones.obtenerSesion(ctx, sesionID)
 	switch {
 	case err == nil:
 		if cacheada.JtiAccess == jtiAccess && time.Now().Before(cacheada.FechaExpiracion) {
 			return nil
 		}
 		return ports.ErrSesionRevocada
-	case !errors.Is(err, ports.ErrSesionNoEncontrada):
+	case !errors.Is(err, errNoEncontrada):
 		log.Printf("[AUTH] almacén de sesiones no disponible, se valida contra PostgreSQL: %v", err)
 	}
 
@@ -524,11 +524,11 @@ func (s *authServiceImpl) VerificarSesionAccess(ctx context.Context, sesionID uu
 // usuarioDePre2FA lee auth:pre2fa:<jti>. Los errores del almacén se loguean y
 // al cliente le llega un mensaje genérico.
 func (s *authServiceImpl) usuarioDePre2FA(ctx context.Context, jti string) (uuid.UUID, error) {
-	usuarioID, err := s.sesiones.ObtenerPre2FA(ctx, jti)
+	usuarioID, err := s.sesiones.obtenerPre2FA(ctx, jti)
 	if err == nil {
 		return usuarioID, nil
 	}
-	if !errors.Is(err, ports.ErrSesionNoEncontrada) {
+	if !errors.Is(err, errNoEncontrada) {
 		log.Printf("[AUTH] error al leer la sesión temporal: %v", err)
 	}
 	return uuid.Nil, fmt.Errorf("sesión temporal inválida o expirada, iniciá sesión nuevamente: %w", ports.ErrSesionRevocada)
@@ -542,7 +542,7 @@ func (s *authServiceImpl) replicarSesion(ctx context.Context, sesion *domain.Ses
 	if ttl <= 0 {
 		return
 	}
-	err := s.sesiones.GuardarSesion(ctx, ports.SesionCacheada{
+	err := s.sesiones.guardarSesion(ctx, sesionCacheada{
 		SesionID:        sesion.ID,
 		UsuarioID:       sesion.UsuarioID,
 		JtiAccess:       sesion.JtiAccess,

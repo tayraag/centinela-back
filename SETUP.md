@@ -108,7 +108,7 @@ docker compose ps
 # Debe mostrar centinela-postgres y centinela-redis con STATUS "Up"
 ```
 
-**Redis** guarda las sesiones efímeras con TTL automático: el token temporal pre-2FA (`auth:pre2fa:<jti>`, 5 minutos) y una réplica de cada sesión activa (`auth:session:<session_id>`). Queda accesible solo desde tu PC en `localhost:6379`, con la clave de `REDIS_PASSWORD`. Para mirar qué hay adentro:
+**Redis** es el almacén clave-valor con TTL y el canal Pub/Sub del backend ([docs/redis.md](docs/redis.md)). Hoy guarda las sesiones efímeras: el token temporal pre-2FA (`auth:pre2fa:<jti>`, 5 minutos) y una réplica de cada sesión activa (`auth:session:<session_id>`). Queda accesible solo desde tu PC en `localhost:6379`, con la clave de `REDIS_PASSWORD`. Al arrancar, la API tiene que mostrar `[INFO] Conexión con Redis establecida exitosamente.` Para mirar qué hay adentro:
 
 ```bash
 docker exec -it centinela-redis redis-cli -a centinela_redis_pass --no-auth-warning
@@ -117,7 +117,7 @@ TTL auth:pre2fa:<jti>            # segundos que le quedan
 GET auth:session:<session_id>    # payload de la sesión
 ```
 
-> Si Redis no está levantado (o `REDIS_ADDR` está vacía), la API arranca igual y usa un almacén **en memoria**, avisándolo en el log. Funciona igual, pero las sesiones se pierden al reiniciar la API.
+> Si Redis no está levantado, la API arranca igual en **modo degradado** (almacén en memoria) y lo avisa con `[WARN] MODO DEGRADADO` en el log. Funciona igual, pero las sesiones se pierden al reiniciar la API. Detalle en [docs/redis.md](docs/redis.md).
 
 El script `scripts/init.sql` se ejecuta automáticamente al crear el container y habilita la extensión `pgcrypto` + la función `uuid_generate_v7()`.
 
