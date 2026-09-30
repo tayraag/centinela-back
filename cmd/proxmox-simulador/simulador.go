@@ -27,13 +27,15 @@ type Config struct {
 var fallasValidas = map[string]bool{"caido": true, "token": true, "lento": true}
 
 // demoraModoLento es cuánto tarda cada respuesta en el modo falla "lento".
+// Cada simulador la copia al crearse (los tests la achican antes de crearlo).
 var demoraModoLento = 15 * time.Second
 
 // Simulador implementa http.Handler imitando la API REST de Proxmox VE.
 type Simulador struct {
-	cfg    Config
-	ahora  func() time.Time // reemplazable en los tests
-	inicio time.Time
+	cfg         Config
+	demoraLento time.Duration
+	ahora       func() time.Time // reemplazable en los tests
+	inicio      time.Time
 
 	mu         sync.Mutex
 	instancias map[int]*instancia
@@ -46,11 +48,12 @@ type Simulador struct {
 // NuevoSimulador arma el simulador con el inventario inicial de las capturas.
 func NuevoSimulador(cfg Config) *Simulador {
 	s := &Simulador{
-		cfg:        cfg,
-		ahora:      time.Now,
-		instancias: map[int]*instancia{},
-		tareas:     map[string]*tarea{},
-		proximoPID: 540000,
+		cfg:         cfg,
+		demoraLento: demoraModoLento,
+		ahora:       time.Now,
+		instancias:  map[int]*instancia{},
+		tareas:      map[string]*tarea{},
+		proximoPID:  540000,
 	}
 	s.inicio = s.ahora()
 	for _, inst := range inventarioInicial(s.inicio) {
@@ -86,10 +89,15 @@ func (s *Simulador) rutas() {
 	m.HandleFunc("POST "+base+"/nodes/{node}/{tipo}/{vmid}/snapshot/{snap}/rollback", s.rollbackSnapshot)
 	m.HandleFunc("DELETE "+base+"/nodes/{node}/{tipo}/{vmid}/snapshot/{snap}", s.borrarSnapshot)
 
-	// Creación y configuración (RF-07, RF-10)
+	// Creación, configuración y borrado (RF-07, RF-10, BAC-24B)
 	m.HandleFunc("POST "+base+"/nodes/{node}/{tipo}", s.crearInstancia)
 	m.HandleFunc("GET "+base+"/nodes/{node}/{tipo}/{vmid}/config", s.leerConfig)
 	m.HandleFunc("PUT "+base+"/nodes/{node}/{tipo}/{vmid}/config", s.editarConfig)
+	m.HandleFunc("DELETE "+base+"/nodes/{node}/{tipo}/{vmid}", s.borrarInstancia)
+
+	// Red: IPs asignadas (inventario unificado)
+	m.HandleFunc("GET "+base+"/nodes/{node}/{tipo}/{vmid}/interfaces", s.interfacesLXC)
+	m.HandleFunc("GET "+base+"/nodes/{node}/{tipo}/{vmid}/agent/network-get-interfaces", s.interfacesAgenteQemu)
 
 	// Cualquier otra ruta: Proxmox responde 501 "Method ... not implemented".
 	m.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -112,7 +120,7 @@ func (s *Simulador) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		noAutenticado(rw)
 		return
 	case "lento":
-		time.Sleep(demoraModoLento)
+		time.Sleep(s.demoraLento)
 	}
 
 	esperado := fmt.Sprintf("PVEAPIToken=%s=%s", s.cfg.TokenID, s.cfg.TokenSecret)

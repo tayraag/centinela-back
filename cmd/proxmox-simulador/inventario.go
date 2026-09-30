@@ -42,6 +42,9 @@ type instancia struct {
 
 	Snapshots []*snapshot
 	Actual    string // snapshot padre del estado actual ("" si no hay)
+
+	IPv4        string // IP de eth0 que reportan el guest agent (qemu) o /interfaces (lxc)
+	AgenteCorre bool   // qemu: el QEMU Guest Agent está instalado y corriendo dentro de la VM
 }
 
 // inventarioInicial reproduce el inventario de las capturas reales
@@ -52,7 +55,7 @@ func inventarioInicial(ahora time.Time) []*instancia {
 
 	lista := []*instancia{
 		{
-			Vmid: 100, Tipo: tipoQemu, Nombre: "PruebaLucas", Estado: "running", HA: true,
+			IPv4: "192.168.1.100", Vmid: 100, Tipo: tipoQemu, Nombre: "PruebaLucas", Estado: "running", HA: true,
 			Cores: 1, MemoriaMB: 2048, MaxDisk: 10 * gib, MemUso: 241901568, Iniciada: encendida(2484),
 			Config: map[string]string{
 				"meta":    "creation-qemu=11.0.0,ctime=1786823333",
@@ -75,38 +78,39 @@ func inventarioInicial(ahora time.Time) []*instancia {
 			Actual: "mi_segundo_snapshot",
 		},
 		{
-			Vmid: 101, Tipo: tipoLXC, Nombre: "back", Estado: "running",
+			IPv4: "192.168.1.101", Vmid: 101, Tipo: tipoLXC, Nombre: "back", Estado: "running",
 			Cores: 1, MemoriaMB: 1024, SwapMB: 512, MaxDisk: 8350298112, DiscoUso: 689111040, MemUso: 25628672, Iniciada: encendida(2234),
 			Config: configLXC(101, "debian", 8, "BC:24:11:3A:10:01"),
 		},
 		{
-			Vmid: 110, Tipo: tipoQemu, Nombre: "Servidor-Prueba", Estado: "stopped",
+			IPv4: "192.168.1.110", AgenteCorre: true, Vmid: 110, Tipo: tipoQemu, Nombre: "Servidor-Prueba", Estado: "stopped",
 			Cores: 2, MemoriaMB: 2048, MaxDisk: 20 * gib, MemUso: 412090368,
-			Config: configQemu(110, 20, "BC:24:11:5E:22:10"),
+			Config: conAgente(configQemu(110, 20, "BC:24:11:5E:22:10")),
 		},
 		{
-			Vmid: 9000, Tipo: tipoQemu, Nombre: "test-vm-go-9000", Estado: "stopped",
+			IPv4: "192.168.1.90", AgenteCorre: true, Vmid: 9000, Tipo: tipoQemu, Nombre: "test-vm-go-9000", Estado: "stopped",
 			Cores: 1, MemoriaMB: 512, MaxDisk: 0, MemUso: 201326592,
-			Config: configQemu(9000, 0, "BC:24:11:90:00:00"),
+			Config: conAgente(configQemu(9000, 0, "BC:24:11:90:00:00")),
 		},
 		{
-			Vmid: 9001, Tipo: tipoQemu, Nombre: "test-vm-go-9001", Estado: "stopped",
+			IPv4: "192.168.1.91", AgenteCorre: true, Vmid: 9001, Tipo: tipoQemu, Nombre: "test-vm-go-9001", Estado: "stopped",
 			Cores: 1, MemoriaMB: 512, MaxDisk: 0, MemUso: 201326592,
-			Config: configQemu(9001, 0, "BC:24:11:90:01:00"),
+			Config: conAgente(configQemu(9001, 0, "BC:24:11:90:01:00")),
 		},
 		{
-			Vmid: 9002, Tipo: tipoLXC, Nombre: "test-lxc-go-9002", Estado: "running",
+			IPv4: "192.168.1.92", Vmid: 9002, Tipo: tipoLXC, Nombre: "test-lxc-go-9002", Estado: "running",
 			Cores: 1, MemoriaMB: 512, SwapMB: 512, MaxDisk: 4143677440, DiscoUso: 688058368, MemUso: 22872064, Iniciada: encendida(2316),
 			Config: configLXC(9002, "debian", 4, "BC:24:11:90:02:00"),
 		},
 		{
-			Vmid: 9003, Tipo: tipoQemu, Nombre: "test-vm-go-9003", Estado: "running",
+			IPv4: "192.168.1.93", Vmid: 9003, Tipo: tipoQemu, Nombre: "test-vm-go-9003", Estado: "running",
 			Cores: 1, MemoriaMB: 512, MaxDisk: 0, MemUso: 217640960, Iniciada: encendida(2483),
-			Config: configQemu(9003, 0, "BC:24:11:90:03:00"),
+			// Agente configurado pero no instalado en la VM: caso "QEMU guest agent is not running".
+			Config: conAgente(configQemu(9003, 0, "BC:24:11:90:03:00")),
 		},
 		{
 			// Contenedor creado desde Postman en la captura de RF-07; su config es la de RF-10.
-			Vmid: 201, Tipo: tipoLXC, Nombre: "Contenedor-Prueba-Postman", Estado: "stopped",
+			IPv4: "192.168.1.201", Vmid: 201, Tipo: tipoLXC, Nombre: "Contenedor-Prueba-Postman", Estado: "stopped",
 			Cores: 1, MemoriaMB: 512, SwapMB: 512, MaxDisk: 8 * gib, DiscoUso: 599904256, MemUso: 21046067,
 			Config: map[string]string{
 				"net0":         "name=eth0,bridge=vmbr0,hwaddr=BC:24:11:07:CC:54,ip=dhcp,type=veth",
@@ -143,6 +147,12 @@ func configQemu(vmid, discoGB int, mac string) map[string]string {
 	if discoGB > 0 {
 		cfg["scsi0"] = fmt.Sprintf("local-lvm:vm-%d-disk-0,iothread=1,size=%dG", vmid, discoGB)
 	}
+	return cfg
+}
+
+// conAgente habilita el QEMU Guest Agent en la config ("agent: 1").
+func conAgente(cfg map[string]string) map[string]string {
+	cfg["agent"] = "1"
 	return cfg
 }
 

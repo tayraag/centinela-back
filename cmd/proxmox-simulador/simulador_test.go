@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -493,6 +495,11 @@ func TestFidelidad_ConfigConTiposNumericos(t *testing.T) {
 		t.Errorf("El cambio pendiente de cores debe salir como número: %s", qemu)
 	}
 
+	// El digest se calcula como Proxmox (SHA-1 del archivo de config) y coincide con la captura real.
+	if !strings.Contains(lxc, `"digest":"4202c1092a6b4e06374400f8f332c3b6fadb450b"`) {
+		t.Errorf("El digest del 201 debe coincidir con la captura real: %s", lxc)
+	}
+
 	// Deserializar en un struct estricto de Go no debe fallar.
 	var estricto struct {
 		Data struct {
@@ -658,5 +665,213 @@ func TestContrato_ClienteDelBackend_InstanciaOcupada(t *testing.T) {
 	e.avanzar(3 * time.Second)
 	if _, err := cliente.DetenerInstancia(context.Background(), 110); err != nil {
 		t.Errorf("Cuando termina la primera tarea, la instancia se libera: %v", err)
+	}
+}
+
+// ==========================================
+// Borrado de instancias (BAC-24B)
+// ==========================================
+
+func TestBorrar_InstanciaApagada(t *testing.T) {
+	e := nuevoEntorno(t, "")
+	for _, caso := range []struct {
+		tipo, vmid, tarea string
+	}{{"qemu", "110", ":qmdestroy:110:"}, {"lxc", "201", ":vzdestroy:201:"}} {
+		s, upid, _ := e.pedir("DELETE", "/nodes/proxmox/"+caso.tipo+"/"+caso.vmid, nil)
+		if s != 200 || !strings.Contains(upid.(string), caso.tarea) {
+			t.Fatalf("DELETE %s/%s: se esperaba 200 con UPID %s, vino %d %v", caso.tipo, caso.vmid, caso.tarea, s, upid)
+		}
+
+		// Mientras corre la tarea, sigue en el inventario con lock y bloqueada para otras acciones.
+		_, data, _ := e.pedir("GET", "/cluster/resources?type=vm", nil)
+		vmid, _ := strconv.Atoi(caso.vmid)
+		if rec := buscar(data, vmid); rec == nil || rec["lock"] != "destroyed" {
+			t.Errorf("Durante el borrado debe seguir con lock destroyed: %v", rec)
+		}
+		if s, _, _ := e.pedir("POST", "/nodes/proxmox/"+caso.tipo+"/"+caso.vmid+"/status/start", url.Values{}); s != 500 {
+			t.Errorf("Durante el borrado no se puede encender, vino %d", s)
+		}
+
+		e.avanzar(3 * time.Second)
+		_, tarea, _ := e.pedir("GET", "/nodes/proxmox/tasks/"+upid.(string)+"/status", nil)
+		if tarea.(map[string]any)["exitstatus"] != "OK" {
+			t.Errorf("La tarea de borrado debe terminar OK: %v", tarea)
+		}
+		_, data, _ = e.pedir("GET", "/cluster/resources?type=vm", nil)
+		if buscar(data, vmid) != nil {
+			t.Errorf("DoD: al terminar la tarea, %s debe desaparecer del inventario", caso.vmid)
+		}
+		if s, _, cuerpo := e.pedir("GET", "/nodes/proxmox/"+caso.tipo+"/"+caso.vmid+"/status/current", nil); s != 500 || !strings.Contains(cuerpo["message"].(string), "does not exist") {
+			t.Errorf("Después de borrarla no debe existir: %d %v", s, cuerpo)
+		}
+	}
+	if _, data, _ := e.pedir("GET", "/cluster/nextid", nil); data != "102" {
+		t.Errorf("nextid sigue calculándose bien: %v", data)
+	}
+}
+
+func TestBorrar_Rechazos(t *testing.T) {
+	e := nuevoEntorno(t, "")
+	casos := map[string]string{
+		"/nodes/proxmox/qemu/9003": "VM 9003 is running - destroy failed", // encendida
+		"/nodes/proxmox/lxc/101":   "CT 101 is running - destroy failed",  // encendida
+		"/nodes/proxmox/qemu/999":  "does not exist",
+	}
+	for ruta, mensaje := range casos {
+		if s, _, cuerpo := e.pedir("DELETE", ruta, nil); s != 500 || !strings.Contains(cuerpo["message"].(string), mensaje) {
+			t.Errorf("DELETE %s: se esperaba 500 %q, vino %d %v", ruta, mensaje, s, cuerpo)
+		}
+	}
+
+	// La 100 está en HA: apagada tampoco se puede borrar sin purge=1.
+	e.pedir("POST", "/nodes/proxmox/qemu/100/status/stop", url.Values{})
+	e.avanzar(3 * time.Second)
+	if s, _, cuerpo := e.pedir("DELETE", "/nodes/proxmox/qemu/100", nil); s != 500 || !strings.Contains(cuerpo["message"].(string), "used in HA resources and purge parameter not set") {
+		t.Errorf("Borrar una instancia HA sin purge: %d %v", s, cuerpo)
+	}
+	if s, upid, _ := e.pedir("DELETE", "/nodes/proxmox/qemu/100?purge=1", nil); s != 200 || !strings.Contains(upid.(string), ":qmdestroy:100:") {
+		t.Errorf("Con purge=1 se puede borrar: %d %v", s, upid)
+	}
+
+	// Con otra tarea en curso responde el error de lock.
+	e.pedir("POST", "/nodes/proxmox/qemu/110/status/start", url.Values{})
+	if s, _, cuerpo := e.pedir("DELETE", "/nodes/proxmox/qemu/110", nil); s != 500 || !strings.Contains(cuerpo["message"].(string), "can't lock file") {
+		t.Errorf("Borrar con una tarea en curso: %d %v", s, cuerpo)
+	}
+}
+
+// ==========================================
+// IPs asignadas (inventario unificado)
+// ==========================================
+
+func TestRed_EUI64(t *testing.T) {
+	if got := ipv6EnlaceLocal("bc:24:11:d1:c0:04"); got != "fe80::be24:11ff:fed1:c004" {
+		t.Errorf("IPv6 de enlace local = %s", got)
+	}
+}
+
+func TestRed_InterfacesLXC(t *testing.T) {
+	e := nuevoEntorno(t, "")
+	s, data, _ := e.pedir("GET", "/nodes/proxmox/lxc/101/interfaces", nil)
+	lista, _ := data.([]any)
+	if s != 200 || len(lista) != 2 {
+		t.Fatalf("Interfaces de la 101: %d %v", s, data)
+	}
+	lo, eth0 := lista[0].(map[string]any), lista[1].(map[string]any)
+	if lo["name"] != "lo" || lo["inet"] != "127.0.0.1/8" {
+		t.Errorf("lo: %v", lo)
+	}
+	if eth0["name"] != "eth0" || eth0["inet"] != "192.168.1.101/24" || eth0["hwaddr"] != "bc:24:11:3a:10:01" || eth0["inet6"] != "fe80::be24:11ff:fe3a:1001/64" {
+		t.Errorf("eth0: %v", eth0)
+	}
+	ips := eth0["ip-addresses"].([]any)
+	if v4 := ips[0].(map[string]any); v4["ip-address"] != "192.168.1.101" || v4["ip-address-type"] != "inet" || v4["prefix"] != float64(24) {
+		t.Errorf("ip-addresses: %v", ips)
+	}
+
+	if s, _, cuerpo := e.pedir("GET", "/nodes/proxmox/lxc/201/interfaces", nil); s != 500 || !strings.Contains(cuerpo["message"].(string), "CT 201 not running") {
+		t.Errorf("Un contenedor apagado no reporta interfaces: %d %v", s, cuerpo)
+	}
+	if s, _, _ := e.pedir("GET", "/nodes/proxmox/qemu/110/interfaces", nil); s != 501 {
+		t.Errorf("/interfaces no existe para qemu (501), vino %d", s)
+	}
+}
+
+func TestRed_AgenteQemu(t *testing.T) {
+	e := nuevoEntorno(t, "")
+	ruta := func(vmid string) string { return "/nodes/proxmox/qemu/" + vmid + "/agent/network-get-interfaces" }
+
+	// Errores de Proxmox, sin romper nada (500 con mensaje, como el resto).
+	errores := map[string]string{
+		"110":  "VM 110 is not running",           // apagada
+		"100":  "No QEMU guest agent configured",  // sin agent: 1 en la config
+		"9003": "QEMU guest agent is not running", // agente configurado, no instalado
+	}
+	for vmid, mensaje := range errores {
+		if s, _, cuerpo := e.pedir("GET", ruta(vmid), nil); s != 500 || !strings.Contains(cuerpo["message"].(string), mensaje) {
+			t.Errorf("VM %s: se esperaba 500 %q, vino %d %v", vmid, mensaje, s, cuerpo)
+		}
+	}
+
+	e.pedir("POST", "/nodes/proxmox/qemu/110/status/start", url.Values{})
+	e.avanzar(3 * time.Second)
+	s, data, _ := e.pedir("GET", ruta("110"), nil)
+	result, _ := data.(map[string]any)["result"].([]any)
+	if s != 200 || len(result) != 2 {
+		t.Fatalf("Guest agent de la 110: %d %v", s, data)
+	}
+	eth0 := result[1].(map[string]any)
+	ips := eth0["ip-addresses"].([]any)
+	v4, v6 := ips[0].(map[string]any), ips[1].(map[string]any)
+	if eth0["name"] != "eth0" || eth0["hardware-address"] != "bc:24:11:5e:22:10" ||
+		v4["ip-address"] != "192.168.1.110" || v4["ip-address-type"] != "ipv4" || v4["prefix"] != float64(24) ||
+		v6["ip-address-type"] != "ipv6" || !strings.HasPrefix(v6["ip-address"].(string), "fe80::") {
+		t.Errorf("eth0 del guest agent: %v", eth0)
+	}
+	if _, ok := eth0["statistics"].(map[string]any)["rx-bytes"]; !ok {
+		t.Errorf("El guest agent trae statistics: %v", eth0)
+	}
+	if s, _, _ := e.pedir("GET", "/nodes/proxmox/lxc/101/agent/network-get-interfaces", nil); s != 501 {
+		t.Errorf("El guest agent no existe para lxc (501), vino %d", s)
+	}
+}
+
+// DoD: resolver la IP de VMs y contenedores contra el simulador, como lo haría
+// el inventario unificado: qemu por el guest agent y lxc por /interfaces.
+func TestRed_ResolverIPsDelInventario(t *testing.T) {
+	e := nuevoEntorno(t, "")
+	e.pedir("POST", "/nodes/proxmox/qemu/110/status/start", url.Values{})
+	e.avanzar(3 * time.Second)
+
+	resolver := func(tipo string, vmid int) string {
+		if tipo == "lxc" {
+			s, data, _ := e.pedir("GET", fmt.Sprintf("/nodes/proxmox/lxc/%d/interfaces", vmid), nil)
+			if s != 200 {
+				return ""
+			}
+			for _, x := range data.([]any) {
+				if itf := x.(map[string]any); itf["name"] != "lo" {
+					return strings.Split(itf["inet"].(string), "/")[0]
+				}
+			}
+			return ""
+		}
+		s, data, _ := e.pedir("GET", fmt.Sprintf("/nodes/proxmox/qemu/%d/agent/network-get-interfaces", vmid), nil)
+		if s != 200 {
+			return "" // sin agente: el inventario muestra la instancia sin IP
+		}
+		for _, x := range data.(map[string]any)["result"].([]any) {
+			itf := x.(map[string]any)
+			if itf["name"] == "lo" {
+				continue
+			}
+			for _, ip := range itf["ip-addresses"].([]any) {
+				if d := ip.(map[string]any); d["ip-address-type"] == "ipv4" {
+					return d["ip-address"].(string)
+				}
+			}
+		}
+		return ""
+	}
+
+	_, data, _ := e.pedir("GET", "/cluster/resources?type=vm", nil)
+	obtenidas := map[float64]string{}
+	for _, x := range data.([]any) {
+		rec := x.(map[string]any)
+		if rec["status"] == "running" {
+			obtenidas[rec["vmid"].(float64)] = resolver(rec["type"].(string), int(rec["vmid"].(float64)))
+		}
+	}
+	esperadas := map[float64]string{
+		100:  "",              // sin agente configurado
+		101:  "192.168.1.101", // lxc
+		110:  "192.168.1.110", // qemu con agente
+		9002: "192.168.1.92",  // lxc
+		9003: "",              // agente no instalado
+	}
+	for vmid, ip := range esperadas {
+		if obtenidas[vmid] != ip {
+			t.Errorf("IP de %v = %q, se esperaba %q", vmid, obtenidas[vmid], ip)
+		}
 	}
 }

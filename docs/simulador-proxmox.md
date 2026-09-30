@@ -87,6 +87,16 @@ Listo: `GET /api/instances` ahora trae las instancias del simulador. Cada pedido
 | 9002 | LXC  | `test-lxc-go-9002`          | encendida      | |
 | 9003 | VM   | `test-vm-go-9003`           | encendida      | |
 
+**Red:** cada instancia tiene una IP fija `192.168.1.x` (la 110 es `.110`, la 9000 es `.90`, y así); las creadas por `POST` toman la primera libre desde `.150`. La MAC sale de su `net0`, y la IPv6 de enlace local (`fe80::...`) se calcula a partir de la MAC, como hace Linux. Para las VMs, el guest agent está en tres situaciones distintas, para poder probar cada caso:
+
+| VM | Guest agent | `agent/network-get-interfaces` |
+| -- | ----------- | ------------------------------ |
+| 110, 9000, 9001 | configurado y corriendo | IPs (si la VM está encendida) |
+| 9003 | configurado, **no instalado** | `500 QEMU guest agent is not running` |
+| 100 | **no configurado** (su config capturada no tiene `agent`) | `500 No QEMU guest agent configured` |
+
+Una VM creada con `POST` y `agent=1` queda con el agente configurado pero no corriendo, porque todavía no tiene sistema operativo.
+
 Además, `cluster/resources` devuelve el nodo, dos storages (`local-lvm` y `local`) y la zona de red, igual que la captura. El backend los descarta y se queda solo con VMs y contenedores.
 
 > "Protegida" es una regla **del backend**, no del simulador: `POST /api/instances/100/stop` responde `403 INSTANCE_PROTECTED` antes de llegar a Proxmox. Pegándole directo al simulador sí se puede apagar la 100.
@@ -113,6 +123,9 @@ Todos bajo `/api2/json`, con el formato de Proxmox (`{"data": ...}`).
 | RF-06 | `DELETE .../snapshot/{nombre}` | Borrar un snapshot. No está en las capturas; imita el comportamiento documentado de Proxmox. |
 | RF-07 | `POST /nodes/{node}/qemu` · `POST /nodes/{node}/lxc` | Crear una VM o un contenedor, con los mismos parámetros que la captura. |
 | RF-10 | `GET` / `PUT /nodes/{node}/{tipo}/{vmid}/config` | Leer y editar la config (memoria, cores, nombre...). |
+| BAC-24B | `DELETE /nodes/{node}/{tipo}/{vmid}` | Borrar una instancia **apagada**: devuelve un UPID (`qmdestroy` / `vzdestroy`). Mientras corre la tarea queda con `lock: destroyed`; al terminar desaparece del inventario. Las administradas por HA (la 100) necesitan `?purge=1`. |
+| Inventario | `GET /nodes/{node}/lxc/{vmid}/interfaces` | IPs de un contenedor **encendido**: `lo` y `eth0`, con `hwaddr`, `inet`, `inet6` e `ip-addresses`. |
+| Inventario | `GET /nodes/{node}/qemu/{vmid}/agent/network-get-interfaces` | IPs de una VM según el **QEMU Guest Agent**: `{"data": {"result": [...]}}` con `name`, `hardware-address`, `ip-addresses` y `statistics`. |
 
 Cualquier otra ruta responde `501 Method '...' not implemented`, como Proxmox.
 
@@ -141,6 +154,10 @@ La duración se cambia con `PROXMOX_SIM_DURACION_TAREA` (en segundos; con `0` la
 | Dos acciones seguidas sobre la misma instancia | La segunda da `500 can't lock file '/var/lock/qemu-server/lock-110.conf' - got timeout`. La API del backend lo traduce a `409 INSTANCE_BUSY`. |
 | Editar o sacar un snapshot mientras se crea o hace rollback | `500 VM 100 is locked (snapshot)`. |
 | Snapshot con nombre repetido | `500 snapshot name 'x' already used`. |
+| Borrar una instancia encendida | `500 VM 9003 is running - destroy failed` (CT: `CT 101 is running - destroy failed`). |
+| Borrar una instancia en HA sin `purge=1` | `500 unable to remove VM 100 - used in HA resources and purge parameter not set.` |
+| Pedir IPs de una VM apagada / sin agente configurado / con el agente sin correr | `500 VM 110 is not running` / `No QEMU guest agent configured` / `QEMU guest agent is not running`. |
+| Pedir IPs de un contenedor apagado | `500 CT 201 not running`. |
 | Crear con un VMID que ya existe (VMs y contenedores comparten IDs) | `500 unable to create VM 115 - VM 115 already exists on node 'proxmox'`. |
 | Parámetro inválido o faltante | `400` con el detalle por campo en `errors`, ej. `{"ostemplate": "property is missing and it is not optional"}`. |
 | VMID que no existe | `500 Configuration file 'nodes/proxmox/qemu-server/999.conf' does not exist`. |
@@ -240,6 +257,7 @@ Conviene tenerlo presente para no llevarse sorpresas al pasar al servidor:
 - **No hay consola, VNC, backups, migraciones, firewall ni storage real.** Crear una VM no instala nada; solo la agrega al inventario.
 - **Un solo nodo.**
 - **Validaciones parciales:** valida lo que usamos (VMID, memoria, cores, nombres de snapshot, formato de disco, `ostemplate`), no todo el esquema de Proxmox.
+- **Borrado e IPs no tienen captura real.** El formato de `DELETE`, `/interfaces` y `agent/network-get-interfaces` (y sus mensajes de error) sigue la documentación de la API de Proxmox VE. Cuando alguien tenga acceso al Proxmox real, conviene capturar esas respuestas en `API proxmox respuestas/` y ajustar el simulador si difieren.
 - **`status/current` de un LXC devuelve un objeto**, como el Proxmox real. En la captura figura un array con dos contenedores, pero esa respuesta en realidad corresponde a `GET /nodes/{node}/lxc` (el listado), que el simulador también implementa.
 
 ---
@@ -249,7 +267,7 @@ Conviene tenerlo presente para no llevarse sorpresas al pasar al servidor:
 Cuando una tarea necesite algo de Proxmox que el simulador todavía no tiene:
 
 1. **Capturá la respuesta real** (Postman o `curl` contra Proxmox) y agregala a `API proxmox respuestas/`, así queda la referencia.
-2. **Agregá la ruta** en `rutas()` de `cmd/proxmox-simulador/simulador.go` y el handler en el archivo del tema (`instancias.go`, `snapshots.go`, `config.go`, `metricas.go`, `tareas.go`).
+2. **Agregá la ruta** en `rutas()` de `cmd/proxmox-simulador/simulador.go` y el handler en el archivo del tema (`instancias.go`, `snapshots.go`, `config.go`, `metricas.go`, `tareas.go`, `red.go`).
 3. **Respondé con los mismos campos** que la captura, usando `responder(w, data)` para `{"data": ...}` y `errorPVE` / `errorParametros` para los errores.
 4. **Sumá un test** en `simulador_test.go`. Si el backend va a consumir el endpoint, agregá también un test de contrato que use el cliente real (`internal/adapters/secondary/proxmox`) contra el simulador, como `TestContrato_ClienteDelBackend_ListarInstancias`.
 
@@ -268,5 +286,6 @@ go test ./cmd/proxmox-simulador/ -v
 | `tareas.go` | Tareas asíncronas, UPID y locks. |
 | `metricas.go` | Métricas actuales y `rrddata`. |
 | `snapshots.go` | Listar, crear, rollback y borrar snapshots. |
-| `config.go` | Crear instancias y leer/editar su config. |
+| `config.go` | Crear, borrar instancias y leer/editar su config. |
+| `red.go` | IPs: `/interfaces` de contenedores y el guest agent de las VMs. |
 | `simulador_test.go` | Tests del simulador y de contrato con el cliente del backend. |

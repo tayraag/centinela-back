@@ -112,6 +112,12 @@ func (s *Simulador) crearInstancia(w http.ResponseWriter, r *http.Request) {
 		// La contraseña de root (params["password"]) no se guarda: igual que
 		// Proxmox, no se puede volver a leer por la API.
 	}
+	inst.IPv4 = s.ipLibre()
+	if tipo == tipoQemu && params["agent"] != "" {
+		// El agente queda configurado, pero una VM recién creada no tiene sistema
+		// operativo instalado: hasta que alguien lo instale, "QEMU guest agent is not running".
+		inst.Config["agent"] = params["agent"]
+	}
 	s.instancias[vmid] = inst
 
 	upid := s.crearTarea(prefijoTarea(inst)+"create", inst, "create", func() string { return "OK" })
@@ -224,4 +230,56 @@ func enteroParam(params map[string]string, clave string, defecto, minimo int, er
 		return defecto
 	}
 	return n
+}
+
+// ==========================================
+// DELETE /nodes/{node}/{tipo}/{vmid} (BAC-24B)
+// ==========================================
+
+// borrarInstancia imita el destroy de Proxmox (no está en las capturas; sigue
+// la documentación de la API de Proxmox VE):
+//   - encendida → 500 "VM 110 is running - destroy failed" (CT: "CT 101 is running - destroy failed");
+//   - administrada por HA sin purge=1 → 500 "unable to remove VM 100 - used in HA resources and purge parameter not set.";
+//   - ocupada con otra tarea → el error de lock;
+//   - apagada → 200 con el UPID (qmdestroy / vzdestroy). La instancia se quita
+//     del inventario cuando la tarea termina.
+func (s *Simulador) borrarInstancia(w http.ResponseWriter, r *http.Request) {
+	purge := r.URL.Query().Get("purge") == "1"
+	inst := s.buscarInstancia(w, r)
+	if inst == nil {
+		return
+	}
+	defer s.mu.Unlock()
+	if !s.verificarLibre(w, inst) {
+		return
+	}
+	if inst.encendida() {
+		errorPVE(w, http.StatusInternalServerError, inst.etiqueta()+" is running - destroy failed")
+		return
+	}
+	if inst.HA && !purge {
+		errorPVE(w, http.StatusInternalServerError, fmt.Sprintf("unable to remove %s - used in HA resources and purge parameter not set.", inst.etiqueta()))
+		return
+	}
+
+	vmid := inst.Vmid
+	upid := s.crearTarea(prefijoTarea(inst)+"destroy", inst, "destroyed", func() string {
+		delete(s.instancias, vmid)
+		return "OK"
+	})
+	responder(w, upid)
+}
+
+// ipLibre asigna a una instancia nueva la primera IP 192.168.1.150-250 sin usar.
+func (s *Simulador) ipLibre() string {
+	usadas := map[string]bool{}
+	for _, inst := range s.instancias {
+		usadas[inst.IPv4] = true
+	}
+	for n := 150; n <= 250; n++ {
+		if ip := fmt.Sprintf("192.168.1.%d", n); !usadas[ip] {
+			return ip
+		}
+	}
+	return "192.168.1.254"
 }
