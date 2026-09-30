@@ -23,6 +23,7 @@ type JWTClaims struct {
 	Verificado2FA             bool   `json:"2fa_verificado"`
 	OrgID                     string `json:"org_id"`                      // UUID de la organización del usuario
 	CambioContrasenaRequerido bool   `json:"cambio_contrasena_requerido"` // true si el usuario debe cambiar su contraseña
+	SesionID                  string `json:"sid,omitempty"`               // session_id de sesiones_activas (access y refresh)
 	jwt.RegisteredClaims
 }
 

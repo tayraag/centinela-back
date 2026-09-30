@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"el-centinela/internal/core/domain"
+	"el-centinela/internal/core/ports"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -53,48 +54,62 @@ func (r *AuthRepository) BuscarUsuarioPorID(ctx context.Context, id uuid.UUID) (
 	return &usuario, nil
 }
 
-// GuardarSesion persiste una nueva sesión activa en la base de datos.
-func (r *AuthRepository) GuardarSesion(ctx context.Context, sesion *domain.SesionActiva) error {
-	result := r.db.WithContext(ctx).Create(sesion)
-	if result.Error != nil {
-		return fmt.Errorf("error al guardar sesión: %w", result.Error)
-	}
-	return nil
+// CrearSesionYRegistrarAcceso inserta la única fila de la sesión y actualiza
+// fecha_ultimo_acceso del usuario en la misma transacción.
+func (r *AuthRepository) CrearSesionYRegistrarAcceso(ctx context.Context, sesion *domain.SesionActiva, fechaAcceso time.Time) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(sesion).Error; err != nil {
+			return fmt.Errorf("error al crear sesión: %w", err)
+		}
+		if err := tx.Model(&domain.Usuario{}).Where("id = ?", sesion.UsuarioID).
+			Update("fecha_ultimo_acceso", fechaAcceso).Error; err != nil {
+			return fmt.Errorf("error al registrar último acceso: %w", err)
+		}
+		return nil
+	})
 }
 
-// BuscarSesionPorJTI recupera una sesión activa por su JTI (JWT ID).
-func (r *AuthRepository) BuscarSesionPorJTI(ctx context.Context, jti string) (*domain.SesionActiva, error) {
+// BuscarSesionPorID recupera una sesión por su session_id, esté activa o no.
+func (r *AuthRepository) BuscarSesionPorID(ctx context.Context, sesionID uuid.UUID) (*domain.SesionActiva, error) {
 	var sesion domain.SesionActiva
-	result := r.db.WithContext(ctx).
-		Where("jti_token = ? AND activa = true", jti).
-		First(&sesion)
-
+	result := r.db.WithContext(ctx).Where("id = ?", sesionID).First(&sesion)
 	if result.Error != nil {
 		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
-			return nil, fmt.Errorf("sesión no encontrada o inactiva")
+			return nil, ports.ErrSesionRevocada
 		}
-		return nil, fmt.Errorf("error al buscar sesión por JTI: %w", result.Error)
+		return nil, fmt.Errorf("error al buscar sesión: %w", result.Error)
 	}
 	return &sesion, nil
 }
 
-// ActualizarSesion actualiza los campos de una sesión existente.
-func (r *AuthRepository) ActualizarSesion(ctx context.Context, sesion *domain.SesionActiva) error {
-	result := r.db.WithContext(ctx).Save(sesion)
+// RotarJtiAccess es el UPDATE de la renovación del access token. La condición
+// del WHERE hace que una sesión cerrada, revocada o vencida no se pueda renovar.
+func (r *AuthRepository) RotarJtiAccess(ctx context.Context, sesionID uuid.UUID, jtiRefresh, nuevoJtiAccess string) error {
+	result := r.db.WithContext(ctx).
+		Model(&domain.SesionActiva{}).
+		Where("id = ? AND jti_refresh = ? AND activa = true AND fecha_expiracion > ?", sesionID, jtiRefresh, time.Now()).
+		Updates(map[string]interface{}{"jti_access": nuevoJtiAccess, "fecha_actualizacion": time.Now()})
 	if result.Error != nil {
-		return fmt.Errorf("error al actualizar sesión: %w", result.Error)
+		return fmt.Errorf("error al renovar sesión: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return ports.ErrSesionRevocada
 	}
 	return nil
 }
 
-// RevocarSesiones revoca múltiples sesiones en una sola operación atómica usando sus JTIs.
-func (r *AuthRepository) RevocarSesiones(ctx context.Context, jtis []string) error {
+// DesactivarSesion marca la sesión como inactiva (logout). Es idempotente: si
+// ya estaba inactiva no falla, pero el refresh tiene que corresponder a la sesión.
+func (r *AuthRepository) DesactivarSesion(ctx context.Context, sesionID uuid.UUID, jtiRefresh string) error {
 	result := r.db.WithContext(ctx).
 		Model(&domain.SesionActiva{}).
-		Where("jti_token IN ?", jtis).
-		Update("activa", false)
+		Where("id = ? AND jti_refresh = ?", sesionID, jtiRefresh).
+		Updates(map[string]interface{}{"activa": false, "fecha_actualizacion": time.Now()})
 	if result.Error != nil {
-		return fmt.Errorf("error al revocar sesiones: %w", result.Error)
+		return fmt.Errorf("error al cerrar sesión: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return ports.ErrSesionRevocada
 	}
 	return nil
 }
@@ -130,16 +145,26 @@ func (r *AuthRepository) ResetearTotp(ctx context.Context, usuarioID uuid.UUID) 
 	return nil
 }
 
-// InvalidarSesionesDeUsuario marca todas las sesiones activas de un usuario como inactivas.
-func (r *AuthRepository) InvalidarSesionesDeUsuario(ctx context.Context, usuarioID uuid.UUID) error {
-	result := r.db.WithContext(ctx).
-		Model(&domain.SesionActiva{}).
-		Where("usuario_id = ? AND activa = true", usuarioID).
-		Update("activa", false)
-	if result.Error != nil {
-		return fmt.Errorf("error al invalidar sesiones del usuario: %w", result.Error)
+// InvalidarSesionesDeUsuario marca todas las sesiones activas de un usuario como
+// inactivas y devuelve sus IDs, para que el servicio las borre también de Redis.
+func (r *AuthRepository) InvalidarSesionesDeUsuario(ctx context.Context, usuarioID uuid.UUID) ([]uuid.UUID, error) {
+	var ids []uuid.UUID
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&domain.SesionActiva{}).
+			Where("usuario_id = ? AND activa = true", usuarioID).
+			Pluck("id", &ids).Error; err != nil {
+			return err
+		}
+		if len(ids) == 0 {
+			return nil
+		}
+		return tx.Model(&domain.SesionActiva{}).Where("id IN ?", ids).
+			Updates(map[string]interface{}{"activa": false, "fecha_actualizacion": time.Now()}).Error
+	})
+	if err != nil {
+		return nil, fmt.Errorf("error al invalidar sesiones del usuario: %w", err)
 	}
-	return nil
+	return ids, nil
 }
 
 // ActualizarUltimoTotpPeriodo guarda el período TOTP del último código validado exitosamente.
@@ -200,18 +225,6 @@ func (r *AuthRepository) ActualizarIntentosRecuperacion(ctx context.Context, usu
 		Update("intentos_recuperacion", intentos)
 	if result.Error != nil {
 		return fmt.Errorf("error al actualizar intentos de recuperación: %w", result.Error)
-	}
-	return nil
-}
-
-// ActualizarUltimoAcceso actualiza la fecha de último acceso del usuario.
-func (r *AuthRepository) ActualizarUltimoAcceso(ctx context.Context, usuarioID uuid.UUID, fecha time.Time) error {
-	result := r.db.WithContext(ctx).
-		Model(&domain.Usuario{}).
-		Where("id = ?", usuarioID).
-		Update("fecha_ultimo_acceso", fecha)
-	if result.Error != nil {
-		return fmt.Errorf("error al actualizar último acceso: %w", result.Error)
 	}
 	return nil
 }

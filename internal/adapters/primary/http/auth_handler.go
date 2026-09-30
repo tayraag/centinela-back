@@ -97,10 +97,7 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 		return
 	}
 
-	jti, _ := c.Get(middleware.ContextKeyJTI)
-	jtiStr, _ := jti.(string)
-
-	if err := h.service.CerrarSesion(c.Request.Context(), refreshToken, jtiStr); err != nil {
+	if err := h.service.CerrarSesion(c.Request.Context(), refreshToken); err != nil {
 		SendError(c, http.StatusUnauthorized, "AUTH_FAILED", "sesión inválida o ya cerrada")
 		return
 	}

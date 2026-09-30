@@ -11,8 +11,10 @@ import (
 	httpHandlers "el-centinela/internal/adapters/primary/http"
 	"el-centinela/internal/adapters/primary/http/middleware"
 	"el-centinela/internal/adapters/secondary/email"
+	"el-centinela/internal/adapters/secondary/memoria"
 	"el-centinela/internal/adapters/secondary/postgres"
 	"el-centinela/internal/adapters/secondary/proxmox"
+	"el-centinela/internal/adapters/secondary/redis"
 	"el-centinela/internal/core/ports"
 	"el-centinela/internal/core/services"
 
@@ -85,6 +87,7 @@ func main() {
 	emailService := email.NewMockEmailService()
 	auditRepo := postgres.NewAuditRepository(db)
 	instanceRepo := postgres.NewInstanceRepository(db)
+	sesionCache := conectarAlmacenSesiones()
 	proxmoxURL := os.Getenv("PROXMOX_URL")
 	if proxmoxURL == "" {
 		proxmoxURL = os.Getenv("PROXMOX_BASE_URL")
@@ -108,8 +111,8 @@ func main() {
 
 	// 4. Inicializar servicios de dominio (inyección de dependencias)
 	auditService := services.NewAuditService(auditRepo)
-	authService := services.NewAuthService(authRepo, emailService, auditService)
-	userService := services.NewUserService(userRepo, authRepo, auditService, emailService)
+	authService := services.NewAuthService(authRepo, sesionCache, emailService, auditService)
+	userService := services.NewUserService(userRepo, authRepo, sesionCache, auditService, emailService)
 
 	// 5. Inicializar handlers HTTP
 	authHandler := httpHandlers.NewAuthHandler(authService)
@@ -160,14 +163,14 @@ func main() {
 			auth.POST("/refresh", authHandler.RefrescarToken)
 
 			// Rutas protegidas (requieren JWT access)
-			auth.POST("/logout", middleware.RequireAuth(authRepo), authHandler.Logout)
+			auth.POST("/logout", middleware.RequireAuth(authService), authHandler.Logout)
 
 			// Recuperación de contraseña (públicas)
 			auth.POST("/password/forgot", authHandler.SolicitarRecuperacion)
 			auth.POST("/password/reset", authHandler.ConfirmarRecuperacion)
 
 			// Rutas del flujo 2FA (requieren JWT temporal pre-auth)
-			twoFA := auth.Group("/2fa", middleware.RequirePreAuth(authRepo))
+			twoFA := auth.Group("/2fa", middleware.RequirePreAuth(authService))
 			{
 				twoFA.GET("/qr", authHandler.ObtenerQR)
 				twoFA.POST("/verify", authHandler.VerificarTotp)
@@ -175,12 +178,12 @@ func main() {
 		}
 
 		// Roles disponibles (para el selector del formulario)
-		api.GET("/roles", middleware.RequireAuth(authRepo), middleware.RequireRole("ADMIN"), userHandler.ObtenerRoles)
+		api.GET("/roles", middleware.RequireAuth(authService), middleware.RequireRole("ADMIN"), userHandler.ObtenerRoles)
 
 		// ==========================================
 		// Rutas de Gestión de Usuarios (RF-09) — solo ADMIN
 		// ==========================================
-		admin := api.Group("/admin", middleware.RequireAuth(authRepo), middleware.RequireRole("ADMIN"))
+		admin := api.Group("/admin", middleware.RequireAuth(authService), middleware.RequireRole("ADMIN"))
 		{
 			// CRUD de usuarios
 			users := admin.Group("/users")
@@ -213,7 +216,7 @@ func main() {
 		// ==========================================
 		// Rutas de Perfil Propio (RF-09) — cualquier usuario autenticado
 		// ==========================================
-		account := api.Group("/account", middleware.RequireAuth(authRepo))
+		account := api.Group("/account", middleware.RequireAuth(authService))
 		{
 			account.GET("/profile", accountHandler.ObtenerPerfil)
 			account.PUT("/profile", accountHandler.ActualizarPerfil)
@@ -223,7 +226,7 @@ func main() {
 		// ==========================================
 		// Rutas de Instancias Proxmox
 		// ==========================================
-		instances := api.Group("/instances", middleware.RequireAuth(authRepo))
+		instances := api.Group("/instances", middleware.RequireAuth(authService))
 		{
 			instances.GET("", instanceHandler.ListarInstancias)
 			instances.GET("/:vmid", middleware.RequireInstanceAccess(instanceRepo, "vmid", ports.NivelAccesoReadOnly), instanceHandler.ObtenerInstancia)
@@ -258,4 +261,23 @@ func main() {
 	if err := router.Run(":8080"); err != nil {
 		log.Fatalf("❌ Error al arrancar el servidor: %v", err)
 	}
+}
+
+// conectarAlmacenSesiones elige dónde viven las sesiones efímeras (pre-2FA y
+// réplica de las sesiones activas): Redis si REDIS_ADDR está definida y
+// responde; si no, el respaldo en memoria, para que el login siga funcionando
+// en un servidor que todavía no tiene Redis.
+func conectarAlmacenSesiones() ports.SesionCache {
+	addr := os.Getenv("REDIS_ADDR")
+	if addr == "" {
+		log.Println("⚠️  REDIS_ADDR sin configurar: sesiones efímeras en MEMORIA (se pierden al reiniciar la API)")
+		return memoria.NewSesionCache()
+	}
+	cache, err := redis.Conectar(addr, os.Getenv("REDIS_PASSWORD"))
+	if err != nil {
+		log.Printf("⚠️  %v: sesiones efímeras en MEMORIA (se pierden al reiniciar la API)", err)
+		return memoria.NewSesionCache()
+	}
+	log.Printf("✅ Conexión exitosa a Redis (%s)", addr)
+	return cache
 }

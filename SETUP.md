@@ -95,18 +95,29 @@ go test ./internal/adapters/secondary/proxmox/ -run Integracion -v
 
 ---
 
-## 3. Levantar PostgreSQL con Docker
+## 3. Levantar PostgreSQL y Redis con Docker
 
 ```bash
-docker-compose up -d
+docker compose up -d db redis
 ```
 
-Verificar que el container está corriendo:
+Verificar que los containers están corriendo:
 
 ```bash
-docker-compose ps
-# Debe mostrar centinela-postgres con STATUS "Up"
+docker compose ps
+# Debe mostrar centinela-postgres y centinela-redis con STATUS "Up"
 ```
+
+**Redis** guarda las sesiones efímeras con TTL automático: el token temporal pre-2FA (`auth:pre2fa:<jti>`, 5 minutos) y una réplica de cada sesión activa (`auth:session:<session_id>`). Queda accesible solo desde tu PC en `localhost:6379`, con la clave de `REDIS_PASSWORD`. Para mirar qué hay adentro:
+
+```bash
+docker exec -it centinela-redis redis-cli -a centinela_redis_password --no-auth-warning
+KEYS auth:*                      # claves de sesión
+TTL auth:pre2fa:<jti>            # segundos que le quedan
+GET auth:session:<session_id>    # payload de la sesión
+```
+
+> Si Redis no está levantado (o `REDIS_ADDR` está vacía), la API arranca igual y usa un almacén **en memoria**, avisándolo en el log. Funciona igual, pero las sesiones se pierden al reiniciar la API.
 
 El script `scripts/init.sql` se ejecuta automáticamente al crear el container y habilita la extensión `pgcrypto` + la función `uuid_generate_v7()`.
 
@@ -408,9 +419,11 @@ SELECT nombre_usuario, rol, activo, totp_vinculado,
             ELSE LEFT(secreto_totp_cifrado, 20) || '...(cifrado AES)' END AS secreto
 FROM usuarios;
 
-# Ver sesiones activas
-SELECT usuario_id, LEFT(jti_token, 8) || '...' AS jti, activa, estado2fa, fecha_expiracion
-FROM sesion_activas
+# Ver sesiones (1 sesión = 1 fila: se crea al superar el 2FA, cada refresh
+# actualiza jti_access en la misma fila y el logout la deja con activa = false)
+SELECT id AS session_id, usuario_id, LEFT(jti_access, 8) || '...' AS jti_access,
+       activa, fecha_actualizacion, fecha_expiracion
+FROM sesiones_activas
 ORDER BY fecha_creacion DESC
 LIMIT 10;
 ```

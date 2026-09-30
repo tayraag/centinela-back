@@ -12,7 +12,7 @@ El proyecto sigue una **Arquitectura Hexagonal (Puertos y Adaptadores)** adaptad
 | --------------------------- | ------------------------------ | ------------------------------------------------------------ |
 | **Core / Dominio**          | `internal/core/`               | Lógica de negocio pura, sin dependencias externas            |
 | **Adaptadores primarios**   | `internal/adapters/primary/`   | Reciben peticiones del exterior (HTTP handlers, middlewares) |
-| **Adaptadores secundarios** | `internal/adapters/secondary/` | Se conectan hacia afuera (PostgreSQL, Proxmox API)           |
+| **Adaptadores secundarios** | `internal/adapters/secondary/` | Se conectan hacia afuera (PostgreSQL, Redis, Proxmox API)    |
 | **Infraestructura**         | `internal/infrastructure/`     | Utilidades transversales (JWT, bcrypt, TOTP)                 |
 
 ### Flujo de una petición
@@ -94,6 +94,9 @@ centinela-back/
 │   │       │   ├── auth_repository.go   # Implementa AuthRepository
 │   │       │   ├── user_repository.go   # Implementa UserRepository
 │   │       │   └── instance_repository.go # Implementa InstanceRepository (VerificarAcceso)
+│   │       ├── redis/                   # Implementa SesionCache sobre Redis (sesiones con TTL)
+│   │       ├── memoria/                 # Implementa SesionCache en memoria (respaldo si no hay Redis)
+│   │       ├── cachetest/               # Test de contrato común a redis/ y memoria/
 │   │       └── proxmox/                 # Adapter Proxmox VE (API Token), ver su README.md
 │   │           ├── client.go            # Implementa ProxmoxPort
 │   │           └── tls.go               # Verificación TLS (fingerprint / skip verify)

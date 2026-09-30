@@ -59,17 +59,21 @@ type Usuario struct {
 // 3. SESIÓN ACTIVA
 // ==========================================
 
+// SesionActiva es una sesión de un navegador: 1 sesión = 1 fila. Se crea al
+// superar el 2FA; cada renovación del access token actualiza JtiAccess en esta
+// misma fila y el logout la marca como inactiva. La fase pre-2FA no se guarda
+// acá: vive solo en el almacén efímero (ports.SesionCache).
 type SesionActiva struct {
-	ID        uuid.UUID `gorm:"type:uuid;primaryKey;default:uuid_generate_v7()" json:"id"`
+	ID        uuid.UUID `gorm:"type:uuid;primaryKey;default:uuid_generate_v7()" json:"id"` // session_id (claim "sid" de los tokens)
 	UsuarioID uuid.UUID `gorm:"type:uuid;not null;index" json:"usuarioId"`
 
-	JtiToken       string `gorm:"type:varchar(255);uniqueIndex;not null" json:"jtiToken"`
-	Activa         bool   `gorm:"default:true" json:"activa"`
-	CodigoTemporal string `gorm:"type:varchar(10)" json:"codigoTemporal"`
-	Estado2fa      bool   `gorm:"default:false" json:"estado2fa"` // Control intermedio del login
+	JtiAccess  string `gorm:"type:varchar(255);uniqueIndex;not null" json:"-"` // JTI del access token vigente
+	JtiRefresh string `gorm:"type:varchar(255);uniqueIndex;not null" json:"-"` // JTI del refresh token de la sesión
+	Activa     bool   `gorm:"default:true" json:"activa"`
 
-	FechaExpiracion time.Time `gorm:"not null" json:"fechaExpiracion"`
-	FechaCreacion   time.Time `gorm:"default:now()" json:"fechaCreacion"`
+	FechaExpiracion    time.Time `gorm:"not null" json:"fechaExpiracion"` // vence junto con el refresh token
+	FechaCreacion      time.Time `gorm:"default:now()" json:"fechaCreacion"`
+	FechaActualizacion time.Time `gorm:"default:now()" json:"fechaActualizacion"` // última renovación
 }
 
 // ==========================================

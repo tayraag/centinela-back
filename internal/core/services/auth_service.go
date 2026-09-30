@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"log"
 	"math/big"
@@ -19,19 +20,29 @@ import (
 	"github.com/skip2/go-qrcode"
 )
 
+// ttlPre2FA es la vida del token temporal entre el login y la verificación 2FA.
+const ttlPre2FA = 5 * time.Minute
+
 // authServiceImpl implementa ports.AuthService.
+//
+// Sesiones: "1 sesión = 1 fila". La fase pre-2FA vive solo en el almacén
+// efímero (Redis). Al superar el 2FA se crea la única fila en sesiones_activas
+// (fuente de verdad) y se replica en el almacén; cada renovación actualiza esa
+// misma fila y el logout la desactiva.
 type authServiceImpl struct {
 	repo         ports.AuthRepository
+	sesiones     ports.SesionCache
 	emailService ports.EmailService
 	auditSvc     ports.AuditService
 }
 
 // NewAuthService crea una nueva instancia del servicio de autenticación.
-func NewAuthService(repo ports.AuthRepository, emailService ports.EmailService, auditSvc ports.AuditService) ports.AuthService {
+func NewAuthService(repo ports.AuthRepository, sesiones ports.SesionCache, emailService ports.EmailService, auditSvc ports.AuditService) ports.AuthService {
 	return &authServiceImpl{
 		repo:         repo,
+		sesiones:     sesiones,
 		emailService: emailService,
-		auditSvc:     auditSvc,	
+		auditSvc:     auditSvc,
 	}
 }
 
@@ -70,19 +81,12 @@ func (s *authServiceImpl) Login(ctx context.Context, email, contrasena string) (
 		return nil, fmt.Errorf("credenciales inválidas")
 	}
 
-	// 4. Crear sesión temporal pre-2FA en BD
+	// 4. Registrar la sesión temporal pre-2FA SOLO en el almacén efímero, nunca en
+	//    PostgreSQL: SET auth:pre2fa:<jti> <usuario_id> EX 300
 	jti := uuid.New().String()
-	expiracion := time.Now().Add(5 * time.Minute)
-	sesion := &domain.SesionActiva{
-		ID:              uuid.New(),
-		UsuarioID:       usuario.ID,
-		JtiToken:        jti,
-		Activa:          true,
-		Estado2fa:       false,
-		FechaExpiracion: expiracion,
-	}
-	if err := s.repo.GuardarSesion(ctx, sesion); err != nil {
-		return nil, fmt.Errorf("error al crear sesión: %w", err)
+	if err := s.sesiones.GuardarPre2FA(ctx, jti, usuario.ID, ttlPre2FA); err != nil {
+		log.Printf("[AUTH] login failed | email=%s | reason=session_store_error | err=%v", email, err)
+		return nil, fmt.Errorf("no se pudo iniciar la sesión, intentá nuevamente")
 	}
 
 	// 5. Emitir JWT temporal
@@ -96,7 +100,7 @@ func (s *authServiceImpl) Login(ctx context.Context, email, contrasena string) (
 	claims.Subject = usuario.ID.String()
 	claims.ID = jti
 
-	jwtTemporal, err := crypto.FirmarToken(claims, jwtSecret, 5*time.Minute)
+	jwtTemporal, err := crypto.FirmarToken(claims, jwtSecret, ttlPre2FA)
 	if err != nil {
 		return nil, fmt.Errorf("error al emitir token temporal: %w", err)
 	}
@@ -130,14 +134,14 @@ func (s *authServiceImpl) ObtenerQRParaVinculacion(ctx context.Context, jtiTempo
 		appName = "El Centinela"
 	}
 
-	// 1. Buscar la sesión en BD para obtener el usuarioID
-	sesion, err := s.repo.BuscarSesionPorJTI(ctx, jtiTemporal)
+	// 1. Obtener el usuario dueño de la sesión temporal (auth:pre2fa:<jti>)
+	usuarioID, err := s.usuarioDePre2FA(ctx, jtiTemporal)
 	if err != nil {
-		return nil, fmt.Errorf("sesión no válida: %w", err)
+		return nil, err
 	}
 
 	// 2. Buscar el usuario para obtener su email
-	usuario, err := s.repo.BuscarUsuarioPorID(ctx, sesion.UsuarioID)
+	usuario, err := s.repo.BuscarUsuarioPorID(ctx, usuarioID)
 	if err != nil {
 		return nil, fmt.Errorf("usuario no encontrado: %w", err)
 	}
@@ -192,17 +196,14 @@ func (s *authServiceImpl) VerificarTotp(ctx context.Context, jtiTemporal, codigo
 	jwtSecret := os.Getenv("JWT_SECRET")
 	encKey := os.Getenv("TOTP_ENCRYPTION_KEY")
 
-	// 1. Buscar la sesión pre-2FA en BD
-	sesion, err := s.repo.BuscarSesionPorJTI(ctx, jtiTemporal)
+	// 1. Obtener el usuario dueño de la sesión temporal (auth:pre2fa:<jti>)
+	usuarioID, err := s.usuarioDePre2FA(ctx, jtiTemporal)
 	if err != nil {
-		return nil, fmt.Errorf("sesión no válida: %w", err)
-	}
-	if sesion.Estado2fa {
-		return nil, fmt.Errorf("sesión ya fue verificada")
+		return nil, err
 	}
 
 	// 2. Buscar usuario y validar TOTP
-	usuario, err := s.repo.BuscarUsuarioPorID(ctx, sesion.UsuarioID)
+	usuario, err := s.repo.BuscarUsuarioPorID(ctx, usuarioID)
 	if err != nil {
 		return nil, fmt.Errorf("usuario no encontrado: %w", err)
 	}
@@ -210,7 +211,7 @@ func (s *authServiceImpl) VerificarTotp(ctx context.Context, jtiTemporal, codigo
 		return nil, fmt.Errorf("el usuario no tiene TOTP configurado, obtenga primero el QR")
 	}
 
-	log.Printf("[2FA] totp verify attempt | user=%s | codigo=%s", usuario.EmailUsuario, codigo)
+	log.Printf("[2FA] totp verify attempt | user=%s", usuario.EmailUsuario)
 	valido, err := crypto.ValidarCodigo(usuario.SecretoTotpCifrado, encKey, codigo)
 	if err != nil {
 		return nil, fmt.Errorf("error al validar código TOTP: %w", err)
@@ -245,13 +246,22 @@ func (s *authServiceImpl) VerificarTotp(ctx context.Context, jtiTemporal, codigo
 		}
 	}
 
-	// 4. Actualizar sesión: Estado2fa=true
-	sesion.Estado2fa = true
-	if err := s.repo.ActualizarSesion(ctx, sesion); err != nil {
-		return nil, fmt.Errorf("error al actualizar sesión: %w", err)
+	// 4. Consumir la sesión temporal de inmediato: DEL auth:pre2fa:<jti>.
+	//    Si llegan dos verificaciones a la vez con el mismo token, solo una la encuentra.
+	consumida, err := s.sesiones.EliminarPre2FA(ctx, jtiTemporal)
+	if err != nil {
+		log.Printf("[2FA] verify failed | user=%s | reason=session_store_error | err=%v", usuario.EmailUsuario, err)
+		return nil, fmt.Errorf("no se pudo completar la verificación, intentá nuevamente")
+	}
+	if !consumida {
+		return nil, fmt.Errorf("sesión ya fue verificada")
 	}
 
-	// 5. Emitir access token
+	// 5. Emitir access y refresh token, ambos atados a la misma sesión (claim "sid")
+	sesionID, err := uuid.NewV7()
+	if err != nil {
+		return nil, fmt.Errorf("error al generar identificador de sesión: %w", err)
+	}
 	accessTTL := obtenerAccessTTL()
 	jtiAccess := uuid.New().String()
 	accessClaims := crypto.JWTClaims{
@@ -263,6 +273,7 @@ func (s *authServiceImpl) VerificarTotp(ctx context.Context, jtiTemporal, codigo
 	}
 	accessClaims.Subject = usuario.ID.String()
 	accessClaims.ID = jtiAccess
+	accessClaims.SesionID = sesionID.String()
 
 	accessToken, err := crypto.FirmarToken(accessClaims, jwtSecret, accessTTL)
 	if err != nil {
@@ -280,44 +291,32 @@ func (s *authServiceImpl) VerificarTotp(ctx context.Context, jtiTemporal, codigo
 	}
 	refreshClaims.Subject = usuario.ID.String()
 	refreshClaims.ID = jtiRefresh
+	refreshClaims.SesionID = sesionID.String()
 
 	refreshToken, err := crypto.FirmarToken(refreshClaims, jwtSecret, refreshTTL)
 	if err != nil {
 		return nil, fmt.Errorf("error al emitir refresh token: %w", err)
 	}
 
-	// 7. Guardar sesión de refresh en BD (reutilizando el modelo SesionActiva)
-	sesionRefresh := &domain.SesionActiva{
-		ID:              uuid.New(),
+	// 7. Crear la ÚNICA fila de la sesión y, en el mismo acto (misma transacción),
+	//    UPDATE usuarios SET fecha_ultimo_acceso = NOW()
+	ahora := time.Now()
+	sesion := &domain.SesionActiva{
+		ID:              sesionID,
 		UsuarioID:       usuario.ID,
-		JtiToken:        jtiRefresh,
+		JtiAccess:       jtiAccess,
+		JtiRefresh:      jtiRefresh,
 		Activa:          true,
-		Estado2fa:       true,
-		FechaExpiracion: time.Now().Add(refreshTTL),
+		FechaExpiracion: ahora.Add(refreshTTL),
 	}
-	if err := s.repo.GuardarSesion(ctx, sesionRefresh); err != nil {
-		return nil, fmt.Errorf("error al guardar sesión de refresh: %w", err)
-	}
-
-	// 8. Guardar sesión de access en BD (para poder revocar el token individualmente)
-	sesionAccess := &domain.SesionActiva{
-		ID:              uuid.New(),
-		UsuarioID:       usuario.ID,
-		JtiToken:        jtiAccess,
-		Activa:          true,
-		Estado2fa:       true,
-		FechaExpiracion: time.Now().Add(accessTTL),
-	}
-	if err := s.repo.GuardarSesion(ctx, sesionAccess); err != nil {
-		return nil, fmt.Errorf("error al guardar sesión de access: %w", err)
+	if err := s.repo.CrearSesionYRegistrarAcceso(ctx, sesion, ahora); err != nil {
+		return nil, fmt.Errorf("error al crear la sesión: %w", err)
 	}
 
-	// 9. Actualizar la fecha de último acceso del usuario
-	if err := s.repo.ActualizarUltimoAcceso(ctx, usuario.ID, time.Now()); err != nil {
-		log.Printf("[AUTH] advertencia: no se pudo actualizar fecha de último acceso del usuario %s: %v", usuario.ID, err)
-	}
+	// 8. Replicar la sesión en el almacén efímero: SET auth:session:<id> <payload> EX <ttl_refresh>
+	s.replicarSesion(ctx, sesion)
 
-	log.Printf("[AUTH] tokens issued | user=%s | access_jti=%s | refresh_jti=%s | access_ttl=%s", usuario.EmailUsuario, jtiAccess, jtiRefresh, accessTTL)
+	log.Printf("[AUTH] tokens issued | user=%s | session=%s | access_ttl=%s", usuario.EmailUsuario, sesionID, accessTTL)
 
 	s.auditSvc.Registrar(ctx, ports.RegistrarAuditoriaInput{
 		UsuarioID: usuario.ID,
@@ -353,10 +352,18 @@ func (s *authServiceImpl) RefrescarToken(ctx context.Context, refreshToken strin
 		return nil, fmt.Errorf("token no es del tipo refresh")
 	}
 
-	// 2. Verificar que la sesión de refresh está activa en BD
-	_, err = s.repo.BuscarSesionPorJTI(ctx, claims.ID)
+	// 2. Localizar la fila de la sesión y verificar que siga viva y que el
+	//    refresh sea el de esa sesión
+	sesionID, err := uuid.Parse(claims.SesionID)
+	if err != nil {
+		return nil, fmt.Errorf("refresh token sin sesión asociada: %w", ports.ErrSesionRevocada)
+	}
+	sesion, err := s.repo.BuscarSesionPorID(ctx, sesionID)
 	if err != nil {
 		return nil, fmt.Errorf("sesión de refresh no válida o revocada: %w", err)
+	}
+	if !sesion.Activa || sesion.JtiRefresh != claims.ID || !time.Now().Before(sesion.FechaExpiracion) {
+		return nil, fmt.Errorf("sesión de refresh no válida o revocada: %w", ports.ErrSesionRevocada)
 	}
 
 	// 3. Buscar usuario para obtener datos actualizados
@@ -384,26 +391,24 @@ func (s *authServiceImpl) RefrescarToken(ctx context.Context, refreshToken strin
 	}
 	accessClaims.Subject = usuario.ID.String()
 	accessClaims.ID = jtiAccess
+	accessClaims.SesionID = sesionID.String()
 
 	accessToken, err := crypto.FirmarToken(accessClaims, jwtSecret, accessTTL)
 	if err != nil {
 		return nil, fmt.Errorf("error al emitir access token: %w", err)
 	}
 
-	// 5. Guardar sesión de access en BD (para poder revocar el token individualmente)
-	sesionAccess := &domain.SesionActiva{
-		ID:              uuid.New(),
-		UsuarioID:       usuario.ID,
-		JtiToken:        jtiAccess,
-		Activa:          true,
-		Estado2fa:       true,
-		FechaExpiracion: time.Now().Add(accessTTL),
-	}
-	if err := s.repo.GuardarSesion(ctx, sesionAccess); err != nil {
-		return nil, fmt.Errorf("error al guardar sesión de access: %w", err)
+	// 5. UPDATE sobre la fila existente (prohibido INSERT): el nuevo access
+	//    reemplaza al anterior, que deja de ser válido
+	if err := s.repo.RotarJtiAccess(ctx, sesionID, claims.ID, jtiAccess); err != nil {
+		return nil, fmt.Errorf("sesión de refresh no válida o revocada: %w", err)
 	}
 
-	log.Printf("[AUTH] refresh ok | user=%s | new_access_jti=%s", usuario.EmailUsuario, jtiAccess)
+	// 6. Actualizar payload y TTL en el almacén efímero
+	sesion.JtiAccess = jtiAccess
+	s.replicarSesion(ctx, sesion)
+
+	log.Printf("[AUTH] refresh ok | user=%s | session=%s", usuario.EmailUsuario, sesionID)
 
 	return &ports.TokenResult{
 		AccessToken:  accessToken,
@@ -416,9 +421,10 @@ func (s *authServiceImpl) RefrescarToken(ctx context.Context, refreshToken strin
 // CerrarSesion
 // ==========================================
 
-// CerrarSesion invalida la sesión asociada al refresh token recibido y al access token actual.
-// Se apoya en el JTI para cortar el acceso inmediatamente.
-func (s *authServiceImpl) CerrarSesion(ctx context.Context, refreshToken, accessTokenJTI string) error {
+// CerrarSesion invalida la sesión del refresh token: la borra del almacén
+// efímero y la marca activa = false en PostgreSQL. El access token de esa
+// sesión deja de funcionar en el mismo momento.
+func (s *authServiceImpl) CerrarSesion(ctx context.Context, refreshToken string) error {
 	jwtSecret := os.Getenv("JWT_SECRET")
 
 	log.Printf("[AUTH] logout attempt")
@@ -434,19 +440,26 @@ func (s *authServiceImpl) CerrarSesion(ctx context.Context, refreshToken, access
 		return fmt.Errorf("token no es del tipo refresh")
 	}
 
-	// 2. Revocar ambas sesiones en una sola transacción
-	jtis := []string{claims.ID}
-	if accessTokenJTI != "" {
-		jtis = append(jtis, accessTokenJTI)
+	sesionID, err := uuid.Parse(claims.SesionID)
+	if err != nil {
+		log.Printf("[AUTH] logout failed | reason=token_without_session")
+		return fmt.Errorf("refresh token sin sesión asociada: %w", ports.ErrSesionRevocada)
 	}
 
-	if err := s.repo.RevocarSesiones(ctx, jtis); err != nil {
-		log.Printf("[AUTH] logout failed | reason=db_error")
+	// 2. Marcar activa = false sobre la fila única de la sesión
+	if err := s.repo.DesactivarSesion(ctx, sesionID, claims.ID); err != nil {
+		log.Printf("[AUTH] logout failed | session=%s | err=%v", sesionID, err)
 		return fmt.Errorf("no se pudo cerrar la sesión: %w", err)
 	}
 
-	log.Printf("[AUTH] logout done | refresh_jti=%s | access_jti=%s", claims.ID, accessTokenJTI)
-	
+	// 3. DEL auth:session:<session_id>
+	if err := s.sesiones.EliminarSesiones(ctx, sesionID); err != nil {
+		log.Printf("[AUTH] logout: sesión %s cerrada en PostgreSQL pero no en el almacén efímero: %v", sesionID, err)
+		return fmt.Errorf("no se pudo cerrar la sesión por completo, intentá nuevamente")
+	}
+
+	log.Printf("[AUTH] logout done | session=%s", sesionID)
+
 	usuarioID, _ := uuid.Parse(claims.Subject)
 	s.auditSvc.Registrar(ctx, ports.RegistrarAuditoriaInput{
 		UsuarioID: usuarioID,
@@ -458,17 +471,87 @@ func (s *authServiceImpl) CerrarSesion(ctx context.Context, refreshToken, access
 			"resource_id":   nil,
 		},
 	})
-	
+
 	return nil
 }
 
 // RevocarSesionesUsuario revoca todas las sesiones activas (access y refresh) de un usuario en un solo llamado.
 func (s *authServiceImpl) RevocarSesionesUsuario(ctx context.Context, usuarioID uuid.UUID) error {
 	log.Printf("[AUTH] revoking all sessions for user=%s", usuarioID)
-	if err := s.repo.InvalidarSesionesDeUsuario(ctx, usuarioID); err != nil {
+	if err := revocarSesionesDeUsuario(ctx, s.repo, s.sesiones, usuarioID); err != nil {
 		return fmt.Errorf("error al revocar sesiones: %w", err)
 	}
 	return nil
+}
+
+// ==========================================
+// Verificación de sesión (usada por los middlewares)
+// ==========================================
+
+// VerificarSesionPreAuth comprueba que el token temporal siga vigente (auth:pre2fa:<jti>).
+func (s *authServiceImpl) VerificarSesionPreAuth(ctx context.Context, jti string) error {
+	_, err := s.usuarioDePre2FA(ctx, jti)
+	return err
+}
+
+// VerificarSesionAccess comprueba que la sesión esté activa y que el access
+// token sea el último emitido para ella. Primero consulta el almacén efímero;
+// si la sesión no está (se reinició, se desalojó o Redis no responde) consulta
+// PostgreSQL, que es la fuente de verdad, y vuelve a replicarla.
+func (s *authServiceImpl) VerificarSesionAccess(ctx context.Context, sesionID uuid.UUID, jtiAccess string) error {
+	cacheada, err := s.sesiones.ObtenerSesion(ctx, sesionID)
+	switch {
+	case err == nil:
+		if cacheada.JtiAccess == jtiAccess && time.Now().Before(cacheada.FechaExpiracion) {
+			return nil
+		}
+		return ports.ErrSesionRevocada
+	case !errors.Is(err, ports.ErrSesionNoEncontrada):
+		log.Printf("[AUTH] almacén de sesiones no disponible, se valida contra PostgreSQL: %v", err)
+	}
+
+	sesion, err := s.repo.BuscarSesionPorID(ctx, sesionID)
+	if err != nil {
+		return err
+	}
+	if !sesion.Activa || sesion.JtiAccess != jtiAccess || !time.Now().Before(sesion.FechaExpiracion) {
+		return ports.ErrSesionRevocada
+	}
+	s.replicarSesion(ctx, sesion)
+	return nil
+}
+
+// usuarioDePre2FA lee auth:pre2fa:<jti>. Los errores del almacén se loguean y
+// al cliente le llega un mensaje genérico.
+func (s *authServiceImpl) usuarioDePre2FA(ctx context.Context, jti string) (uuid.UUID, error) {
+	usuarioID, err := s.sesiones.ObtenerPre2FA(ctx, jti)
+	if err == nil {
+		return usuarioID, nil
+	}
+	if !errors.Is(err, ports.ErrSesionNoEncontrada) {
+		log.Printf("[AUTH] error al leer la sesión temporal: %v", err)
+	}
+	return uuid.Nil, fmt.Errorf("sesión temporal inválida o expirada, iniciá sesión nuevamente: %w", ports.ErrSesionRevocada)
+}
+
+// replicarSesion guarda la sesión en el almacén efímero con TTL hasta que vence
+// el refresh. Si falla no se corta el flujo: PostgreSQL es la fuente de verdad y
+// VerificarSesionAccess la vuelve a replicar en el próximo request.
+func (s *authServiceImpl) replicarSesion(ctx context.Context, sesion *domain.SesionActiva) {
+	ttl := time.Until(sesion.FechaExpiracion)
+	if ttl <= 0 {
+		return
+	}
+	err := s.sesiones.GuardarSesion(ctx, ports.SesionCacheada{
+		SesionID:        sesion.ID,
+		UsuarioID:       sesion.UsuarioID,
+		JtiAccess:       sesion.JtiAccess,
+		JtiRefresh:      sesion.JtiRefresh,
+		FechaExpiracion: sesion.FechaExpiracion,
+	}, ttl)
+	if err != nil {
+		log.Printf("[AUTH] advertencia: no se pudo replicar la sesión %s en el almacén efímero: %v", sesion.ID, err)
+	}
 }
 
 // ==========================================
@@ -479,9 +562,9 @@ func (s *authServiceImpl) RevocarSesionesUsuario(ctx context.Context, usuarioID 
 // y lo envía usando el servicio de email (simulado o real).
 func (s *authServiceImpl) SolicitarRecuperacionContrasena(ctx context.Context, email string) error {
 	usuario, err := s.repo.BuscarUsuarioPorEmail(ctx, email)
-	
+
 	// Prevenir enumeración y ataques de timing (Timing Attacks)
-	// Si el usuario no existe o está inactivo, realizamos un trabajo computacional similar 
+	// Si el usuario no existe o está inactivo, realizamos un trabajo computacional similar
 	// (como hashear una clave dummy) para que el tiempo de respuesta sea indistinguible.
 	if err != nil || !usuario.Activo {
 		crypto.HashContrasena("dummy-hash-to-prevent-timing-attacks")
@@ -493,7 +576,7 @@ func (s *authServiceImpl) SolicitarRecuperacionContrasena(ctx context.Context, e
 	max := big.NewInt(1000000)
 	n, _ := rand.Int(rand.Reader, max)
 	codigo := fmt.Sprintf("%06d", n.Int64())
-	
+
 	// Expiración estricta de 10 minutos (600 segundos)
 	expiracion := time.Now().Add(10 * time.Minute)
 
@@ -558,7 +641,7 @@ func (s *authServiceImpl) ConfirmarRecuperacionContrasena(ctx context.Context, e
 	}
 
 	// Invalidar sesiones para forzar re-login con la nueva clave
-	if err := s.repo.InvalidarSesionesDeUsuario(ctx, usuario.ID); err != nil {
+	if err := revocarSesionesDeUsuario(ctx, s.repo, s.sesiones, usuario.ID); err != nil {
 		log.Printf("[AUTH] advertencia: error al invalidar sesiones tras recuperar contraseña %s: %v", usuario.ID, err)
 	}
 
@@ -589,4 +672,3 @@ func obtenerRefreshTTL() time.Duration {
 	}
 	return time.Duration(days) * 24 * time.Hour
 }
-

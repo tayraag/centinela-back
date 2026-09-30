@@ -35,6 +35,11 @@ func InitDB() (*gorm.DB, error) {
 	}
 
 	log.Println("✅ Conexión exitosa a PostgreSQL")
+
+	if err := migrarSesionesAUnaFilaPorSesion(db); err != nil {
+		return nil, err
+	}
+
 	log.Println("🔄 Ejecutando auto-migración de tablas...")
 
 	err = db.AutoMigrate(
@@ -87,6 +92,30 @@ func InitDB() (*gorm.DB, error) {
 	seedAdminPorDefecto(db)
 
 	return db, nil
+}
+
+// migrarSesionesAUnaFilaPorSesion reemplaza el esquema viejo de sesiones_activas
+// (una fila por cada JTI, columna jti_token) por el de "1 sesión = 1 fila".
+// Las filas viejas no se pueden convertir, así que la tabla se elimina y
+// AutoMigrate la vuelve a crear: todos los usuarios tienen que loguearse de
+// nuevo una vez. Ninguna otra tabla la referencia. En una base ya migrada no hace nada.
+func migrarSesionesAUnaFilaPorSesion(db *gorm.DB) error {
+	var esquemaViejo int64
+	if err := db.Raw(`SELECT count(*) FROM information_schema.columns
+		WHERE table_schema = current_schema() AND table_name = 'sesiones_activas' AND column_name = 'jti_token'`).
+		Scan(&esquemaViejo).Error; err != nil {
+		return fmt.Errorf("error al inspeccionar sesiones_activas: %w", err)
+	}
+	if esquemaViejo == 0 {
+		return nil
+	}
+	var filas int64
+	db.Table("sesiones_activas").Count(&filas)
+	if err := db.Migrator().DropTable("sesiones_activas"); err != nil {
+		return fmt.Errorf("error al migrar sesiones_activas: %w", err)
+	}
+	log.Printf("🔁 sesiones_activas migrada a \"1 sesión = 1 fila\": se descartaron %d filas del esquema viejo (los usuarios deben volver a loguearse)", filas)
+	return nil
 }
 
 // seedAdminPorDefecto crea un administrador por defecto si la tabla de usuarios está vacía.

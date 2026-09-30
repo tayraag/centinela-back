@@ -29,7 +29,7 @@ const (
 // RequirePreAuth valida que la petición tenga un JWT temporal válido (tipo "pre-auth").
 // Se usa en las rutas del flujo 2FA: GET /2fa/qr y POST /2fa/verify.
 // Inyecta el JTI en el contexto de Gin para uso posterior.
-func RequirePreAuth(repo ports.AuthRepository) gin.HandlerFunc {
+func RequirePreAuth(sesiones ports.VerificadorSesion) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		tokenStr := extraerBearer(c)
 		if tokenStr == "" {
@@ -58,9 +58,8 @@ func RequirePreAuth(repo ports.AuthRepository) gin.HandlerFunc {
 			return
 		}
 
-		// Validar que la sesión no haya sido revocada o invalidada en base de datos
-		sesion, err := repo.BuscarSesionPorJTI(c.Request.Context(), claims.ID)
-		if err != nil || !sesion.Activa {
+		// Validar que la sesión temporal siga vigente (auth:pre2fa:<jti>)
+		if err := sesiones.VerificarSesionPreAuth(c.Request.Context(), claims.ID); err != nil {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
 				"errorCode": "TOKEN_REVOKED",
 				"message":   "La sesión ha sido revocada o expirada administrativamente.",
@@ -81,7 +80,9 @@ func RequirePreAuth(repo ports.AuthRepository) gin.HandlerFunc {
 
 // RequireAuth valida que la petición tenga un JWT de acceso válido (tipo "access")
 // con 2FA verificado. Es el middleware principal para rutas protegidas.
-func RequireAuth(repo ports.AuthRepository) gin.HandlerFunc {
+// El token tiene que pertenecer a una sesión activa (claim "sid") y ser el
+// último access emitido para esa sesión.
+func RequireAuth(sesiones ports.VerificadorSesion) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		tokenStr := extraerBearer(c)
 		if tokenStr == "" {
@@ -118,9 +119,9 @@ func RequireAuth(repo ports.AuthRepository) gin.HandlerFunc {
 			return
 		}
 
-		// Validar que la sesión no haya sido revocada o invalidada en base de datos
-		sesion, err := repo.BuscarSesionPorJTI(c.Request.Context(), claims.ID)
-		if err != nil || !sesion.Activa {
+		// Validar que la sesión siga activa y que este sea su access vigente
+		sesionID, errSID := uuid.Parse(claims.SesionID)
+		if errSID != nil || sesiones.VerificarSesionAccess(c.Request.Context(), sesionID, claims.ID) != nil {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
 				"errorCode": "TOKEN_REVOKED",
 				"message":   "La sesión ha sido revocada o expirada administrativamente.",

@@ -16,15 +16,17 @@ import (
 type userServiceImpl struct {
 	userRepo     ports.UserRepository
 	authRepo     ports.AuthRepository // para invalidar sesiones y resetear TOTP
+	sesiones     ports.SesionCache    // para que las sesiones revocadas se borren también de Redis
 	emailService ports.EmailService
 	auditSvc     ports.AuditService
 }
 
 // NewUserService crea una nueva instancia del servicio de usuarios.
-func NewUserService(userRepo ports.UserRepository, authRepo ports.AuthRepository, auditSvc ports.AuditService, emailService ports.EmailService) ports.UserService {
+func NewUserService(userRepo ports.UserRepository, authRepo ports.AuthRepository, sesiones ports.SesionCache, auditSvc ports.AuditService, emailService ports.EmailService) ports.UserService {
 	return &userServiceImpl{
 		userRepo:     userRepo,
 		authRepo:     authRepo,
+		sesiones:     sesiones,
 		emailService: emailService,
 		auditSvc:     auditSvc,
 	}
@@ -159,7 +161,7 @@ func (s *userServiceImpl) ActualizarUsuario(ctx context.Context, id, orgID uuid.
 		cambios["activo"] = *input.Activo
 		// Si se desactiva el usuario, cerrar todas sus sesiones
 		if !*input.Activo {
-			if err := s.authRepo.InvalidarSesionesDeUsuario(ctx, id); err != nil {
+			if err := revocarSesionesDeUsuario(ctx, s.authRepo, s.sesiones, id); err != nil {
 				log.Printf("[USERS] advertencia: error al invalidar sesiones al desactivar usuario %s: %v", id, err)
 			}
 		}
@@ -204,7 +206,7 @@ func (s *userServiceImpl) EliminarUsuario(ctx context.Context, id, orgID uuid.UU
 	}
 
 	// Cerrar todas sus sesiones activas
-	if err := s.authRepo.InvalidarSesionesDeUsuario(ctx, id); err != nil {
+	if err := revocarSesionesDeUsuario(ctx, s.authRepo, s.sesiones, id); err != nil {
 		log.Printf("[USERS] advertencia: error al invalidar sesiones al eliminar usuario %s: %v", id, err)
 	}
 
@@ -278,7 +280,7 @@ func (s *userServiceImpl) ResetearContrasena(ctx context.Context, usuarioID, org
 	}
 
 	// Invalidar sesiones para forzar re-login con la nueva clave
-	if err := s.authRepo.InvalidarSesionesDeUsuario(ctx, usuarioID); err != nil {
+	if err := revocarSesionesDeUsuario(ctx, s.authRepo, s.sesiones, usuarioID); err != nil {
 		log.Printf("[USERS] advertencia: error al invalidar sesiones al resetear contraseña %s: %v", usuarioID, err)
 	}
 
@@ -304,7 +306,7 @@ func (s *userServiceImpl) ResetearTotp(ctx context.Context, usuarioID, orgID uui
 	}
 
 	// Invalidar sesiones para forzar re-login
-	if err := s.authRepo.InvalidarSesionesDeUsuario(ctx, usuarioID); err != nil {
+	if err := revocarSesionesDeUsuario(ctx, s.authRepo, s.sesiones, usuarioID); err != nil {
 		log.Printf("[USERS] advertencia: error al invalidar sesiones al resetear TOTP %s: %v", usuarioID, err)
 	}
 

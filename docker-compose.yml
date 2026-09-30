@@ -30,7 +30,10 @@ services:
       --appendonly yes
     volumes:
       - redis_data:/data
-    # Aislado dentro de la red interna del stack (sin puertos expuestos al host)
+    ports:
+      # Solo accesible desde esta misma PC (127.0.0.1), no desde la red: así la
+      # API corriendo con `go run ./cmd/api` puede usarlo (REDIS_ADDR=localhost:6379).
+      - "127.0.0.1:6379:6379"
 
 volumes:
   postgres_data:
