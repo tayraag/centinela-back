@@ -415,3 +415,30 @@ func TestEditarConfig_CambiosPendientes(t *testing.T) {
 		t.Errorf("memory no numérica debe dar 400, vino %d", s)
 	}
 }
+
+func TestContrato_ClienteDelBackend_EstadoTarea(t *testing.T) {
+	e := nuevoEntorno(t, "")
+	cliente := e.cliente()
+	upid, err := cliente.DetenerInstancia(context.Background(), 9003)
+	if err != nil {
+		t.Fatal(err)
+	}
+	estado, err := cliente.EstadoTarea(context.Background(), upid)
+	if err != nil || estado.Terminada {
+		t.Fatalf("Recién creada la tarea debe estar corriendo: %+v, %v", estado, err)
+	}
+	e.avanzar(3 * time.Second)
+	if estado, err = cliente.EstadoTarea(context.Background(), upid); err != nil || !estado.Terminada || estado.ExitStatus != "OK" {
+		t.Fatalf("Al terminar debe dar Terminada con OK: %+v, %v", estado, err)
+	}
+
+	// Una tarea que termina con error trae el mensaje de Proxmox en ExitStatus.
+	upid, _ = cliente.IniciarInstancia(context.Background(), 9002) // ya está encendida
+	e.avanzar(3 * time.Second)
+	if estado, _ = cliente.EstadoTarea(context.Background(), upid); estado.ExitStatus != "CT 9002 already running" {
+		t.Errorf("ExitStatus de una tarea fallida: %+v", estado)
+	}
+	if _, err := cliente.EstadoTarea(context.Background(), "no-es-un-upid"); err == nil {
+		t.Error("Un UPID inválido debe dar error")
+	}
+}

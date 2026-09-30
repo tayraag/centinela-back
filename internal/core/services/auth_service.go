@@ -32,6 +32,7 @@ const ttlPre2FA = 5 * time.Minute
 type authServiceImpl struct {
 	repo         ports.AuthRepository
 	sesiones     almacenSesiones
+	bus          busEventos
 	emailService ports.EmailService
 	auditSvc     ports.AuditService
 }
@@ -41,6 +42,7 @@ func NewAuthService(repo ports.AuthRepository, kv ports.KeyValueStore, emailServ
 	return &authServiceImpl{
 		repo:         repo,
 		sesiones:     almacenSesiones{kv: kv},
+		bus:          busEventos{kv: kv},
 		emailService: emailService,
 		auditSvc:     auditSvc,
 	}
@@ -322,6 +324,7 @@ func (s *authServiceImpl) VerificarTotp(ctx context.Context, jtiTemporal, codigo
 		UsuarioID: usuario.ID,
 		Accion:    ports.AccionVerificar2FA,
 		Resultado: ports.ResultadoExito,
+		Detalles:  map[string]any{"sesion_id": sesionID.String()},
 	})
 
 	return &ports.TokenResult{
@@ -460,12 +463,18 @@ func (s *authServiceImpl) CerrarSesion(ctx context.Context, refreshToken string)
 
 	log.Printf("[AUTH] logout done | session=%s", sesionID)
 
+	// 4. Cortar el stream de eventos de esta sesión (GET /api/events)
+	if usuarioID, err := uuid.Parse(claims.Subject); err == nil {
+		s.bus.avisarLogout(ctx, usuarioID, sesionID)
+	}
+
 	usuarioID, _ := uuid.Parse(claims.Subject)
 	s.auditSvc.Registrar(ctx, ports.RegistrarAuditoriaInput{
 		UsuarioID: usuarioID,
 		Accion:    ports.AccionLogout,
 		Resultado: ports.ResultadoExito,
 		Detalles: map[string]any{
+			"sesion_id":     sesionID.String(),
 			"reason":        "user_requested",
 			"resource_type": "AUTH",
 			"resource_id":   nil,
@@ -478,7 +487,7 @@ func (s *authServiceImpl) CerrarSesion(ctx context.Context, refreshToken string)
 // RevocarSesionesUsuario revoca todas las sesiones activas (access y refresh) de un usuario en un solo llamado.
 func (s *authServiceImpl) RevocarSesionesUsuario(ctx context.Context, usuarioID uuid.UUID) error {
 	log.Printf("[AUTH] revoking all sessions for user=%s", usuarioID)
-	if err := revocarSesionesDeUsuario(ctx, s.repo, s.sesiones, usuarioID); err != nil {
+	if err := revocarSesionesDeUsuario(ctx, s.repo, s.sesiones, s.bus, usuarioID); err != nil {
 		return fmt.Errorf("error al revocar sesiones: %w", err)
 	}
 	return nil
@@ -641,7 +650,7 @@ func (s *authServiceImpl) ConfirmarRecuperacionContrasena(ctx context.Context, e
 	}
 
 	// Invalidar sesiones para forzar re-login con la nueva clave
-	if err := revocarSesionesDeUsuario(ctx, s.repo, s.sesiones, usuario.ID); err != nil {
+	if err := revocarSesionesDeUsuario(ctx, s.repo, s.sesiones, s.bus, usuario.ID); err != nil {
 		log.Printf("[AUTH] advertencia: error al invalidar sesiones tras recuperar contraseña %s: %v", usuario.ID, err)
 	}
 

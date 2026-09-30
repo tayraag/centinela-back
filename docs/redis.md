@@ -62,6 +62,9 @@ miServicio := services.NewMiServicio(kvStore)
 | ----- | ----- | --- | ------------ |
 | `auth:pre2fa:<jti>` | `usuario_id` | 5 min | Login → 2FA. Se consume con `GetDel` al verificar el código. |
 | `auth:session:<session_id>` | JSON: `sesion_id`, `usuario_id`, `jti_access`, `jti_refresh`, `fecha_expiracion` | vida del refresh (30 días) | Réplica de `sesiones_activas` para validar cada request. PostgreSQL sigue siendo la fuente de verdad. |
+| `ws_ticket:<uuid>` | JSON: `usuario_id`, `sesion_id` | 30 s | Ticket de un solo uso para abrir `GET /api/events`. Se consume con `GetDel`. Ver [eventos-tiempo-real.md](eventos-tiempo-real.md). |
+
+**Canal Pub/Sub:** `centinela:events` lleva los eventos para los clientes (por ejemplo, `TASK_FINISHED`) y los avisos de control (`LOGOUT`, `SESSIONS_REVOKED`) que cortan los streams.
 
 ## Configuración
 

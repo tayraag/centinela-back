@@ -12,6 +12,9 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// RutaEventos es la ruta del stream SSE, que el logger trata aparte.
+const RutaEventos = "/api/events"
+
 // RequestLogger es un middleware Gin que loguea cada request/response de forma concisa.
 // Muestra el método, ruta, status, duración y los campos clave del body (sin datos sensibles).
 func RequestLogger() gin.HandlerFunc {
@@ -24,6 +27,15 @@ func RequestLogger() gin.HandlerFunc {
 			bodyBytes, _ := io.ReadAll(c.Request.Body)
 			c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
 			bodySnippet = sanitizarBody(bodyBytes)
+		}
+
+		// El stream de eventos (SSE) queda abierto horas: no se captura su cuerpo
+		// para no acumularlo en memoria. Solo se loguea la apertura y el cierre.
+		if c.Request.URL.Path == RutaEventos {
+			log.Printf("→ %s %s (stream SSE)", c.Request.Method, c.Request.URL.Path)
+			c.Next()
+			log.Printf("%s %d | %s | stream cerrado", statusEmoji(c.Writer.Status()), c.Writer.Status(), time.Since(start).Round(time.Second))
+			return
 		}
 
 		// Capturar la respuesta
@@ -64,8 +76,9 @@ func (w *bodyLogWriter) Write(b []byte) (int, error) {
 // fragmentos (sin distinguir mayúsculas), su valor se oculta en el log.
 // Cubre contrasena, contrasenaActual, contrasenaNueva, nuevaContrasena,
 // password, secretoManual, secreto_totp_cifrado, qrBase64 (el QR contiene el
-// secreto TOTP) y codigo (TOTP / recuperación).
-var fragmentosSensibles = []string{"contrasena", "password", "secreto", "qrbase64", "codigo"}
+// secreto TOTP), codigo (TOTP / recuperación) y ticket (el de un solo uso para
+// abrir el stream de eventos: quien lo lea del log podría usarlo).
+var fragmentosSensibles = []string{"contrasena", "password", "secreto", "qrbase64", "codigo", "ticket"}
 
 // camposJWT se truncan en vez de ocultarse, para poder distinguirlos en el log.
 var camposJWT = map[string]bool{"jwtTemporal": true, "accessToken": true, "refreshToken": true}

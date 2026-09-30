@@ -500,6 +500,8 @@ centinela-back/
 | GET    | `/api/account/profile`                | `RequireAuth`                          | Perfil propio                                     |
 | PUT    | `/api/account/profile`                | `RequireAuth`                          | Actualizar nombre/email propios                   |
 | PUT    | `/api/account/password`               | `RequireAuth`                          | Cambiar contraseña (requiere actual)              |
+| POST   | `/api/events/ticket`                  | `RequireAuth`                          | Ticket de un solo uso (30 s) para el stream       |
+| GET    | `/api/events?ticket=`                 | Ticket de un solo uso                  | Stream SSE de eventos (ver docs/eventos-tiempo-real.md) |
 
 ---
 

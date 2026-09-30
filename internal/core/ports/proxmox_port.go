@@ -71,4 +71,13 @@ type ProxmoxPort interface {
 
 	// DetenerInstancia apaga (forzado) una VM o contenedor. Devuelve el UPID.
 	DetenerInstancia(ctx context.Context, vmid int) (upid string, err error)
+
+	// EstadoTarea consulta GET /nodes/{node}/tasks/{upid}/status.
+	EstadoTarea(ctx context.Context, upid string) (*EstadoTareaDTO, error)
+}
+
+// EstadoTareaDTO es el estado de una tarea asíncrona de Proxmox.
+type EstadoTareaDTO struct {
+	Terminada  bool   // Proxmox reporta status "stopped"
+	ExitStatus string // "OK" si salió bien; si no, el mensaje de error de Proxmox
 }

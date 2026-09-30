@@ -13,8 +13,9 @@ func TestSanitizarBody_OcultaCamposSensibles(t *testing.T) {
 		"verificar 2FA":     `{"codigo":"654321"}`,
 		"QR de 2FA":         `{"qrBase64":"iVBORw0KGgo","secretoManual":"JBSWY3DPEHPK3PXP"}`,
 		"anidado":           `{"usuario":{"datos":[{"password":"Secreta1!"}]}}`,
+		"ticket de eventos": `{"ticket":"8a716756-2e16-4b89-bfae-f7946e416f58"}`,
 	}
-	secretos := []string{"Secreta1!", "Vieja123!", "Nueva123!", "123456", "654321", "iVBORw0KGgo", "JBSWY3DPEHPK3PXP"}
+	secretos := []string{"Secreta1!", "Vieja123!", "Nueva123!", "123456", "654321", "iVBORw0KGgo", "JBSWY3DPEHPK3PXP", "8a716756-2e16-4b89-bfae-f7946e416f58"}
 
 	for nombre, body := range casos {
 		resultado := sanitizarBody([]byte(body))

@@ -42,6 +42,17 @@ func (m *mockProxmoxPort) DetenerInstancia(ctx context.Context, vmid int) (strin
 	return "UPID:test:stop", nil
 }
 
+func (m *mockProxmoxPort) EstadoTarea(ctx context.Context, upid string) (*ports.EstadoTareaDTO, error) {
+	return &ports.EstadoTareaDTO{Terminada: true, ExitStatus: "OK"}, nil
+}
+
+// seguimientoNulo implementa ports.SeguimientoTareas sin hacer nada.
+type seguimientoNulo struct{}
+
+func (seguimientoNulo) Seguir(context.Context, uuid.UUID, int, string, string) (uuid.UUID, error) {
+	return uuid.New(), nil
+}
+
 // mockUserRepository implementa ports.UserRepository para pruebas
 type mockUserRepository struct {
 	permisosVMIDs []int
@@ -92,7 +103,7 @@ func TestListarInstancias_AdminVisualizaTodas(t *testing.T) {
 		permisosVMIDs: []int{100}, // Aunque solo tenga 100 en la BD, por ser ADMIN debe ver todas
 	}
 
-	handler := adaptersHttp.NewInstanceHandler(mockPx, mockRepo)
+	handler := adaptersHttp.NewInstanceHandler(mockPx, mockRepo, seguimientoNulo{})
 
 	router := gin.New()
 	router.GET("/api/instances", func(c *gin.Context) {
@@ -137,7 +148,7 @@ func TestListarInstancias_OperatorVisualizaSoloAsignadas(t *testing.T) {
 		permisosVMIDs: []int{101}, // El operador solo tiene asignada la instancia 101
 	}
 
-	handler := adaptersHttp.NewInstanceHandler(mockPx, mockRepo)
+	handler := adaptersHttp.NewInstanceHandler(mockPx, mockRepo, seguimientoNulo{})
 
 	router := gin.New()
 	router.GET("/api/instances", func(c *gin.Context) {
@@ -174,7 +185,7 @@ func TestListarInstancias_ProxmoxInaccesible(t *testing.T) {
 	}
 	mockRepo := &mockUserRepository{}
 
-	handler := adaptersHttp.NewInstanceHandler(mockPx, mockRepo)
+	handler := adaptersHttp.NewInstanceHandler(mockPx, mockRepo, seguimientoNulo{})
 
 	router := gin.New()
 	router.GET("/api/instances", func(c *gin.Context) {
@@ -206,7 +217,7 @@ func TestListarInstancias_ProxmoxTimeout(t *testing.T) {
 	mockPx := &mockProxmoxPort{
 		errListar: fmt.Errorf("%w: %w", ports.ErrProxmoxNoDisponible, ports.ErrProxmoxTimeout),
 	}
-	handler := adaptersHttp.NewInstanceHandler(mockPx, &mockUserRepository{})
+	handler := adaptersHttp.NewInstanceHandler(mockPx, &mockUserRepository{}, seguimientoNulo{})
 
 	router := gin.New()
 	router.GET("/api/instances", func(c *gin.Context) {

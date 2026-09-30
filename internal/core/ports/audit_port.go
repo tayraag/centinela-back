@@ -72,6 +72,12 @@ const (
 	AccionLogout         = "LOGOUT"
 )
 
+// Acciones del canal de eventos en tiempo real (GET /api/events)
+const (
+	AccionEventosConexion = "EVENTOS_CONEXION" // se abrió un stream (detalles: sesion_id)
+	AccionEventosCierre   = "EVENTOS_CIERRE"   // el backend cortó un stream (detalles: sesion_id, motivo)
+)
+
 // Acciones de gestión de usuarios
 const (
 	AccionCrearUsuario       = "CREAR_USUARIO"

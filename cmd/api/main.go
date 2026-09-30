@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	_ "el-centinela/docs"
 	httpHandlers "el-centinela/internal/adapters/primary/http"
@@ -120,7 +121,10 @@ func main() {
 	userHandler := httpHandlers.NewUserHandler(userService)
 	accountHandler := httpHandlers.NewAccountHandler(userService)
 	auditHandler := httpHandlers.NewAuditHandler(auditService)
-	instanceHandler := httpHandlers.NewInstanceHandler(proxmoxClient, userRepo)
+	eventosService := services.NewEventosService(kvStore, authRepo, instanceRepo, auditService)
+	seguimientoTareas := services.NewSeguimientoTareas(proxmoxClient, postgres.NewTareaRepository(db), eventosService, time.Second)
+	instanceHandler := httpHandlers.NewInstanceHandler(proxmoxClient, userRepo, seguimientoTareas)
+	eventsHandler := httpHandlers.NewEventsHandler(eventosService)
 
 	// 6. Configurar el Router HTTP (Gin)
 	// Usamos gin.New() para tener control total sobre los middlewares.
@@ -223,6 +227,14 @@ func main() {
 			account.PUT("/profile", accountHandler.ActualizarPerfil)
 			account.PUT("/password", accountHandler.CambiarContrasena)
 		}
+
+		// ==========================================
+		// Canal de eventos en tiempo real (RF-11) — SSE
+		// El ticket se pide con el access token; el stream se abre con el ticket
+		// (de un solo uso), así el JWT nunca viaja en la URL.
+		// ==========================================
+		api.POST("/events/ticket", middleware.RequireAuth(authService), eventsHandler.EmitirTicket)
+		api.GET("/events", eventsHandler.Stream)
 
 		// ==========================================
 		// Rutas de Instancias Proxmox

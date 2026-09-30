@@ -6,9 +6,10 @@ El canal de eventos en tiempo real transporta notificaciones generadas por el
 backend hacia los clientes conectados. Este documento define **solo el contrato
 de datos** del evento genérico que viajará por ese canal.
 
-El servidor WebSocket, las colas y los workers que publicarán estos eventos
-**todavía no existen**. Cuando se implementen, deben emitir exactamente este
-esquema y los valores de enum aquí definidos.
+El canal que los transporta es SSE (`GET /api/events`) sobre Redis Pub/Sub, y
+está documentado en [eventos-tiempo-real.md](eventos-tiempo-real.md). Hoy se
+publica `TASK_FINISHED`; los demás tipos quedan definidos para cuando se
+implementen sus emisores, que deben usar exactamente este esquema.
 
 - Definición del contrato (Go): `internal/core/ports/event_port.go` (struct `RealtimeEvent`).
 - Definición del contrato (TypeScript): `frontend/centinela/src/types/notifications.ts` (interface `RealtimeEvent`).
@@ -86,7 +87,8 @@ No es un campo propio del evento: viaja dentro de `detalles` en los eventos
   "fechaHora": "2026-09-21T14:30:05Z",
   "detalles": {
     "tareaId": "3f2504e0-4f89-11d3-9a0c-0305e82c3301",
-    "estado": "COMPLETED"
+    "estado": "COMPLETED",
+    "accion": "start"
   }
 }
 ```

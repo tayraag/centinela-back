@@ -1319,6 +1319,75 @@
                 }
             }
         },
+        "/events": {
+            "get": {
+                "description": "Abre un stream text/event-stream. Requiere el ticket de POST /api/events/ticket, que se consume al conectar (un solo uso). Cada evento llega como `data: \u003cRealtimeEvent en JSON\u003e`. Si el backend corta el stream (logout, revocación de sesiones o usuario desactivado) envía antes `event: cierre` con `{\"motivo\": \"...\"}`. Cada 25 s llega un comentario `: ping` para mantener la conexión.",
+                "produces": [
+                    "text/event-stream"
+                ],
+                "tags": [
+                    "Eventos en tiempo real"
+                ],
+                "summary": "Stream de eventos en tiempo real (SSE)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Ticket de un solo uso",
+                        "name": "ticket",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "stream de eventos",
+                        "schema": {
+                            "$ref": "#/definitions/ports.RealtimeEvent"
+                        }
+                    },
+                    "401": {
+                        "description": "EVENTS_TICKET_MISSING | EVENTS_TICKET_INVALID",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/events/ticket": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Devuelve un ticket de un solo uso, válido por 30 segundos, para abrir GET /api/events?ticket=... El navegador (EventSource) no puede mandar el header Authorization, y así el JWT nunca viaja en la URL.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Eventos en tiempo real"
+                ],
+                "summary": "Pedir ticket para el stream de eventos",
+                "responses": {
+                    "200": {
+                        "description": "ticket",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/instances": {
             "get": {
                 "security": [
@@ -1455,7 +1524,7 @@
                 ],
                 "responses": {
                     "202": {
-                        "description": "upid de la tarea creada en Proxmox",
+                        "description": "upid de la tarea en Proxmox y tareaId (llega en el evento TASK_FINISHED al terminar)",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -1522,7 +1591,7 @@
                 ],
                 "responses": {
                     "202": {
-                        "description": "upid de la tarea creada en Proxmox",
+                        "description": "upid de la tarea en Proxmox y tareaId (llega en el evento TASK_FINISHED al terminar)",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -1975,6 +2044,37 @@
                 },
                 "secretoManual": {
                     "description": "Solo retornado en la vinculación inicial, nunca más",
+                    "type": "string"
+                }
+            }
+        },
+        "ports.RealtimeEvent": {
+            "description": "Esquema genérico de evento del canal en tiempo real (RF-11). Los enums usan valores en inglés MAYÚSCULA y los campos nombres en español camelCase.",
+            "type": "object",
+            "properties": {
+                "detalles": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "fechaHora": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "mensaje": {
+                    "type": "string"
+                },
+                "recursoId": {
+                    "type": "string"
+                },
+                "recursoTipo": {
+                    "type": "string"
+                },
+                "severidad": {
+                    "type": "string"
+                },
+                "tipo": {
                     "type": "string"
                 }
             }

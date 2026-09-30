@@ -80,6 +80,7 @@ centinela-back/
 │   │   │   └── http/
 │   │   │       ├── auth_handler.go       # Endpoints de autenticación
 │   │   │       ├── user_handler.go       # Endpoints de gestión de usuarios (ADMIN)
+│   │   │       ├── events_handler.go     # Canal de eventos SSE (ver docs/eventos-tiempo-real.md)
 │   │   │       ├── account_handler.go    # Endpoints de perfil propio
 │   │   │       ├── responses.go          # Helpers de respuestas HTTP
 │   │   │       └── middleware/

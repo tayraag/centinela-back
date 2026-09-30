@@ -24,6 +24,8 @@ const (
 	ContextKeyRol = "rol"
 	// ContextKeyOrgID es la clave donde se guarda el OrganizacionID en el contexto de Gin.
 	ContextKeyOrgID = "orgID"
+	// ContextKeySesionID es la clave donde RequireAuth guarda el session_id (uuid.UUID) del access token.
+	ContextKeySesionID = "sesionID"
 )
 
 // RequirePreAuth valida que la petición tenga un JWT temporal válido (tipo "pre-auth").
@@ -148,6 +150,7 @@ func RequireAuth(sesiones ports.VerificadorSesion) gin.HandlerFunc {
 		c.Set(ContextKeyJTI, claims.ID)
 		c.Set(ContextKeyUserID, claims.Subject)
 		c.Set(ContextKeyRol, claims.Rol)
+		c.Set(ContextKeySesionID, sesionID)
 		if orgID, err := uuid.Parse(claims.OrgID); err == nil {
 			c.Set(ContextKeyOrgID, orgID)
 		}

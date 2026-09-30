@@ -14,14 +14,30 @@ import (
 
 // InstanceHandler maneja los endpoints HTTP de instancias Proxmox.
 type InstanceHandler struct {
-	proxmox  ports.ProxmoxPort
-	userRepo ports.UserRepository
+	proxmox     ports.ProxmoxPort
+	userRepo    ports.UserRepository
+	seguimiento ports.SeguimientoTareas
 }
 
-// NewInstanceHandler crea un nuevo InstanceHandler con el cliente de Proxmox y
-// el repositorio de usuarios (para el filtrado RBAC del listado) inyectados.
-func NewInstanceHandler(proxmox ports.ProxmoxPort, userRepo ports.UserRepository) *InstanceHandler {
-	return &InstanceHandler{proxmox: proxmox, userRepo: userRepo}
+// NewInstanceHandler crea un nuevo InstanceHandler con el cliente de Proxmox,
+// el repositorio de usuarios (para el filtrado RBAC del listado) y el
+// seguimiento de tareas (para publicar TASK_FINISHED al terminar start/stop).
+func NewInstanceHandler(proxmox ports.ProxmoxPort, userRepo ports.UserRepository, seguimiento ports.SeguimientoTareas) *InstanceHandler {
+	return &InstanceHandler{proxmox: proxmox, userRepo: userRepo, seguimiento: seguimiento}
+}
+
+// responderTarea registra la tarea para seguirla y responde 202 con el UPID y
+// el tareaId (el mismo que llega en el evento TASK_FINISHED). Si no se puede
+// registrar, la acción ya se disparó en Proxmox igual: se responde sin tareaId.
+func (h *InstanceHandler) responderTarea(c *gin.Context, vmid int, accion, upid string) {
+	respuesta := gin.H{"upid": upid}
+	tareaID, err := h.seguimiento.Seguir(c.Request.Context(), extraerUserID(c), vmid, accion, upid)
+	if err != nil {
+		log.Printf("[TAREAS] no se pudo registrar la tarea %s de %d: %v", accion, vmid, err)
+	} else {
+		respuesta["tareaId"] = tareaID.String()
+	}
+	c.JSON(http.StatusAccepted, respuesta)
 }
 
 // extraerVmid parsea el parámetro de ruta :vmid. El guard RequireInstanceAccess
@@ -170,7 +186,7 @@ func (h *InstanceHandler) ObtenerInstancia(c *gin.Context) {
 // @Produce      json
 // @Security     BearerAuth
 // @Param        vmid path int true "VMID de la instancia"
-// @Success      202 {object} map[string]string "upid de la tarea creada en Proxmox"
+// @Success      202 {object} map[string]string "upid de la tarea en Proxmox y tareaId (llega en el evento TASK_FINISHED al terminar)"
 // @Failure      400 {object} ErrorResponse "INVALID_VMID"
 // @Failure      403 {object} ErrorResponse "INSTANCE_ACCESS_DENIED — el OPERATOR no tiene este vmid asignado"
 // @Failure      404 {object} ErrorResponse "INSTANCE_NOT_FOUND"
@@ -188,7 +204,7 @@ func (h *InstanceHandler) IniciarInstancia(c *gin.Context) {
 		mapearErrorProxmox(c, err)
 		return
 	}
-	c.JSON(http.StatusAccepted, gin.H{"upid": upid})
+	h.responderTarea(c, vmid, "start", upid)
 }
 
 // ==========================================
@@ -203,7 +219,7 @@ func (h *InstanceHandler) IniciarInstancia(c *gin.Context) {
 // @Produce      json
 // @Security     BearerAuth
 // @Param        vmid path int true "VMID de la instancia"
-// @Success      202 {object} map[string]string "upid de la tarea creada en Proxmox"
+// @Success      202 {object} map[string]string "upid de la tarea en Proxmox y tareaId (llega en el evento TASK_FINISHED al terminar)"
 // @Failure      400 {object} ErrorResponse "INVALID_VMID"
 // @Failure      403 {object} ErrorResponse "INSTANCE_ACCESS_DENIED — el OPERATOR no tiene este vmid asignado; INSTANCE_PROTECTED — la instancia es infraestructura de El Centinela"
 // @Failure      404 {object} ErrorResponse "INSTANCE_NOT_FOUND"
@@ -221,5 +237,5 @@ func (h *InstanceHandler) DetenerInstancia(c *gin.Context) {
 		mapearErrorProxmox(c, err)
 		return
 	}
-	c.JSON(http.StatusAccepted, gin.H{"upid": upid})
+	h.responderTarea(c, vmid, "stop", upid)
 }

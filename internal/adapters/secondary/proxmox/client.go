@@ -266,3 +266,29 @@ func (c *Client) cambiarEstado(ctx context.Context, vmid int, accion string) (st
 	}
 	return parsed.Data, nil
 }
+
+type estadoTareaResponse struct {
+	Data struct {
+		Status     string `json:"status"`     // "running" | "stopped"
+		ExitStatus string `json:"exitstatus"` // presente cuando status = "stopped"
+	} `json:"data"`
+}
+
+// EstadoTarea consulta GET /nodes/{node}/tasks/{upid}/status. El nodo sale del
+// propio UPID (UPID:<nodo>:<pid>:...), y el UPID va completo, con el ":" final.
+func (c *Client) EstadoTarea(ctx context.Context, upid string) (*ports.EstadoTareaDTO, error) {
+	partes := strings.Split(upid, ":")
+	if len(partes) < 3 || partes[0] != "UPID" || partes[1] == "" {
+		return nil, fmt.Errorf("UPID con formato inválido: %q", upid)
+	}
+	path := fmt.Sprintf("/api2/json/nodes/%s/tasks/%s/status", partes[1], url.PathEscape(upid))
+	raw, err := c.doRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	var parsed estadoTareaResponse
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return nil, fmt.Errorf("%w: respuesta de estado de tarea inválida: %v", ports.ErrProxmoxNoDisponible, err)
+	}
+	return &ports.EstadoTareaDTO{Terminada: parsed.Data.Status == "stopped", ExitStatus: parsed.Data.ExitStatus}, nil
+}
