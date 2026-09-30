@@ -1,6 +1,7 @@
 package redis_test
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -9,6 +10,7 @@ import (
 	"el-centinela/internal/core/ports"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/google/uuid"
 	goredis "github.com/redis/go-redis/v9"
 )
 
@@ -39,7 +41,7 @@ func TestConectar_RedisCaido(t *testing.T) {
 	srv := miniredis.RunT(t)
 	addr := srv.Addr()
 	srv.Close()
-	if _, err := redis.Conectar(addr, ""); err == nil {
+	if _, err := redis.Conectar(addr, "", 0); err == nil {
 		t.Fatal("Conectar debe fallar si Redis no responde")
 	}
 }
@@ -47,10 +49,23 @@ func TestConectar_RedisCaido(t *testing.T) {
 func TestConectar_ConPassword(t *testing.T) {
 	srv := miniredis.RunT(t)
 	srv.RequireAuth("clave-redis")
-	if _, err := redis.Conectar(srv.Addr(), "incorrecta"); err == nil {
+	if _, err := redis.Conectar(srv.Addr(), "incorrecta", 0); err == nil {
 		t.Error("Con la contraseña incorrecta debe fallar")
 	}
-	if _, err := redis.Conectar(srv.Addr(), "clave-redis"); err != nil {
+	if _, err := redis.Conectar(srv.Addr(), "clave-redis", 0); err != nil {
 		t.Errorf("Con la contraseña correcta debe conectar: %v", err)
+	}
+}
+
+func TestConectar_UsaLaBaseIndicada(t *testing.T) {
+	srv := miniredis.RunT(t)
+	cache, err := redis.Conectar(srv.Addr(), "", 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = cache.GuardarPre2FA(context.Background(), "jti", uuid.New(), time.Minute)
+	srv.Select(3)
+	if !srv.Exists("auth:pre2fa:jti") {
+		t.Error("Con REDIS_DB=3 las claves deben quedar en la base 3")
 	}
 }

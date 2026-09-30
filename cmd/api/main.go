@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 
 	_ "el-centinela/docs"
@@ -273,11 +274,19 @@ func conectarAlmacenSesiones() ports.SesionCache {
 		log.Println("⚠️  REDIS_ADDR sin configurar: sesiones efímeras en MEMORIA (se pierden al reiniciar la API)")
 		return memoria.NewSesionCache()
 	}
-	cache, err := redis.Conectar(addr, os.Getenv("REDIS_PASSWORD"))
+	db := 0
+	if v := os.Getenv("REDIS_DB"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 0 {
+			log.Fatalf("❌ REDIS_DB inválida (%q): debe ser un número de base, ej. 0", v)
+		}
+		db = n
+	}
+	cache, err := redis.Conectar(addr, os.Getenv("REDIS_PASSWORD"), db)
 	if err != nil {
 		log.Printf("⚠️  %v: sesiones efímeras en MEMORIA (se pierden al reiniciar la API)", err)
 		return memoria.NewSesionCache()
 	}
-	log.Printf("✅ Conexión exitosa a Redis (%s)", addr)
+	log.Printf("✅ Conexión exitosa a Redis (%s, base %d)", addr, db)
 	return cache
 }

@@ -111,7 +111,7 @@ docker compose ps
 **Redis** guarda las sesiones efímeras con TTL automático: el token temporal pre-2FA (`auth:pre2fa:<jti>`, 5 minutos) y una réplica de cada sesión activa (`auth:session:<session_id>`). Queda accesible solo desde tu PC en `localhost:6379`, con la clave de `REDIS_PASSWORD`. Para mirar qué hay adentro:
 
 ```bash
-docker exec -it centinela-redis redis-cli -a centinela_redis_password --no-auth-warning
+docker exec -it centinela-redis redis-cli -a centinela_redis_pass --no-auth-warning
 KEYS auth:*                      # claves de sesión
 TTL auth:pre2fa:<jti>            # segundos que le quedan
 GET auth:session:<session_id>    # payload de la sesión

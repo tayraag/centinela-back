@@ -26,9 +26,9 @@ type SesionCache struct {
 
 var _ ports.SesionCache = (*SesionCache)(nil)
 
-// Conectar abre la conexión y verifica con un PING que Redis responda.
-func Conectar(addr, password string) (*SesionCache, error) {
-	client := goredis.NewClient(&goredis.Options{Addr: addr, Password: password})
+// Conectar abre la conexión a la base db de Redis y verifica con un PING que responda.
+func Conectar(addr, password string, db int) (*SesionCache, error) {
+	client := goredis.NewClient(&goredis.Options{Addr: addr, Password: password, DB: db})
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	if err := client.Ping(ctx).Err(); err != nil {
