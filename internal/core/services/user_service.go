@@ -93,7 +93,7 @@ func (s *userServiceImpl) CrearUsuario(ctx context.Context, orgID uuid.UUID, act
 	}
 
 	// 4. Enviar contraseña temporal por correo ANTES de persistir
-	if err := s.emailService.EnviarContrasenaTemporal(input.EmailUsuario, contrasenaTemp); err != nil {
+	if err := s.emailService.EnviarCredencialesTemporales(input.EmailUsuario, input.NombreCompleto, contrasenaTemp); err != nil {
 		log.Printf("[USERS] error al enviar email de bienvenida a %s: %v", input.EmailUsuario, err)
 		return nil, fmt.Errorf("EMAIL_DELIVERY_FAILED: %w", err)
 	}
@@ -269,7 +269,7 @@ func (s *userServiceImpl) ResetearContrasena(ctx context.Context, usuarioID, org
 	}
 
 	// Enviar correo antes de modificar la DB
-	if err := s.emailService.EnviarContrasenaTemporal(usuario.EmailUsuario, contrasenaTemp); err != nil {
+	if err := s.emailService.EnviarCredencialesTemporales(usuario.EmailUsuario, usuario.NombreCompleto, contrasenaTemp); err != nil {
 		log.Printf("[USERS] error al enviar email de reset a %s: %v", usuario.EmailUsuario, err)
 		return "", fmt.Errorf("EMAIL_DELIVERY_FAILED: %w", err)
 	}

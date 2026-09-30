@@ -86,7 +86,18 @@ func main() {
 	// 3. Inicializar adaptadores secundarios (repositorios)
 	authRepo := postgres.NewAuthRepository(db)
 	userRepo := postgres.NewUserRepository(db)
-	emailService := email.NewMockEmailService()
+	var emailService ports.EmailService
+	if os.Getenv("EMAIL_PROVIDER") == "smtp" {
+		svc, err := email.NewSMTPEmailService()
+		if err != nil {
+			log.Fatalf("❌ Configuración SMTP inválida: %v", err)
+		}
+		emailService = svc
+		log.Println("📧 Email Provider: SMTP (STARTTLS/TLS)")
+	} else {
+		emailService = email.NewMockEmailService()
+		log.Println("📧 Email Provider: MOCK (consola/tests)")
+	}
 	auditRepo := postgres.NewAuditRepository(db)
 	instanceRepo := postgres.NewInstanceRepository(db)
 	kvStore := conectarRedis()

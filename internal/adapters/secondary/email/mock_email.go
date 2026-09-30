@@ -5,7 +5,7 @@ import (
 )
 
 // MockEmailService implementa ports.EmailService simulando el envío mediante logs en consola.
-// Ideal para entornos de desarrollo o hasta que se configure un servidor SMTP real.
+// Ideal para entornos de desarrollo o tests.
 type MockEmailService struct{}
 
 // NewMockEmailService crea una nueva instancia del servicio de email simulado.
@@ -18,29 +18,37 @@ func (s *MockEmailService) EnviarCodigoRecuperacion(emailDestino, codigo string)
 	log.Println("==================================================")
 	log.Println("📧 SIMULACIÓN DE ENVÍO DE CORREO (MOCK SMTP)")
 	log.Printf("📥 Destinatario: %s\n", emailDestino)
-	log.Println("Asunto: Código de recuperación de contraseña")
+	log.Println("Asunto: El Centinela – Código de recuperación")
 	log.Println("Mensaje:")
-	log.Println("Hola, solicitaste restablecer tu contraseña.")
-	log.Printf("Tu código de seguridad temporal es: ** %s **\n", codigo)
-	log.Println("Este código expira en 15 minutos.")
+	log.Println("Solicitaste restablecer tu contraseña.")
+	log.Printf("Tu código de seguridad es: ** %s **\n", codigo)
+	log.Println("Este código expira en 10 minutos.") 
 	log.Println("==================================================")
-	
-	// Retornamos nil simulando que el correo se envió con éxito
 	return nil
 }
 
-// EnviarContrasenaTemporal simula el envío de la clave temporal por email.
-func (s *MockEmailService) EnviarContrasenaTemporal(emailDestino, contrasena string) error {
+// EnviarCredencialesTemporales simula el envío de credenciales temporales por email.
+func (s *MockEmailService) EnviarCredencialesTemporales(destinatario, nombre, contrasenaTemp string) error {
 	log.Println("==================================================")
 	log.Println("📧 SIMULACIÓN DE ENVÍO DE CORREO (MOCK SMTP)")
-	log.Printf("📥 Destinatario: %s\n", emailDestino)
-	log.Println("Asunto: Tu nueva cuenta / Restablecimiento de clave")
+	log.Printf("📥 Destinatario: %s\n", destinatario)
+	log.Println("Asunto: El Centinela – Credenciales de acceso")
 	log.Println("Mensaje:")
-	log.Println("Se ha generado una clave temporal de acceso para tu cuenta.")
-	log.Printf("Tu clave provisoria es: ** %s **\n", contrasena)
-	log.Println("Por motivos de seguridad, el sistema exigirá su cambio obligatorio en el primer inicio de sesión.")
+	log.Printf("Hola %s,\n", nombre)
+	log.Println("Se ha creado o restablecido tu cuenta en El Centinela.")
+	log.Printf("Tu clave provisoria es: ** %s **\n", contrasenaTemp)
+	log.Println("Esta clave es de un solo uso. El sistema exigirá su cambio al iniciar sesión.")
 	log.Println("==================================================")
-	
-	// Retornamos nil simulando éxito
+	return nil
+}
+
+// SendMail simula el envío de un correo genérico.
+func (s *MockEmailService) SendMail(to, subject, body string) error {
+	log.Println("==================================================")
+	log.Println("📧 SIMULACIÓN DE ENVÍO DE CORREO GENÉRICO (MOCK SMTP)")
+	log.Printf("📥 Destinatario: %s\n", to)
+	log.Printf("Asunto: %s\n", subject)
+	log.Printf("Mensaje:\n%s\n", body)
+	log.Println("==================================================")
 	return nil
 }
