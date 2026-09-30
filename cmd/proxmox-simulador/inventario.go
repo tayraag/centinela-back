@@ -4,6 +4,7 @@ import (
 	"crypto/sha1"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -177,12 +178,30 @@ func (i *instancia) etiqueta() string {
 	return fmt.Sprintf("VM %d", i.Vmid)
 }
 
+// clavesNumericas son las claves de config que Proxmox devuelve como número
+// JSON (sin comillas), según las capturas reales. Ojo: en qemu "memory" NO está,
+// porque la API real la devuelve como string ("memory": "2048").
+var clavesNumericas = map[string]map[string]bool{
+	tipoQemu: {"cores": true, "sockets": true, "numa": true, "onboot": true},
+	tipoLXC:  {"cores": true, "memory": true, "swap": true, "unprivileged": true, "onboot": true},
+}
+
+// tipar convierte a entero los valores que Proxmox devuelve como número.
+func (i *instancia) tipar(clave, valor string) any {
+	if clavesNumericas[i.Tipo][clave] {
+		if n, err := strconv.Atoi(valor); err == nil {
+			return n
+		}
+	}
+	return valor
+}
+
 // configCompleta arma la config como la devuelve GET /config. Con pendientes
 // aplicados (lo que devuelve Proxmox por defecto) o la actual (?current=1).
 func (i *instancia) configCompleta(conPendientes bool) map[string]any {
 	cfg := map[string]any{}
 	for k, v := range i.Config {
-		cfg[k] = v
+		cfg[k] = i.tipar(k, v)
 	}
 	cfg["cores"] = i.Cores
 	if i.Tipo == tipoQemu {
@@ -196,7 +215,7 @@ func (i *instancia) configCompleta(conPendientes bool) map[string]any {
 	}
 	if conPendientes {
 		for k, v := range i.Pendiente {
-			cfg[k] = v
+			cfg[k] = i.tipar(k, v)
 		}
 	}
 	if i.Actual != "" {

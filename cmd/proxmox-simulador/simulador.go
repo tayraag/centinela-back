@@ -67,6 +67,7 @@ func (s *Simulador) rutas() {
 
 	// Inventario y nodo (RF-02, RF-03, RF-07)
 	m.HandleFunc("GET "+base+"/cluster/resources", s.clusterResources)
+	m.HandleFunc("GET "+base+"/cluster/nextid", s.siguienteID)
 	m.HandleFunc("GET "+base+"/nodes/{node}/status", s.estadoNodo)
 	m.HandleFunc("GET "+base+"/nodes/{node}/{tipo}", s.listarPorTipo)
 
@@ -76,6 +77,7 @@ func (s *Simulador) rutas() {
 	m.HandleFunc("GET "+base+"/nodes/{node}/{tipo}/{vmid}/rrddata", s.rrddata)
 
 	// Tareas asíncronas (RF-04, RF-11)
+	m.HandleFunc("GET "+base+"/nodes/{node}/tasks", s.listarTareas)
 	m.HandleFunc("GET "+base+"/nodes/{node}/tasks/{upid}/status", s.estadoTarea)
 
 	// Snapshots (RF-06)
@@ -107,7 +109,7 @@ func (s *Simulador) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		errorPVE(rw, http.StatusInternalServerError, "simulador en modo falla 'caido'")
 		return
 	case "token":
-		errorPVE(rw, http.StatusUnauthorized, "invalid token value!")
+		noAutenticado(rw)
 		return
 	case "lento":
 		time.Sleep(demoraModoLento)
@@ -115,7 +117,7 @@ func (s *Simulador) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	esperado := fmt.Sprintf("PVEAPIToken=%s=%s", s.cfg.TokenID, s.cfg.TokenSecret)
 	if r.Header.Get("Authorization") != esperado {
-		errorPVE(rw, http.StatusUnauthorized, "invalid token value!")
+		noAutenticado(rw)
 		return
 	}
 
@@ -172,6 +174,34 @@ func (s *Simulador) validarNodoYTipo(w http.ResponseWriter, r *http.Request) boo
 // ==========================================
 // Respuestas con el formato de Proxmox
 // ==========================================
+
+// noAutenticado responde como Proxmox ante un token faltante o inválido:
+// "HTTP/1.1 401 Authentication failed!" y cuerpo vacío. net/http siempre
+// escribe el texto estándar ("Unauthorized") en la línea de estado, así que se
+// toma la conexión y se escribe la respuesta a mano. Si no se puede (HTTP/2),
+// se responde 401 con cuerpo vacío igual.
+func noAutenticado(rw *registroStatus) {
+	rw.status = http.StatusUnauthorized
+	if hj, ok := rw.ResponseWriter.(http.Hijacker); ok {
+		if conn, buf, err := hj.Hijack(); err == nil {
+			defer conn.Close()
+			fmt.Fprintf(buf, "HTTP/1.1 401 Authentication failed!\r\n"+
+				"Cache-Control: max-age=0\r\nPragma: no-cache\r\nServer: pve-api-daemon/3.0\r\n"+
+				"Date: %s\r\nContent-Length: 0\r\nConnection: close\r\n\r\n", time.Now().UTC().Format(http.TimeFormat))
+			_ = buf.Flush()
+			return
+		}
+	}
+	rw.Header().Set("Content-Length", "0")
+	rw.WriteHeader(http.StatusUnauthorized)
+}
+
+// responderConTotal es el formato de los listados paginados: {"data": [...], "total": N}.
+func responderConTotal(w http.ResponseWriter, data any, total int) {
+	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]any{"data": data, "total": total})
+}
 
 // responder envuelve el payload en {"data": ...}, como toda respuesta de Proxmox.
 func responder(w http.ResponseWriter, data any) {

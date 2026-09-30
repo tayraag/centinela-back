@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -440,5 +442,203 @@ func TestContrato_ClienteDelBackend_EstadoTarea(t *testing.T) {
 	}
 	if _, err := cliente.EstadoTarea(context.Background(), "no-es-un-upid"); err == nil {
 		t.Error("Un UPID inválido debe dar error")
+	}
+}
+
+// ==========================================
+// Fidelidad con la API real (Proxmox VE 9.2.2)
+// ==========================================
+
+// crudo hace un GET autenticado y devuelve la línea de estado y el body tal cual.
+func (e *entorno) crudo(ruta string, auth string) (string, string) {
+	e.t.Helper()
+	req, _ := http.NewRequest(http.MethodGet, e.server.URL+"/api2/json"+ruta, nil)
+	if auth != "" {
+		req.Header.Set("Authorization", auth)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	return resp.Status, string(body)
+}
+
+const authValida = "PVEAPIToken=" + tokenID + "=" + tokenSecret
+
+func TestFidelidad_ConfigConTiposNumericos(t *testing.T) {
+	e := nuevoEntorno(t, "")
+
+	// LXC: unprivileged, memory, swap y cores son números (captura RF-10 del contenedor 201).
+	_, lxc := e.crudo("/nodes/proxmox/lxc/201/config", authValida)
+	for _, campo := range []string{`"unprivileged":1`, `"memory":512`, `"swap":512`, `"cores":1`} {
+		if !strings.Contains(lxc, campo) {
+			t.Errorf("La config LXC debe tener %s sin comillas: %s", campo, lxc)
+		}
+	}
+
+	// QEMU: cores, sockets y numa son números; memory es string, igual que en la API real
+	// (captura RF-10 de la VM 100: "memory": "2048").
+	_, qemu := e.crudo("/nodes/proxmox/qemu/100/config", authValida)
+	for _, campo := range []string{`"cores":1`, `"sockets":1`, `"numa":0`, `"memory":"2048"`} {
+		if !strings.Contains(qemu, campo) {
+			t.Errorf("La config QEMU debe tener %s: %s", campo, qemu)
+		}
+	}
+
+	// Los cambios pendientes también salen tipados.
+	e.pedir("PUT", "/nodes/proxmox/qemu/100/config", url.Values{"cores": {"4"}})
+	if _, qemu = e.crudo("/nodes/proxmox/qemu/100/config", authValida); !strings.Contains(qemu, `"cores":4`) {
+		t.Errorf("El cambio pendiente de cores debe salir como número: %s", qemu)
+	}
+
+	// Deserializar en un struct estricto de Go no debe fallar.
+	var estricto struct {
+		Data struct {
+			Unprivileged int `json:"unprivileged"`
+			Memory       int `json:"memory"`
+			Swap         int `json:"swap"`
+			Cores        int `json:"cores"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(lxc), &estricto); err != nil || estricto.Data.Unprivileged != 1 || estricto.Data.Memory != 512 {
+		t.Errorf("Un struct estricto debe poder leer la config LXC: %+v, %v", estricto.Data, err)
+	}
+}
+
+func TestFidelidad_StatusCurrentConHA(t *testing.T) {
+	e := nuevoEntorno(t, "")
+	casos := map[string]map[string]any{
+		"/nodes/proxmox/lxc/101/status/current":  {"managed": float64(0)},
+		"/nodes/proxmox/qemu/110/status/current": {"managed": float64(0)},
+		"/nodes/proxmox/qemu/100/status/current": {"managed": float64(1), "state": "started"},
+	}
+	for ruta, esperado := range casos {
+		_, data, _ := e.pedir("GET", ruta, nil)
+		ha, _ := data.(map[string]any)["ha"].(map[string]any)
+		if len(ha) != len(esperado) {
+			t.Errorf("%s: ha = %v, se esperaba %v", ruta, ha, esperado)
+			continue
+		}
+		for k, v := range esperado {
+			if ha[k] != v {
+				t.Errorf("%s: ha[%s] = %v, se esperaba %v", ruta, k, ha[k], v)
+			}
+		}
+	}
+	// En el listado por tipo Proxmox no manda "ha" (ver captura).
+	_, lista, _ := e.pedir("GET", "/nodes/proxmox/lxc", nil)
+	if _, tiene := buscar(lista, 101)["ha"]; tiene {
+		t.Error("El listado GET /nodes/{node}/lxc no debe traer ha")
+	}
+}
+
+func TestFidelidad_NextID(t *testing.T) {
+	e := nuevoEntorno(t, "")
+	if s, data, _ := e.pedir("GET", "/cluster/nextid", nil); s != 200 || data != "102" {
+		t.Fatalf("nextid = %d %v, se esperaba 200 \"102\" (100 y 101 están ocupados)", s, data)
+	}
+	e.pedir("POST", "/nodes/proxmox/qemu", url.Values{"vmid": {"102"}})
+	if _, data, _ := e.pedir("GET", "/cluster/nextid", nil); data != "103" {
+		t.Errorf("Después de crear la 102, nextid debe ser \"103\": %v", data)
+	}
+	if _, crudo := e.crudo("/cluster/nextid", authValida); !strings.Contains(crudo, `"data":"103"`) {
+		t.Errorf("El VMID viaja como string, como en Proxmox: %s", crudo)
+	}
+
+	if s, data, _ := e.pedir("GET", "/cluster/nextid?vmid=150", nil); s != 200 || data != "150" {
+		t.Errorf("?vmid libre debe devolverlo: %d %v", s, data)
+	}
+	if s, _, cuerpo := e.pedir("GET", "/cluster/nextid?vmid=110", nil); s != 400 || !strings.Contains(cuerpo["message"].(string), "VM 110 already exists") {
+		t.Errorf("?vmid ocupado debe dar 400: %d %v", s, cuerpo)
+	}
+	if s, _, _ := e.pedir("GET", "/cluster/nextid?vmid=50", nil); s != 400 {
+		t.Errorf("?vmid menor a 100 debe dar 400, vino %d", s)
+	}
+}
+
+func TestFidelidad_ListarTareas(t *testing.T) {
+	e := nuevoEntorno(t, "")
+	listar := func(query string) (int, []any, float64) {
+		t.Helper()
+		s, data, cuerpo := e.pedir("GET", "/nodes/proxmox/tasks"+query, nil)
+		lista, _ := data.([]any)
+		total, _ := cuerpo["total"].(float64)
+		return s, lista, total
+	}
+
+	if s, lista, total := listar(""); s != 200 || len(lista) != 0 || total != 0 {
+		t.Fatalf("Sin tareas: %d %v total=%v", s, lista, total)
+	}
+
+	_, upid, _ := e.pedir("POST", "/nodes/proxmox/qemu/110/status/start", url.Values{})
+	// Por defecto (source=archive) solo aparecen las terminadas.
+	if _, lista, _ := listar(""); len(lista) != 0 {
+		t.Errorf("Con source=archive (default) una tarea en curso no aparece: %v", lista)
+	}
+	_, activas, _ := listar("?source=active")
+	if len(activas) != 1 {
+		t.Fatalf("source=active debe traer la tarea en curso: %v", activas)
+	}
+	enCurso := activas[0].(map[string]any)
+	if enCurso["upid"] != upid || enCurso["status"] != nil || enCurso["endtime"] != nil {
+		t.Errorf("Una tarea en curso no tiene status ni endtime: %v", enCurso)
+	}
+
+	e.avanzar(3 * time.Second)
+	e.pedir("POST", "/nodes/proxmox/qemu/9003/status/start", url.Values{}) // ya encendida → falla
+	e.avanzar(3 * time.Second)
+
+	s, lista, total := listar("")
+	if s != 200 || len(lista) != 2 || total != 2 {
+		t.Fatalf("Terminadas: %d %v total=%v", s, lista, total)
+	}
+	primera, segunda := lista[0].(map[string]any), lista[1].(map[string]any)
+	if primera["id"] != "9003" || segunda["id"] != "110" {
+		t.Errorf("Deben venir de la más nueva a la más vieja: %v, %v", primera["id"], segunda["id"])
+	}
+	for _, campo := range []string{"upid", "node", "pid", "pstart", "starttime", "endtime", "type", "id", "user", "tokenid", "status"} {
+		if _, ok := segunda[campo]; !ok {
+			t.Errorf("A la tarea terminada le falta %q: %v", campo, segunda)
+		}
+	}
+	if segunda["status"] != "OK" || segunda["user"] != "centinela-api@pve" || segunda["tokenid"] != "backend-token" || segunda["type"] != "qmstart" {
+		t.Errorf("Tarea terminada: %v", segunda)
+	}
+	if segunda["endtime"].(float64) <= segunda["starttime"].(float64) {
+		t.Errorf("endtime debe ser posterior a starttime: %v", segunda)
+	}
+
+	if _, lista, _ := listar("?errors=1"); len(lista) != 1 || lista[0].(map[string]any)["status"] != "VM 9003 already running" {
+		t.Errorf("errors=1 debe traer solo la fallida: %v", lista)
+	}
+	if _, lista, _ := listar("?vmid=110"); len(lista) != 1 {
+		t.Errorf("vmid=110 debe traer solo esa: %v", lista)
+	}
+	if _, lista, total := listar("?limit=1&start=1"); len(lista) != 1 || total != 2 || lista[0].(map[string]any)["id"] != "110" {
+		t.Errorf("Paginación: %v total=%v", lista, total)
+	}
+	if s, _, _ := e.pedir("GET", "/nodes/proxmox/tasks?source=otra", nil); s != 400 {
+		t.Errorf("source inválido debe dar 400, vino %d", s)
+	}
+}
+
+func TestFidelidad_401Canonico(t *testing.T) {
+	e := nuevoEntorno(t, "")
+	for _, auth := range []string{"", "PVEAPIToken=" + tokenID + "=secreto-incorrecto"} {
+		status, body := e.crudo("/cluster/resources", auth)
+		if status != "401 Authentication failed!" || body != "" {
+			t.Errorf("Authorization %q: se esperaba \"401 Authentication failed!\" sin body, vino %q %q", auth, status, body)
+		}
+	}
+	// El modo falla "token" responde igual.
+	if status, body := nuevoEntorno(t, "token").crudo("/cluster/resources", authValida); status != "401 Authentication failed!" || body != "" {
+		t.Errorf("Modo falla token: %q %q", status, body)
+	}
+	// Y el cliente del backend lo sigue reconociendo como token rechazado.
+	malo := proxmox.NewClient(e.server.URL+"/api2/json", "proxmox", tokenID, "incorrecto", nil)
+	if _, err := malo.ListarInstancias(context.Background()); !errors.Is(err, ports.ErrProxmoxCredenciales) {
+		t.Errorf("El backend debe reconocer el 401 canónico como credenciales rechazadas: %v", err)
 	}
 }

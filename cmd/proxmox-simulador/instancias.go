@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strconv"
 	"time"
 )
 
@@ -195,7 +196,14 @@ func (s *Simulador) estadoActual(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer s.mu.Unlock()
-	responder(w, s.estadoDetallado(inst, s.ahora()))
+	estado := s.estadoDetallado(inst, s.ahora())
+	// Proxmox envía "ha" en status/current de VMs y de contenedores (no en el
+	// listado GET /nodes/{node}/{tipo}, ver captura).
+	estado["ha"] = map[string]any{"managed": 0}
+	if inst.HA {
+		estado["ha"] = map[string]any{"managed": 1, "state": map[bool]string{true: "started", false: "stopped"}[inst.encendida()]}
+	}
+	responder(w, estado)
 }
 
 // estadoDetallado arma el objeto de status/current (y de cada elemento del
@@ -227,11 +235,6 @@ func (s *Simulador) estadoDetallado(inst *instancia, ahora time.Time) map[string
 	if inst.Tipo == tipoQemu {
 		e["qmpstatus"] = inst.Estado
 		e["memhost"] = m.memhost
-		ha := map[string]any{"managed": 0}
-		if inst.HA {
-			ha = map[string]any{"managed": 1, "state": map[bool]string{true: "started", false: "stopped"}[inst.encendida()]}
-		}
-		e["ha"] = ha
 	} else {
 		e["type"] = tipoLXC
 		e["swap"] = 0
@@ -328,4 +331,37 @@ func (s *Simulador) aplicarAccion(inst *instancia, accion string) string {
 		inst.Iniciada = ahora
 	}
 	return "OK"
+}
+
+// ==========================================
+// GET /cluster/nextid (RF-07)
+// ==========================================
+
+// siguienteID devuelve el menor VMID libre desde 100, como string ({"data": "102"}).
+// Con ?vmid=N verifica si N está libre: si lo está lo devuelve, si no responde 400.
+func (s *Simulador) siguienteID(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.finalizarTareas()
+
+	if v := r.URL.Query().Get("vmid"); v != "" {
+		vmid, err := strconv.Atoi(v)
+		switch {
+		case err != nil:
+			errorParametros(w, map[string]string{"vmid": fmt.Sprintf("type check ('integer') failed - got '%s'", v)})
+		case vmid < 100:
+			errorParametros(w, map[string]string{"vmid": "value must have a minimum value of 100"})
+		case s.instancias[vmid] != nil:
+			errorPVE(w, http.StatusBadRequest, fmt.Sprintf("VM %d already exists", vmid))
+		default:
+			responder(w, strconv.Itoa(vmid))
+		}
+		return
+	}
+	for vmid := 100; ; vmid++ {
+		if s.instancias[vmid] == nil {
+			responder(w, strconv.Itoa(vmid))
+			return
+		}
+	}
 }

@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"net/http"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -139,4 +141,93 @@ func (s *Simulador) estadoTarea(w http.ResponseWriter, r *http.Request) {
 		resp["exitstatus"] = t.Resultado
 	}
 	responder(w, resp)
+}
+
+// ==========================================
+// GET /nodes/{node}/tasks
+// ==========================================
+
+// listarTareas devuelve las tareas de esta sesión del simulador con el formato
+// de Proxmox: {"data": [...], "total": N}, de la más nueva a la más vieja.
+// Parámetros (los de Proxmox): source=archive (default, solo terminadas) |
+// active (solo en curso) | all; vmid; typefilter; errors=1 (solo fallidas);
+// start y limit (default 50) para paginar.
+func (s *Simulador) listarTareas(w http.ResponseWriter, r *http.Request) {
+	if !s.validarNodoYTipo(w, r) {
+		return
+	}
+	q := r.URL.Query()
+	source := q.Get("source")
+	if source == "" {
+		source = "archive"
+	}
+	if source != "archive" && source != "active" && source != "all" {
+		errorParametros(w, map[string]string{"source": "value '" + source + "' does not have a value in the enumeration 'archive, active, all'"})
+		return
+	}
+	inicio, err1 := enteroQuery(q.Get("start"), 0)
+	limite, err2 := enteroQuery(q.Get("limit"), 50)
+	if err1 != nil || err2 != nil {
+		errorParametros(w, map[string]string{"start/limit": "type check ('integer') failed"})
+		return
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.finalizarTareas()
+
+	usuario, token, _ := strings.Cut(s.cfg.TokenID, "!")
+	lista := make([]*tarea, 0, len(s.tareas))
+	for _, t := range s.tareas {
+		switch {
+		case source == "archive" && !t.Terminada, source == "active" && t.Terminada:
+			continue
+		case q.Get("vmid") != "" && q.Get("vmid") != t.ID:
+			continue
+		case q.Get("typefilter") != "" && q.Get("typefilter") != t.Tipo:
+			continue
+		case q.Get("errors") == "1" && (!t.Terminada || t.Resultado == "OK"):
+			continue
+		}
+		lista = append(lista, t)
+	}
+	sort.Slice(lista, func(a, b int) bool {
+		if lista[a].Inicio.Equal(lista[b].Inicio) {
+			return lista[a].PID > lista[b].PID
+		}
+		return lista[a].Inicio.After(lista[b].Inicio)
+	})
+
+	total := len(lista)
+	if inicio > total {
+		inicio = total
+	}
+	fin := inicio + limite
+	if fin > total {
+		fin = total
+	}
+	pagina := make([]map[string]any, 0, fin-inicio)
+	for _, t := range lista[inicio:fin] {
+		e := map[string]any{
+			"upid": t.UPID, "node": s.cfg.Nodo, "pid": t.PID, "pstart": t.PStart,
+			"starttime": t.Inicio.Unix(), "type": t.Tipo, "id": t.ID, "user": usuario, "tokenid": token,
+		}
+		if t.Terminada {
+			e["endtime"] = t.Fin.Unix()
+			e["status"] = t.Resultado // en Proxmox, el exitstatus de la tarea
+		}
+		pagina = append(pagina, e)
+	}
+	responderConTotal(w, pagina, total)
+}
+
+func enteroQuery(v string, defecto int) (int, error) {
+	if v == "" {
+		return defecto, nil
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 0 {
+		return 0, fmt.Errorf("valor inválido %q", v)
+	}
+	return n, nil
 }

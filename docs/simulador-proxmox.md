@@ -100,11 +100,13 @@ Todos bajo `/api2/json`, con el formato de Proxmox (`{"data": ...}`).
 | RF | Endpoint | Qué hace |
 | -- | -------- | -------- |
 | RF-02, 03 | `GET /cluster/resources` | Inventario completo. Acepta `?type=vm\|node\|storage\|sdn`. |
+| RF-07 | `GET /cluster/nextid` | Menor VMID libre desde 100, como string: `{"data": "102"}`. Con `?vmid=N` lo devuelve si está libre o responde `400 VM N already exists`. |
 | RF-02, 07, 11 | `GET /nodes/{node}/status` | Salud del nodo: CPU, memoria (sube cuando encendés instancias), disco, uptime. |
 | — | `GET /nodes/{node}/qemu` · `GET /nodes/{node}/lxc` | Listado por tipo. |
 | RF-05, 11 | `GET /nodes/{node}/{tipo}/{vmid}/status/current` | Estado detallado de una instancia. |
 | RF-04 | `POST /nodes/{node}/{tipo}/{vmid}/status/{accion}` | `start`, `stop`, `shutdown`, `reboot` y, solo en VMs, `reset`. Devuelve un UPID. |
 | RF-04, 11 | `GET /nodes/{node}/tasks/{upid}/status` | Estado de una tarea: `running` y después `stopped` con su `exitstatus`. |
+| RNF-04 | `GET /nodes/{node}/tasks` | Tareas de esta sesión del simulador, de la más nueva a la más vieja: `{"data": [...], "total": N}`. Como en Proxmox, por defecto (`source=archive`) solo las terminadas; `source=active` o `all`, `vmid`, `typefilter`, `errors=1`, `start` y `limit` (50). Las terminadas traen `endtime` y `status` (el exitstatus). |
 | RF-05 | `GET /nodes/{node}/{tipo}/{vmid}/rrddata?timeframe=hour` | 60 puntos de métricas. También `day`, `week`, `month` y `year`. |
 | RF-06 | `GET` / `POST /nodes/{node}/{tipo}/{vmid}/snapshot` | Listar (con la entrada `current`, "You are here!") y crear (`snapname`, `description`). |
 | RF-06 | `POST .../snapshot/{nombre}/rollback` | Volver a un snapshot. |
@@ -142,7 +144,20 @@ La duración se cambia con `PROXMOX_SIM_DURACION_TAREA` (en segundos; con `0` la
 | Crear con un VMID que ya existe (VMs y contenedores comparten IDs) | `500 unable to create VM 115 - VM 115 already exists on node 'proxmox'`. |
 | Parámetro inválido o faltante | `400` con el detalle por campo en `errors`, ej. `{"ostemplate": "property is missing and it is not optional"}`. |
 | VMID que no existe | `500 Configuration file 'nodes/proxmox/qemu-server/999.conf' does not exist`. |
-| Token incorrecto o faltante | `401 invalid token value!`. |
+| Token incorrecto o faltante | `HTTP/1.1 401 Authentication failed!` con **cuerpo vacío**, igual que Proxmox (no manda JSON). |
+
+### Tipos de datos de la config
+
+`GET .../config` devuelve cada campo con el mismo tipo JSON que el Proxmox real (verificado contra PVE 9.2.2):
+
+| Tipo | Números (sin comillas) | Strings |
+| ---- | ---------------------- | ------- |
+| LXC | `cores`, `memory`, `swap`, `unprivileged` | el resto (`rootfs`, `net0`, `hostname`...) |
+| QEMU | `cores`, `sockets`, `numa` | **`memory`** (`"2048"`: en PVE 9 acepta formatos como `current=2048`) y el resto |
+
+El `digest` se calcula igual que Proxmox: SHA-1 del archivo de config (`clave: valor` ordenado). Para el contenedor 201 da exactamente el mismo valor que la captura real.
+
+`status/current` trae `ha` en VMs y contenedores: `{"managed": 0}`, o `{"managed": 1, "state": "started"}` para las administradas por HA (la 100). El listado `GET /nodes/{node}/{tipo}` no lo trae, igual que el real.
 
 ### Cambios de configuración "pendientes"
 
