@@ -97,6 +97,15 @@ Listo: `GET /api/instances` ahora trae las instancias del simulador. Cada pedido
 
 Una VM creada con `POST` y `agent=1` queda con el agente configurado pero no corriendo, porque todavía no tiene sistema operativo.
 
+**Ojo con `prefix` (la máscara de red): tiene un tipo distinto según el endpoint**, igual que en Proxmox:
+
+| Endpoint | `prefix` | `ip-address-type` | Por qué |
+| -------- | -------- | ----------------- | ------- |
+| `lxc/{vmid}/interfaces` | **string**: `"24"` | `inet` / `inet6` | Lo arma Proxmox (verificado contra PVE 9.2.2). |
+| `qemu/{vmid}/agent/network-get-interfaces` | **número**: `24` | `ipv4` / `ipv6` | Proxmox reenvía la respuesta del QEMU Guest Agent, que define `prefix` como entero (QAPI `GuestIpAddress`). |
+
+Quien consuma estos endpoints (por ejemplo, el inventario unificado) tiene que leer `prefix` como string en los contenedores y como número en las VM, y tratar el `{"data": null}` de un contenedor apagado como "sin IP", no como un error.
+
 Además, `cluster/resources` devuelve el nodo, dos storages (`local-lvm` y `local`) y la zona de red, igual que la captura. El backend los descarta y se queda solo con VMs y contenedores.
 
 > "Protegida" es una regla **del backend**, no del simulador: `POST /api/instances/100/stop` responde `403 INSTANCE_PROTECTED` antes de llegar a Proxmox. Pegándole directo al simulador sí se puede apagar la 100.
@@ -124,7 +133,7 @@ Todos bajo `/api2/json`, con el formato de Proxmox (`{"data": ...}`).
 | RF-07 | `POST /nodes/{node}/qemu` · `POST /nodes/{node}/lxc` | Crear una VM o un contenedor, con los mismos parámetros que la captura. |
 | RF-10 | `GET` / `PUT /nodes/{node}/{tipo}/{vmid}/config` | Leer y editar la config (memoria, cores, nombre...). |
 | BAC-24B | `DELETE /nodes/{node}/{tipo}/{vmid}` | Borrar una instancia **apagada**: devuelve un UPID (`qmdestroy` / `vzdestroy`). Mientras corre la tarea queda con `lock: destroyed`; al terminar desaparece del inventario. Las administradas por HA (la 100) necesitan `?purge=1`. |
-| Inventario | `GET /nodes/{node}/lxc/{vmid}/interfaces` | IPs de un contenedor **encendido**: `lo` y `eth0`, con `hwaddr`, `inet`, `inet6` e `ip-addresses`. |
+| Inventario | `GET /nodes/{node}/lxc/{vmid}/interfaces` | IPs del contenedor: `lo` y `eth0`, con `hwaddr`, `inet`, `inet6` e `ip-addresses`. **Apagado: `200` con `{"data": null}`**, no es un error. Contrastado con Proxmox VE 9.2.2. |
 | Inventario | `GET /nodes/{node}/qemu/{vmid}/agent/network-get-interfaces` | IPs de una VM según el **QEMU Guest Agent**: `{"data": {"result": [...]}}` con `name`, `hardware-address`, `ip-addresses` y `statistics`. |
 
 Cualquier otra ruta responde `501 Method '...' not implemented`, como Proxmox.
@@ -157,7 +166,6 @@ La duración se cambia con `PROXMOX_SIM_DURACION_TAREA` (en segundos; con `0` la
 | Borrar una instancia encendida | `500 VM 9003 is running - destroy failed` (CT: `CT 101 is running - destroy failed`). |
 | Borrar una instancia en HA sin `purge=1` | `500 unable to remove VM 100 - used in HA resources and purge parameter not set.` |
 | Pedir IPs de una VM apagada / sin agente configurado / con el agente sin correr | `500 VM 110 is not running` / `No QEMU guest agent configured` / `QEMU guest agent is not running`. |
-| Pedir IPs de un contenedor apagado | `500 CT 201 not running`. |
 | Crear con un VMID que ya existe (VMs y contenedores comparten IDs) | `500 unable to create VM 115 - VM 115 already exists on node 'proxmox'`. |
 | Parámetro inválido o faltante | `400` con el detalle por campo en `errors`, ej. `{"ostemplate": "property is missing and it is not optional"}`. |
 | VMID que no existe | `500 Configuration file 'nodes/proxmox/qemu-server/999.conf' does not exist`. |
@@ -257,7 +265,7 @@ Conviene tenerlo presente para no llevarse sorpresas al pasar al servidor:
 - **No hay consola, VNC, backups, migraciones, firewall ni storage real.** Crear una VM no instala nada; solo la agrega al inventario.
 - **Un solo nodo.**
 - **Validaciones parciales:** valida lo que usamos (VMID, memoria, cores, nombres de snapshot, formato de disco, `ostemplate`), no todo el esquema de Proxmox.
-- **Borrado e IPs no tienen captura real.** El formato de `DELETE`, `/interfaces` y `agent/network-get-interfaces` (y sus mensajes de error) sigue la documentación de la API de Proxmox VE. Cuando alguien tenga acceso al Proxmox real, conviene capturar esas respuestas en `API proxmox respuestas/` y ajustar el simulador si difieren.
+- **`DELETE` y el guest agent de qemu no tienen captura real.** Su formato (y sus mensajes de error) sigue la documentación de Proxmox VE y de QEMU. `lxc/{vmid}/interfaces` sí está contrastado contra Proxmox VE 9.2.2. Cuando alguien tenga acceso al Proxmox real, conviene capturar las respuestas que faltan en `API proxmox respuestas/` y ajustar el simulador si difieren.
 - **`status/current` de un LXC devuelve un objeto**, como el Proxmox real. En la captura figura un array con dos contenedores, pero esa respuesta en realidad corresponde a `GET /nodes/{node}/lxc` (el listado), que el simulador también implementa.
 
 ---

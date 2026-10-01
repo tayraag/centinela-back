@@ -4,12 +4,13 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
-// Los formatos de este archivo no están en las capturas: siguen la
-// documentación de la API de Proxmox VE. Conviene confirmarlos con una captura
-// real cuando haya acceso (ver docs/simulador-proxmox.md).
+// /lxc/{vmid}/interfaces está contrastado contra Proxmox VE 9.2.2 real ("prefix"
+// como string, {"data": null} con el contenedor apagado). El guest agent de qemu
+// sigue la especificación de QEMU (QAPI GuestIpAddress: "prefix" es un entero).
 
 // macDeNet0 saca la MAC de net0: "virtio=BC:24:11:D1:C0:04,bridge=..." (qemu)
 // o "name=eth0,bridge=vmbr0,hwaddr=BC:24:11:07:CC:54,..." (lxc).
@@ -34,9 +35,11 @@ func ipv6EnlaceLocal(mac string) string {
 // GET /nodes/{node}/lxc/{vmid}/interfaces
 // ==========================================
 
-// interfacesLXC devuelve las interfaces del contenedor (solo si está encendido):
-// lo y eth0, con los campos clásicos (hwaddr, inet, inet6) y la lista
-// ip-addresses con el mismo formato que el guest agent de qemu.
+// interfacesLXC devuelve las interfaces del contenedor: lo y eth0, con los
+// campos clásicos (hwaddr, inet, inet6) y la lista ip-addresses.
+// Como en Proxmox VE 9.2.2 real:
+//   - "prefix" va como string ("24"), a diferencia del guest agent de qemu;
+//   - con el contenedor apagado NO es un error: 200 con {"data": null}.
 func (s *Simulador) interfacesLXC(w http.ResponseWriter, r *http.Request) {
 	if r.PathValue("tipo") == tipoQemu {
 		errorPVE(w, http.StatusNotImplemented, fmt.Sprintf("Method 'GET /nodes/%s/qemu/%s/interfaces' not implemented", r.PathValue("node"), r.PathValue("vmid")))
@@ -48,7 +51,7 @@ func (s *Simulador) interfacesLXC(w http.ResponseWriter, r *http.Request) {
 	}
 	defer s.mu.Unlock()
 	if !inst.encendida() {
-		errorPVE(w, http.StatusInternalServerError, fmt.Sprintf("CT %d not running", inst.Vmid))
+		responder(w, nil) // {"data": null}
 		return
 	}
 
@@ -114,16 +117,19 @@ func (s *Simulador) interfacesAgenteQemu(w http.ResponseWriter, r *http.Request)
 	}})
 }
 
-// direcciones arma ip-addresses. El guest agent usa "ipv4"/"ipv6" como tipo;
-// /interfaces de lxc usa "inet"/"inet6".
+// direcciones arma ip-addresses. Los dos endpoints difieren, igual que en Proxmox:
+//   - guest agent de qemu ("ipv4"): tipo "ipv4"/"ipv6" y prefix ENTERO (24);
+//   - /interfaces de lxc ("inet"): tipo "inet"/"inet6" y prefix STRING ("24").
 func direcciones(ip4 string, prefijo4 int, ip6 string, prefijo6 int, estilo string) []map[string]any {
 	tipo4, tipo6 := "ipv4", "ipv6"
+	var p4, p6 any = prefijo4, prefijo6
 	if estilo == "inet" {
 		tipo4, tipo6 = "inet", "inet6"
+		p4, p6 = strconv.Itoa(prefijo4), strconv.Itoa(prefijo6)
 	}
 	return []map[string]any{
-		{"ip-address": ip4, "ip-address-type": tipo4, "prefix": prefijo4},
-		{"ip-address": ip6, "ip-address-type": tipo6, "prefix": prefijo6},
+		{"ip-address": ip4, "ip-address-type": tipo4, "prefix": p4},
+		{"ip-address": ip6, "ip-address-type": tipo6, "prefix": p6},
 	}
 }
 

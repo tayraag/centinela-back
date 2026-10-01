@@ -765,15 +765,80 @@ func TestRed_InterfacesLXC(t *testing.T) {
 		t.Errorf("eth0: %v", eth0)
 	}
 	ips := eth0["ip-addresses"].([]any)
-	if v4 := ips[0].(map[string]any); v4["ip-address"] != "192.168.1.101" || v4["ip-address-type"] != "inet" || v4["prefix"] != float64(24) {
+	if v4 := ips[0].(map[string]any); v4["ip-address"] != "192.168.1.101" || v4["ip-address-type"] != "inet" || v4["prefix"] != "24" {
 		t.Errorf("ip-addresses: %v", ips)
 	}
-
-	if s, _, cuerpo := e.pedir("GET", "/nodes/proxmox/lxc/201/interfaces", nil); s != 500 || !strings.Contains(cuerpo["message"].(string), "CT 201 not running") {
-		t.Errorf("Un contenedor apagado no reporta interfaces: %d %v", s, cuerpo)
+	if v6 := ips[1].(map[string]any); v6["ip-address-type"] != "inet6" || v6["prefix"] != "64" {
+		t.Errorf("ip-addresses IPv6: %v", ips)
 	}
 	if s, _, _ := e.pedir("GET", "/nodes/proxmox/qemu/110/interfaces", nil); s != 501 {
 		t.Errorf("/interfaces no existe para qemu (501), vino %d", s)
+	}
+}
+
+// FIX (contrastado con Proxmox VE 9.2.2): en /lxc/{vmid}/interfaces "prefix" es un
+// string, y un struct estricto de Go con Prefix string tiene que poder leerlo.
+func TestRed_InterfacesLXC_PrefixComoString(t *testing.T) {
+	e := nuevoEntorno(t, "")
+	_, crudo := e.crudo("/nodes/proxmox/lxc/101/interfaces", authValida)
+	for _, esperado := range []string{`"prefix":"24"`, `"prefix":"8"`, `"prefix":"64"`, `"prefix":"128"`} {
+		if !strings.Contains(crudo, esperado) {
+			t.Errorf("Falta %s en el JSON crudo: %s", esperado, crudo)
+		}
+	}
+	if strings.Contains(crudo, `"prefix":24`) {
+		t.Errorf("prefix no puede venir como número en LXC: %s", crudo)
+	}
+
+	var estricto struct {
+		Data []struct {
+			Name        string `json:"name"`
+			IPAddresses []struct {
+				IPAddress string `json:"ip-address"`
+				Tipo      string `json:"ip-address-type"`
+				Prefix    string `json:"prefix"`
+			} `json:"ip-addresses"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(crudo), &estricto); err != nil {
+		t.Fatalf("Un struct estricto con Prefix string debe poder leer la respuesta: %v", err)
+	}
+	if eth0 := estricto.Data[1]; eth0.Name != "eth0" || eth0.IPAddresses[0].Prefix != "24" || eth0.IPAddresses[0].IPAddress != "192.168.1.101" {
+		t.Errorf("eth0 parseada: %+v", eth0)
+	}
+}
+
+// FIX (contrastado con Proxmox VE 9.2.2, CT 104): un contenedor apagado no es un
+// error: 200 con {"data": null}.
+func TestRed_InterfacesLXC_ApagadoDevuelveDataNull(t *testing.T) {
+	e := nuevoEntorno(t, "")
+	status, crudo := e.crudo("/nodes/proxmox/lxc/201/interfaces", authValida) // la 201 arranca apagada
+	if status != "200 OK" || strings.TrimSpace(crudo) != `{"data":null}` {
+		t.Errorf("Contenedor apagado: se esperaba 200 {\"data\":null}, vino %q %q", status, crudo)
+	}
+
+	// Lo mismo si se apaga uno que estaba encendido, y vuelve a tener IP al encenderlo.
+	e.pedir("POST", "/nodes/proxmox/lxc/9002/status/stop", url.Values{})
+	e.avanzar(3 * time.Second)
+	if status, crudo = e.crudo("/nodes/proxmox/lxc/9002/interfaces", authValida); status != "200 OK" || strings.TrimSpace(crudo) != `{"data":null}` {
+		t.Errorf("Al apagar la 9002: %q %q", status, crudo)
+	}
+	e.pedir("POST", "/nodes/proxmox/lxc/9002/status/start", url.Values{})
+	e.avanzar(3 * time.Second)
+	if _, crudo = e.crudo("/nodes/proxmox/lxc/9002/interfaces", authValida); !strings.Contains(crudo, `"inet":"192.168.1.92/24"`) {
+		t.Errorf("Al volver a encenderla debe reportar su IP: %s", crudo)
+	}
+}
+
+// El guest agent de qemu NO cambia: según la especificación de QEMU (QAPI
+// GuestIpAddress) "prefix" es un entero, y Proxmox lo reenvía tal cual.
+func TestRed_AgenteQemu_PrefixComoNumero(t *testing.T) {
+	e := nuevoEntorno(t, "")
+	e.pedir("POST", "/nodes/proxmox/qemu/110/status/start", url.Values{})
+	e.avanzar(3 * time.Second)
+	_, crudo := e.crudo("/nodes/proxmox/qemu/110/agent/network-get-interfaces", authValida)
+	if !strings.Contains(crudo, `"prefix":24`) || strings.Contains(crudo, `"prefix":"24"`) {
+		t.Errorf("En el guest agent prefix es un número: %s", crudo)
 	}
 }
 
@@ -826,10 +891,11 @@ func TestRed_ResolverIPsDelInventario(t *testing.T) {
 	resolver := func(tipo string, vmid int) string {
 		if tipo == "lxc" {
 			s, data, _ := e.pedir("GET", fmt.Sprintf("/nodes/proxmox/lxc/%d/interfaces", vmid), nil)
+			lista, _ := data.([]any) // apagado: 200 con {"data": null} → sin IP, no es un error
 			if s != 200 {
 				return ""
 			}
-			for _, x := range data.([]any) {
+			for _, x := range lista {
 				if itf := x.(map[string]any); itf["name"] != "lo" {
 					return strings.Split(itf["inet"].(string), "/")[0]
 				}
@@ -854,19 +920,21 @@ func TestRed_ResolverIPsDelInventario(t *testing.T) {
 		return ""
 	}
 
+	// Se consultan TODAS las instancias, también las apagadas: ninguna debe romper.
 	_, data, _ := e.pedir("GET", "/cluster/resources?type=vm", nil)
 	obtenidas := map[float64]string{}
 	for _, x := range data.([]any) {
 		rec := x.(map[string]any)
-		if rec["status"] == "running" {
-			obtenidas[rec["vmid"].(float64)] = resolver(rec["type"].(string), int(rec["vmid"].(float64)))
-		}
+		obtenidas[rec["vmid"].(float64)] = resolver(rec["type"].(string), int(rec["vmid"].(float64)))
 	}
 	esperadas := map[float64]string{
-		100:  "",              // sin agente configurado
-		101:  "192.168.1.101", // lxc
+		100:  "",              // qemu sin agente configurado
+		101:  "192.168.1.101", // lxc encendido
 		110:  "192.168.1.110", // qemu con agente
-		9002: "192.168.1.92",  // lxc
+		201:  "",              // lxc apagado → {"data": null}
+		9000: "",              // qemu apagada
+		9001: "",              // qemu apagada
+		9002: "192.168.1.92",  // lxc encendido
 		9003: "",              // agente no instalado
 	}
 	for vmid, ip := range esperadas {
