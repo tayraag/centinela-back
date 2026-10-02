@@ -6,7 +6,9 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	_ "el-centinela/docs"
@@ -82,6 +84,16 @@ func main() {
 	if err != nil {
 		log.Fatalf("❌ Error fatal al iniciar la base de datos: %v", err)
 	}
+
+	// Contexto global del proceso: se cancela ante SIGINT/SIGTERM para que
+	// los workers en background se detengan limpiamente.
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	// Worker de purga de sesiones (goroutine en segundo plano).
+	// Se ejecuta cada hora y elimina sesiones expiradas o cerradas por el usuario.
+	purgaWorker := postgres.NuevoPurgaWorker(db, 1*time.Hour)
+	go purgaWorker.Iniciar(ctx)
 
 	// 3. Inicializar adaptadores secundarios (repositorios)
 	authRepo := postgres.NewAuthRepository(db)
