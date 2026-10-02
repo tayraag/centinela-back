@@ -218,7 +218,7 @@ PROXMOX_SIM_FALLA=caido go run ./cmd/proxmox-simulador
 | ------- | ------------------------------ | -------------------------------------- |
 | `caido` | Todo responde `500`            | `502 PROXMOX_UNAVAILABLE`              |
 | `token` | Todo responde `401`            | `502 PROXMOX_UNAVAILABLE` (y 🔑 en el log de la API) |
-| `lento` | Cada respuesta tarda 15 s      | `504 PROXMOX_UNAVAILABLE` (el backend corta a los 10 s) |
+| `lento` | Cada respuesta tarda 15 s      | `504 PROXMOX_TIMEOUT` (el backend corta a los 10 s) |
 
 También podés simplemente **apagar el simulador**: la API responde `502` y en su log aparece ⚠️ con el motivo.
 

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	adaptersHttp "el-centinela/internal/adapters/primary/http"
@@ -22,10 +23,14 @@ type mockProxmoxPort struct {
 	instancias []ports.InstanciaProxmoxDTO
 	errListar  error
 	errAccion  error // error de IniciarInstancia / DetenerInstancia
+	errDetalle error // error de ObtenerInstancia
 }
 
 func (m *mockProxmoxPort) ObtenerInstancia(ctx context.Context, vmid int) (*ports.InstanciaProxmoxDTO, error) {
-	return nil, nil
+	if m.errDetalle != nil {
+		return nil, m.errDetalle
+	}
+	return &ports.InstanciaProxmoxDTO{Vmid: vmid}, nil
 }
 
 func (m *mockProxmoxPort) ListarInstancias(ctx context.Context) ([]ports.InstanciaProxmoxDTO, error) {
@@ -241,8 +246,8 @@ func TestListarInstancias_ProxmoxTimeout(t *testing.T) {
 	}
 	var errResp map[string]interface{}
 	_ = json.Unmarshal(w.Body.Bytes(), &errResp)
-	if errResp["errorCode"] != "PROXMOX_UNAVAILABLE" {
-		t.Errorf("errorCode esperado PROXMOX_UNAVAILABLE, obtenido: %v", errResp["errorCode"])
+	if errResp["errorCode"] != "PROXMOX_TIMEOUT" {
+		t.Errorf("errorCode esperado PROXMOX_TIMEOUT, obtenido: %v", errResp["errorCode"])
 	}
 }
 
@@ -266,6 +271,79 @@ func TestAccionesDeEnergia_InstanciaOcupadaEs409(t *testing.T) {
 		if w.Code != http.StatusConflict || cuerpo["errorCode"] != "INSTANCE_BUSY" ||
 			cuerpo["message"] != "La instancia se encuentra ejecutando otra tarea. Aguarde a que finalice." {
 			t.Errorf("%s: se esperaba 409 INSTANCE_BUSY, vino %d %v", ruta, w.Code, cuerpo)
+		}
+	}
+}
+
+// Cada tipo de error de Proxmox tiene su propio código HTTP y errorCode, igual en
+// los cuatro endpoints que usan mapearErrorProxmox.
+func TestMapeoDeErroresProxmox_EnTodosLosEndpoints(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	timeout := fmt.Errorf("%w: %w: context deadline exceeded", ports.ErrProxmoxNoDisponible, ports.ErrProxmoxTimeout)
+	caido := fmt.Errorf("%w: dial tcp 10.10.20.1:8006: connect: connection refused", ports.ErrProxmoxNoDisponible)
+	token := fmt.Errorf("%w: %w: HTTP 401", ports.ErrProxmoxNoDisponible, ports.ErrProxmoxCredenciales)
+	ocupada := fmt.Errorf("%w: can't lock file", ports.ErrInstanciaOcupada)
+
+	casos := []struct {
+		nombre string
+		err    error
+		status int
+		codigo string
+	}{
+		{"timeout", timeout, http.StatusGatewayTimeout, "PROXMOX_TIMEOUT"},
+		{"Proxmox caído", caido, http.StatusBadGateway, "PROXMOX_UNAVAILABLE"},
+		{"token rechazado", token, http.StatusBadGateway, "PROXMOX_UNAVAILABLE"},
+	}
+	endpoints := []struct {
+		metodo, ruta string
+	}{
+		{http.MethodGet, "/api/instances"},
+		{http.MethodGet, "/api/instances/110"},
+		{http.MethodPost, "/api/instances/110/start"},
+		{http.MethodPost, "/api/instances/110/stop"},
+	}
+
+	probar := func(mock *mockProxmoxPort, metodo, ruta string) (int, map[string]string) {
+		handler := adaptersHttp.NewInstanceHandler(mock, &mockUserRepository{}, seguimientoNulo{})
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set(string(middleware.ContextKeyRol), "ADMIN")
+			c.Set(string(middleware.ContextKeyUserID), uuid.New().String())
+		})
+		router.GET("/api/instances", handler.ListarInstancias)
+		router.GET("/api/instances/:vmid", handler.ObtenerInstancia)
+		router.POST("/api/instances/:vmid/start", handler.IniciarInstancia)
+		router.POST("/api/instances/:vmid/stop", handler.DetenerInstancia)
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(metodo, ruta, nil)
+		router.ServeHTTP(w, req)
+		var cuerpo map[string]string
+		_ = json.Unmarshal(w.Body.Bytes(), &cuerpo)
+		return w.Code, cuerpo
+	}
+
+	for _, caso := range casos {
+		for _, ep := range endpoints {
+			mock := &mockProxmoxPort{errListar: caso.err, errDetalle: caso.err, errAccion: caso.err}
+			status, cuerpo := probar(mock, ep.metodo, ep.ruta)
+			if status != caso.status || cuerpo["errorCode"] != caso.codigo {
+				t.Errorf("%s en %s %s: se esperaba %d %s, vino %d %v", caso.nombre, ep.metodo, ep.ruta, caso.status, caso.codigo, status, cuerpo)
+			}
+			if caso.codigo == "PROXMOX_TIMEOUT" && cuerpo["message"] != "Proxmox no respondió a tiempo; la acción puede haberse aplicado" {
+				t.Errorf("Mensaje del timeout: %q", cuerpo["message"])
+			}
+			for _, interno := range []string{"deadline", "dial tcp", "10.10.20.1", "HTTP 401"} {
+				if strings.Contains(cuerpo["message"], interno) {
+					t.Errorf("El detalle técnico no debe llegar al cliente: %q", cuerpo["message"])
+				}
+			}
+		}
+	}
+
+	// El 409 INSTANCE_BUSY de las acciones de energía no cambia.
+	for _, ruta := range []string{"/api/instances/110/start", "/api/instances/110/stop"} {
+		if status, cuerpo := probar(&mockProxmoxPort{errAccion: ocupada}, http.MethodPost, ruta); status != http.StatusConflict || cuerpo["errorCode"] != "INSTANCE_BUSY" {
+			t.Errorf("%s ocupada: se esperaba 409 INSTANCE_BUSY, vino %d %v", ruta, status, cuerpo)
 		}
 	}
 }

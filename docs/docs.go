@@ -1427,13 +1427,13 @@ const docTemplate = `{
                         }
                     },
                     "502": {
-                        "description": "PROXMOX_UNAVAILABLE",
+                        "description": "PROXMOX_UNAVAILABLE — Proxmox caído, sin red o token rechazado",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
                     },
                     "504": {
-                        "description": "PROXMOX_UNAVAILABLE — Proxmox no respondió a tiempo",
+                        "description": "PROXMOX_TIMEOUT — Proxmox no respondió a tiempo; la acción puede haberse aplicado",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -1491,13 +1491,13 @@ const docTemplate = `{
                         }
                     },
                     "502": {
-                        "description": "PROXMOX_UNAVAILABLE",
+                        "description": "PROXMOX_UNAVAILABLE — Proxmox caído, sin red o token rechazado",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
                     },
                     "504": {
-                        "description": "PROXMOX_UNAVAILABLE — Proxmox no respondió a tiempo",
+                        "description": "PROXMOX_TIMEOUT — Proxmox no respondió a tiempo; la acción puede haberse aplicado",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -1564,13 +1564,13 @@ const docTemplate = `{
                         }
                     },
                     "502": {
-                        "description": "PROXMOX_UNAVAILABLE",
+                        "description": "PROXMOX_UNAVAILABLE — Proxmox caído, sin red o token rechazado",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
                     },
                     "504": {
-                        "description": "PROXMOX_UNAVAILABLE — Proxmox no respondió a tiempo",
+                        "description": "PROXMOX_TIMEOUT — Proxmox no respondió a tiempo; la acción puede haberse aplicado",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -1637,13 +1637,13 @@ const docTemplate = `{
                         }
                     },
                     "502": {
-                        "description": "PROXMOX_UNAVAILABLE",
+                        "description": "PROXMOX_UNAVAILABLE — Proxmox caído, sin red o token rechazado",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
                     },
                     "504": {
-                        "description": "PROXMOX_UNAVAILABLE — Proxmox no respondió a tiempo",
+                        "description": "PROXMOX_TIMEOUT — Proxmox no respondió a tiempo; la acción puede haberse aplicado",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }

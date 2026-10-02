@@ -61,10 +61,12 @@ Cuando la API devuelva un error (códigos 400 a 500), el cuerpo de la respuesta 
 | 403 | `INSTANCE_PROTECTED` | La instancia es infraestructura de El Centinela (VMID 100–105) y no se puede apagar. |
 | 404 | `INSTANCE_NOT_FOUND` | El vmid no existe en Proxmox. |
 | 409 | `INSTANCE_BUSY` | La instancia está ejecutando otra tarea (Proxmox la tiene bloqueada, por ejemplo un `start` seguido de un `stop`). Reintentar cuando llegue el `TASK_FINISHED` de la tarea anterior. |
-| 502 | `PROXMOX_UNAVAILABLE` | Proxmox no está disponible: red caída, token rechazado o error del propio Proxmox. |
-| 504 | `PROXMOX_UNAVAILABLE` | Proxmox no respondió a tiempo. |
+| 502 | `PROXMOX_UNAVAILABLE` | Proxmox no está disponible: red caída, token rechazado o error del propio Proxmox. La orden **no** llegó a aplicarse. |
+| 504 | `PROXMOX_TIMEOUT` | Proxmox no respondió a tiempo. **La orden pudo haberse aplicado**: en acciones de energía, verificar el estado de la instancia antes de reintentar. |
 
 `INSTANCE_BUSY` **no** indica una falla de infraestructura: Proxmox está en línea y la acción se puede volver a pedir.
+
+`PROXMOX_UNAVAILABLE` y `PROXMOX_TIMEOUT` se distinguen a propósito. Ante `PROXMOX_UNAVAILABLE` la orden nunca llegó a Proxmox y reintentar es seguro. Ante `PROXMOX_TIMEOUT` la orden pudo haberse ejecutado (la máquina podría estar encendiéndose o apagándose), así que el front tiene que advertir que se verifique el estado antes de duplicarla.
 
 ## Detalle de Códigos 2xx — Éxito
 

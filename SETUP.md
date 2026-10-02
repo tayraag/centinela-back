@@ -91,7 +91,7 @@ go test ./cmd/proxmox-simulador/ -v
 go test ./internal/adapters/secondary/proxmox/ -run Integracion -v
 ```
 
-**Errores:** si Proxmox falla, la API responde `502 PROXMOX_UNAVAILABLE` (o `504` si no respondió a tiempo) sin detalles, y el motivo real queda en el log del servidor: 🔑 = token rechazado o sin configurar, ⏱️ = timeout, ⚠️ = red o `PROXMOX_URL` mal configurada. Un listado vacío sin error suele indicar que al token le falta el permiso `VM.Audit`.
+**Errores:** si Proxmox falla, la API responde `502 PROXMOX_UNAVAILABLE` (o `504 PROXMOX_TIMEOUT` si no respondió a tiempo: la acción puede haberse aplicado) sin detalles, y el motivo real queda en el log del servidor: 🔑 = token rechazado o sin configurar, ⏱️ = timeout, ⚠️ = red o `PROXMOX_URL` mal configurada. Un listado vacío sin error suele indicar que al token le falta el permiso `VM.Audit`.
 
 ---
 
