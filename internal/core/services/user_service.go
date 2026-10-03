@@ -454,9 +454,19 @@ func (s *userServiceImpl) CambiarContrasena(ctx context.Context, usuarioID uuid.
 
 // construirDetalleDTO arma el UsuarioDetalleDTO incluyendo los permisos de instancia.
 func (s *userServiceImpl) construirDetalleDTO(ctx context.Context, usuario *domain.Usuario) (*ports.UsuarioDetalleDTO, error) {
-	vmids, err := s.userRepo.ListarPermisosDeUsuario(ctx, usuario.ID)
+	permisosInput, err := s.userRepo.ListarPermisosConNivel(ctx, usuario.ID)
 	if err != nil {
 		return nil, err
+	}
+
+	vmids := make([]int, len(permisosInput))
+	permisosDTO := make([]ports.PermisoInstanciaDTO, len(permisosInput))
+	for i, p := range permisosInput {
+		vmids[i] = p.Vmid
+		permisosDTO[i] = ports.PermisoInstanciaDTO{
+			VMID:        p.Vmid,
+			NivelAcceso: p.NivelAcceso,
+		}
 	}
 
 	return &ports.UsuarioDetalleDTO{
@@ -472,6 +482,7 @@ func (s *userServiceImpl) construirDetalleDTO(ctx context.Context, usuario *doma
 		FechaCreacion:             usuario.FechaCreacion,
 		FechaUltimoAcceso:         usuario.FechaUltimoAcceso,
 		InstanciasPermitidas:      vmids,
+		Permisos:                  permisosDTO,
 	}, nil
 }
 

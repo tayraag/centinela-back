@@ -200,6 +200,14 @@ definitions:
         description: Total de registros que coinciden con los filtros
         type: integer
     type: object
+  el-centinela_internal_core_ports.PermisoInstanciaDTO:
+    properties:
+      nivelAcceso:
+        description: '"FULL_ACCESS" | "READ_ONLY"'
+        type: string
+      vmid:
+        type: integer
+    type: object
   el-centinela_internal_core_ports.PermisoInstanciaInput:
     properties:
       nivelAcceso:
@@ -286,6 +294,10 @@ definitions:
         type: string
       organizacionId:
         type: string
+      permisos:
+        items:
+          $ref: '#/definitions/el-centinela_internal_core_ports.PermisoInstanciaDTO'
+        type: array
       rol:
         type: string
       totpVinculado:

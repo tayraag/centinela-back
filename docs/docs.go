@@ -2133,6 +2133,18 @@ const docTemplate = `{
                 }
             }
         },
+        "el-centinela_internal_core_ports.PermisoInstanciaDTO": {
+            "type": "object",
+            "properties": {
+                "nivelAcceso": {
+                    "description": "\"FULL_ACCESS\" | \"READ_ONLY\"",
+                    "type": "string"
+                },
+                "vmid": {
+                    "type": "integer"
+                }
+            }
+        },
         "el-centinela_internal_core_ports.PermisoInstanciaInput": {
             "type": "object",
             "properties": {
@@ -2260,6 +2272,12 @@ const docTemplate = `{
                 },
                 "organizacionId": {
                     "type": "string"
+                },
+                "permisos": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/el-centinela_internal_core_ports.PermisoInstanciaDTO"
+                    }
                 },
                 "rol": {
                     "type": "string"

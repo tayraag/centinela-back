@@ -1778,7 +1778,14 @@ Respuesta Exitosa (200 OK):
   "organization": {
     "id": "org-uuid-5678",
     "name": "Tecnología Global S.A."
-  }
+  },
+  "instanciasPermitidas": [110],
+  "permisos": [
+    {
+      "vmid": 110,
+      "nivelAcceso": "FULL_ACCESS"
+    }
+  ]
 }
 ```
 

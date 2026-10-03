@@ -59,6 +59,12 @@ type ListaUsuariosResult struct {
 	Users   []UsuarioResumenDTO `json:"users"`
 }
 
+// PermisoInstanciaDTO representa el nivel de acceso sobre una instancia específica.
+type PermisoInstanciaDTO struct {
+	VMID        int    `json:"vmid"`
+	NivelAcceso string `json:"nivelAcceso"` // "FULL_ACCESS" | "READ_ONLY"
+}
+
 // UsuarioDetalleDTO es la proyección completa del usuario incluyendo instancias permitidas.
 type UsuarioDetalleDTO struct {
 	ID                        uuid.UUID  `json:"id"`
@@ -71,8 +77,9 @@ type UsuarioDetalleDTO struct {
 	TotpVinculado             bool       `json:"totpVinculado"`
 	CambioContrasenaRequerido bool       `json:"cambioContrasenaRequerido"`
 	FechaCreacion             time.Time  `json:"fechaCreacion"`
-	FechaUltimoAcceso         *time.Time `json:"fechaUltimoAcceso"`
-	InstanciasPermitidas      []int      `json:"instanciasPermitidas"` // VMIDs de Proxmox
+	FechaUltimoAcceso         *time.Time            `json:"fechaUltimoAcceso"`
+	InstanciasPermitidas      []int                 `json:"instanciasPermitidas"` // VMIDs de Proxmox
+	Permisos                  []PermisoInstanciaDTO `json:"permisos"`
 }
 
 // CrearUsuarioResult es la respuesta al crear un usuario exitosamente.
