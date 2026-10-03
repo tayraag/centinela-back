@@ -343,6 +343,14 @@ Al validar el código correctamente, el backend entrega el par de tokens definit
 }
 ```
 
+#### 4.x Refresco y Cierre de Sesión
+
+**POST /api/auth/refresh**
+Recibe el `refreshToken` y devuelve un nuevo par de tokens temporal si la sesión sigue siendo válida.
+
+**POST /api/auth/logout**
+Invalida los tokens de la sesión actual en el backend. Requiere enviar el `Authorization: Bearer <accessToken>`.
+
 #### 5\. Recuperación / Revinculación de 2FA
 
 > 🚧 **Estado: pendiente de definición de alcance.** El flujo de auto-recuperación por email (con código temporal + SMTP) está en evaluación y puede quedar fuera del alcance del proyecto.
@@ -608,6 +616,17 @@ Este endpoint se encarga de alimentar las listas o paneles laterales del Dashboa
   ]
 }
 ```
+
+#### 6.x Eventos en Tiempo Real (SSE)
+
+**POST /api/events/ticket**
+Requiere `Authorization: Bearer <accessToken>`. Devuelve un ticket temporal de un solo uso para autenticar la conexión SSE.
+```json
+{ "ticket": "uuid-xyz" }
+```
+
+**GET /api/events?ticket=uuid-xyz**
+Abre un stream persistente de tipo `text/event-stream` donde el backend envía notificaciones en tiempo real (estado de VMs, tareas en curso, notificaciones del sistema) sin necesidad de polling por parte del frontend.
 
 #### 7\. Inventario de instancias
 
@@ -1326,9 +1345,10 @@ Para la seguridad de esto se requiere autenticación mediante JWT y validación 
 
 Mediante query parameters:
 
-**GET /api/audit?page=1\&limit=10\&from=2024-05-01\&to=2024-05-08\&result=SUCCESS**
+**GET /api/admin/audit?page=1\&limit=10\&from=2024-05-01\&to=2024-05-08\&result=SUCCESS**
 
-- GET /api/audit: Es la ruta base del endpoint encargada de consultar y devolver los registros de auditoría almacenados en la base de datos.
+- GET /api/admin/audit: Es la ruta base del endpoint encargada de consultar y devolver los registros de auditoría almacenados en la base de datos.
+- GET /api/admin/audit/export: Exporta el log de auditoría completo según los filtros (descarga CSV).
 - page=1: Indica el número de la página actual que se está solicitando (útil para la paginación de la tabla).
 - limit=10: Define la cantidad máxima de registros que el backend debe devolver por cada página (en este caso, 10 elementos por vista).
 - from=2024-05-01 y to=2024-05-08: Son los parámetros que aplican el filtro temporal, limitando la búsqueda de eventos únicamente a los ocurridos dentro de ese rango de fechas (desde el 1 de mayo hasta el 8 de mayo de 2024).
