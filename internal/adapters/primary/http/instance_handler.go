@@ -18,20 +18,8 @@ import (
 // Tipos de respuesta
 // ==========================================
 
-// instanciasSummaryDTO resume el inventario visible para el header del panel.
-type instanciasSummaryDTO struct {
-	Total   int `json:"total"`
-	Running int `json:"running"`
-	Stopped int `json:"stopped"`
-}
-
-// listarInstanciasResponse envuelve el listado con su resumen agregado.
-// La estructura base { id, name, type, node, status } de cada instancia
-// se mantiene intacta para el selector del frontend.
-type listarInstanciasResponse struct {
-	Instances []ports.InstanciaListadaDTO `json:"instances"`
-	Summary   instanciasSummaryDTO        `json:"summary"`
-}
+// listarInstanciasResponse fue eliminado ya que el contrato original exige
+// devolver []InstanciaListadaDTO directamente para no romper el front.
 
 // ==========================================
 // Handler
@@ -149,7 +137,7 @@ func mapearErrorProxmox(c *gin.Context, err error) {
 // @Tags         Instancias Proxmox
 // @Produce      json
 // @Security     BearerAuth
-// @Success      200 {object} listarInstanciasResponse
+// @Success      200 {array} ports.InstanciaListadaDTO
 // @Failure      500 {object} ErrorResponse "INTERNAL_ERROR — error al consultar los permisos del usuario"
 // @Failure      502 {object} ErrorResponse "PROXMOX_UNAVAILABLE — Proxmox caído, sin red o token rechazado"
 // @Failure      504 {object} ErrorResponse "PROXMOX_TIMEOUT — Proxmox no respondió a tiempo; la acción puede haberse aplicado"
@@ -201,7 +189,6 @@ func (h *InstanceHandler) ListarInstancias(c *gin.Context) {
 	}
 
 	// Construir respuesta final con todos los campos.
-	var running, stopped int
 	resultado := make([]ports.InstanciaListadaDTO, 0, len(instancias))
 	for _, inst := range instancias {
 		tipo := inst.Tipo
@@ -214,34 +201,32 @@ func (h *InstanceHandler) ListarInstancias(c *gin.Context) {
 			activeTask = &tid
 		}
 
+		var nivel string
+		if rol == "ADMIN" {
+			nivel = ports.NivelAccesoFullAccess
+		} else {
+			nivel = nivelPorVmid[inst.Vmid]
+		}
+
+		cpu := inst.Cpu
+		mem := inst.Mem
+		maxMem := inst.MaxMem
+
 		resultado = append(resultado, ports.InstanciaListadaDTO{
 			ID:          inst.Vmid,
 			Name:        inst.Nombre,
 			Type:        tipo,
 			Node:        inst.Nodo,
 			Status:      inst.Estado,
-			CpuUsage:    inst.Cpu,
-			RamUsage:    inst.Mem,
-			MaxRam:      inst.MaxMem,
-			NivelAcceso: nivelPorVmid[inst.Vmid], // "" para ADMIN (omitempty)
+			CpuUsage:    &cpu,
+			RamUsage:    &mem,
+			MaxRam:      &maxMem,
+			NivelAcceso: nivel,
 			ActiveTask:  activeTask,
 		})
-
-		if inst.Estado == "running" {
-			running++
-		} else {
-			stopped++
-		}
 	}
 
-	c.JSON(http.StatusOK, listarInstanciasResponse{
-		Instances: resultado,
-		Summary: instanciasSummaryDTO{
-			Total:   len(resultado),
-			Running: running,
-			Stopped: stopped,
-		},
-	})
+	c.JSON(http.StatusOK, resultado)
 }
 
 // ==========================================
@@ -309,7 +294,7 @@ func (h *InstanceHandler) IniciarInstancia(c *gin.Context) {
 		mapearErrorProxmox(c, err)
 		return
 	}
-	h.registrarAuditVM(c, vmid, "", ports.AccionIniciarVM, ports.ResultadoExito, map[string]any{
+	h.registrarAuditVM(c, vmid, "", "START", "PENDING", map[string]any{
 		"upid": upid, "action": "start", "resource_type": "vm_or_lxc",
 	})
 	h.responderTarea(c, vmid, "start", upid)
@@ -348,7 +333,7 @@ func (h *InstanceHandler) DetenerInstancia(c *gin.Context) {
 		mapearErrorProxmox(c, err)
 		return
 	}
-	h.registrarAuditVM(c, vmid, "", ports.AccionDetenerVM, ports.ResultadoExito, map[string]any{
+	h.registrarAuditVM(c, vmid, "", "STOP", "PENDING", map[string]any{
 		"upid": upid, "action": "stop", "resource_type": "vm_or_lxc",
 	})
 	h.responderTarea(c, vmid, "stop", upid)
@@ -360,22 +345,23 @@ func (h *InstanceHandler) DetenerInstancia(c *gin.Context) {
 
 // accionesValidas son las acciones soportadas por el endpoint genérico de ciclo de vida.
 var accionesValidas = map[string]bool{
-	"start":  true,
-	"stop":   true,
-	"reboot": true,
+	"start":    true,
+	"stop":     true,
+	"shutdown": true,
+	"reboot":   true,
 }
 
-// CambiarEstado ejecuta una acción de ciclo de vida (start/stop/reboot) sobre
+// CambiarEstado ejecuta una acción de ciclo de vida (start/stop/shutdown/reboot) sobre
 // una instancia. Complementa los endpoints /start y /stop (que se mantienen
-// por retrocompatibilidad) y agrega soporte para reboot.
+// por retrocompatibilidad) y agrega soporte para reboot y shutdown.
 //
 // @Summary      Cambiar estado de instancia
-// @Description  Ejecuta una acción de ciclo de vida (start, stop, reboot) sobre una VM o contenedor. El endpoint genérico complementa a /start y /stop manteniendo retrocompatibilidad.
+// @Description  Ejecuta una acción de ciclo de vida (start, stop, shutdown, reboot) sobre una VM o contenedor. El endpoint genérico complementa a /start y /stop manteniendo retrocompatibilidad.
 // @Tags         Instancias Proxmox
 // @Produce      json
 // @Security     BearerAuth
 // @Param        vmid   path int    true "VMID de la instancia"
-// @Param        action path string true "Acción a ejecutar (start | stop | reboot)"
+// @Param        action path string true "Acción a ejecutar (start | stop | shutdown | reboot)"
 // @Success      202 {object} map[string]string "upid y tareaId"
 // @Failure      400 {object} ErrorResponse "INVALID_VMID | INVALID_ACTION"
 // @Failure      403 {object} ErrorResponse "INSTANCE_ACCESS_DENIED — se requiere FULL_ACCESS"
@@ -393,37 +379,46 @@ func (h *InstanceHandler) CambiarEstado(c *gin.Context) {
 	accion := strings.ToLower(c.Param("action"))
 	if !accionesValidas[accion] {
 		SendError(c, http.StatusBadRequest, "INVALID_ACTION",
-			fmt.Sprintf("Acción '%s' no válida. Opciones: start, stop, reboot.", accion))
+			fmt.Sprintf("Acción '%s' no válida. Opciones: start, stop, shutdown, reboot.", accion))
+		return
+	}
+
+	// Obtener la instancia primero para saber su nodo y tipo (necesario para shutdown y reboot)
+	instancia, err := h.proxmox.ObtenerInstancia(c.Request.Context(), vmid)
+	if err != nil {
+		mapearErrorProxmox(c, err)
 		return
 	}
 
 	var (
 		upid        string
-		err         error
 		accionAudit string
 	)
 
 	switch accion {
 	case "start":
 		upid, err = h.proxmox.IniciarInstancia(c.Request.Context(), vmid)
-		accionAudit = ports.AccionIniciarVM
+		accionAudit = "START"
 	case "stop":
 		upid, err = h.proxmox.DetenerInstancia(c.Request.Context(), vmid)
-		accionAudit = ports.AccionDetenerVM
+		accionAudit = "STOP"
+	case "shutdown":
+		upid, err = h.proxmox.Shutdown(c.Request.Context(), instancia.Nodo, vmid, instancia.Tipo)
+		accionAudit = "SHUTDOWN"
 	case "reboot":
-		upid, err = h.proxmox.ReiniciarInstancia(c.Request.Context(), vmid)
-		accionAudit = ports.AccionReiniciarVM
+		upid, err = h.proxmox.Reboot(c.Request.Context(), instancia.Nodo, vmid, instancia.Tipo)
+		accionAudit = "REBOOT"
 	}
 
 	if err != nil {
-		h.registrarAuditVM(c, vmid, "", accionAudit, ports.ResultadoFalla, map[string]any{
+		h.registrarAuditVM(c, vmid, instancia.Nombre, accionAudit, ports.ResultadoFalla, map[string]any{
 			"action": accion, "error": err.Error(),
 		})
 		mapearErrorProxmox(c, err)
 		return
 	}
-	h.registrarAuditVM(c, vmid, "", accionAudit, ports.ResultadoExito, map[string]any{
-		"upid": upid, "action": accion, "resource_type": "vm_or_lxc",
+	h.registrarAuditVM(c, vmid, instancia.Nombre, accionAudit, "PENDING", map[string]any{
+		"upid": upid, "action": accion, "resource_type": instancia.Tipo,
 	})
 	h.responderTarea(c, vmid, accion, upid)
 }

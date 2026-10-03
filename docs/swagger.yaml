@@ -1,88 +1,6 @@
 basePath: /api
 definitions:
-  http.ErrorResponse:
-    properties:
-      errorCode:
-        example: INVALID_REQUEST
-        type: string
-      message:
-        example: Mensaje descriptivo del error.
-        type: string
-    type: object
-  http.LoginRequest:
-    properties:
-      email:
-        type: string
-      password:
-        type: string
-    required:
-    - email
-    - password
-    type: object
-  http.asignarPermisosRequest:
-    properties:
-      permisos:
-        items:
-          $ref: '#/definitions/ports.PermisoInstanciaInput'
-        type: array
-    required:
-    - permisos
-    type: object
-  http.confirmarRecuperacionRequest:
-    properties:
-      codigo:
-        type: string
-      email:
-        type: string
-      nuevaContrasena:
-        maxLength: 12
-        minLength: 8
-        type: string
-    required:
-    - codigo
-    - email
-    - nuevaContrasena
-    type: object
-  http.instanciasSummaryDTO:
-    properties:
-      running:
-        type: integer
-      stopped:
-        type: integer
-      total:
-        type: integer
-    type: object
-  http.listarInstanciasResponse:
-    properties:
-      instances:
-        items:
-          $ref: '#/definitions/ports.InstanciaListadaDTO'
-        type: array
-      summary:
-        $ref: '#/definitions/http.instanciasSummaryDTO'
-    type: object
-  http.permisosResponse:
-    properties:
-      permisos:
-        items:
-          $ref: '#/definitions/ports.PermisoInstanciaInput'
-        type: array
-    type: object
-  http.solicitarRecuperacionRequest:
-    properties:
-      email:
-        type: string
-    required:
-    - email
-    type: object
-  http.verificarTotpRequest:
-    properties:
-      codigo:
-        type: string
-    required:
-    - codigo
-    type: object
-  ports.ActividadDTO:
+  el-centinela_internal_core_ports.ActividadDTO:
     properties:
       accion:
         type: string
@@ -99,7 +17,7 @@ definitions:
       resultado:
         type: string
     type: object
-  ports.ActualizarPerfilInput:
+  el-centinela_internal_core_ports.ActualizarPerfilInput:
     properties:
       emailUsuario:
         type: string
@@ -108,7 +26,7 @@ definitions:
         minLength: 2
         type: string
     type: object
-  ports.ActualizarUsuarioInput:
+  el-centinela_internal_core_ports.ActualizarUsuarioInput:
     properties:
       activo:
         description: puntero para distinguir false de "no enviado"
@@ -123,7 +41,7 @@ definitions:
         - OPERATOR
         type: string
     type: object
-  ports.AuditoriaDTO:
+  el-centinela_internal_core_ports.AuditoriaDTO:
     properties:
       accion:
         type: string
@@ -146,7 +64,7 @@ definitions:
         description: 'Puntero: puede ser null si el usuario fue eliminado'
         type: string
     type: object
-  ports.CambiarContrasenaInput:
+  el-centinela_internal_core_ports.CambiarContrasenaInput:
     properties:
       contrasenaActual:
         type: string
@@ -158,7 +76,7 @@ definitions:
     - contrasenaActual
     - contrasenaNueva
     type: object
-  ports.CrearUsuarioInput:
+  el-centinela_internal_core_ports.CrearUsuarioInput:
     properties:
       emailUsuario:
         type: string
@@ -181,7 +99,7 @@ definitions:
     - nombreUsuario
     - rol
     type: object
-  ports.CrearUsuarioResult:
+  el-centinela_internal_core_ports.CrearUsuarioResult:
     properties:
       activo:
         type: boolean
@@ -190,11 +108,10 @@ definitions:
       rol:
         type: string
     type: object
-  ports.InstanciaListadaDTO:
+  el-centinela_internal_core_ports.InstanciaListadaDTO:
     properties:
       activeTask:
         description: tareaId en curso o null
-        type: string
       cpuUsage:
         description: fracción [0,1]
         type: number
@@ -210,7 +127,7 @@ definitions:
       name:
         type: string
       nivelAcceso:
-        description: '"FULL_ACCESS" | "READ_ONLY" | "" (ADMIN)'
+        description: '"FULL_ACCESS" | "READ_ONLY" (o "FULL_ACCESS" para ADMIN)'
         type: string
       node:
         type: string
@@ -223,7 +140,7 @@ definitions:
         description: '"vm" | "lxc"'
         type: string
     type: object
-  ports.InstanciaProxmoxDTO:
+  el-centinela_internal_core_ports.InstanciaProxmoxDTO:
     properties:
       cpu:
         description: Telemetría en tiempo real (0 cuando la instancia está detenida)
@@ -250,16 +167,16 @@ definitions:
       vmid:
         type: integer
     type: object
-  ports.ListaUsuariosResult:
+  el-centinela_internal_core_ports.ListaUsuariosResult:
     properties:
       summary:
-        $ref: '#/definitions/ports.ResumenUsuariosDTO'
+        $ref: '#/definitions/el-centinela_internal_core_ports.ResumenUsuariosDTO'
       users:
         items:
-          $ref: '#/definitions/ports.UsuarioResumenDTO'
+          $ref: '#/definitions/el-centinela_internal_core_ports.UsuarioResumenDTO'
         type: array
     type: object
-  ports.LoginResult:
+  el-centinela_internal_core_ports.LoginResult:
     properties:
       cambioContrasenaRequerido:
         description: true si el usuario debe cambiar su contraseña antes de continuar
@@ -269,12 +186,12 @@ definitions:
       totpVinculado:
         type: boolean
     type: object
-  ports.PaginaAuditoria:
+  el-centinela_internal_core_ports.PaginaAuditoria:
     properties:
       items:
         description: Registros de esta página
         items:
-          $ref: '#/definitions/ports.AuditoriaDTO'
+          $ref: '#/definitions/el-centinela_internal_core_ports.AuditoriaDTO'
         type: array
       pagina:
         description: Página actual
@@ -283,14 +200,14 @@ definitions:
         description: Total de registros que coinciden con los filtros
         type: integer
     type: object
-  ports.PermisoInstanciaInput:
+  el-centinela_internal_core_ports.PermisoInstanciaInput:
     properties:
       nivelAcceso:
         type: string
       vmid:
         type: integer
     type: object
-  ports.QRResult:
+  el-centinela_internal_core_ports.QRResult:
     properties:
       qrBase64:
         type: string
@@ -298,7 +215,7 @@ definitions:
         description: Solo retornado en la vinculación inicial, nunca más
         type: string
     type: object
-  ports.RealtimeEvent:
+  el-centinela_internal_core_ports.RealtimeEvent:
     description: Esquema genérico de evento del canal en tiempo real (RF-11). Los
       enums usan valores en inglés MAYÚSCULA y los campos nombres en español camelCase.
     properties:
@@ -320,7 +237,7 @@ definitions:
       tipo:
         type: string
     type: object
-  ports.ResumenUsuariosDTO:
+  el-centinela_internal_core_ports.ResumenUsuariosDTO:
     properties:
       admins:
         type: integer
@@ -329,14 +246,14 @@ definitions:
       total:
         type: integer
     type: object
-  ports.RolDTO:
+  el-centinela_internal_core_ports.RolDTO:
     properties:
       descripcion:
         type: string
       valor:
         type: string
     type: object
-  ports.TokenResult:
+  el-centinela_internal_core_ports.TokenResult:
     properties:
       accessToken:
         type: string
@@ -344,7 +261,7 @@ definitions:
         description: segundos hasta expiración del access token
         type: integer
     type: object
-  ports.UsuarioDetalleDTO:
+  el-centinela_internal_core_ports.UsuarioDetalleDTO:
     properties:
       activo:
         type: boolean
@@ -374,7 +291,7 @@ definitions:
       totpVinculado:
         type: boolean
     type: object
-  ports.UsuarioResumenDTO:
+  el-centinela_internal_core_ports.UsuarioResumenDTO:
     properties:
       activo:
         type: boolean
@@ -397,6 +314,70 @@ definitions:
         type: string
       totpVinculado:
         type: boolean
+    type: object
+  internal_adapters_primary_http.ErrorResponse:
+    properties:
+      errorCode:
+        example: INVALID_REQUEST
+        type: string
+      message:
+        example: Mensaje descriptivo del error.
+        type: string
+    type: object
+  internal_adapters_primary_http.LoginRequest:
+    properties:
+      email:
+        type: string
+      password:
+        type: string
+    required:
+    - email
+    - password
+    type: object
+  internal_adapters_primary_http.asignarPermisosRequest:
+    properties:
+      permisos:
+        items:
+          $ref: '#/definitions/el-centinela_internal_core_ports.PermisoInstanciaInput'
+        type: array
+    required:
+    - permisos
+    type: object
+  internal_adapters_primary_http.confirmarRecuperacionRequest:
+    properties:
+      codigo:
+        type: string
+      email:
+        type: string
+      nuevaContrasena:
+        maxLength: 12
+        minLength: 8
+        type: string
+    required:
+    - codigo
+    - email
+    - nuevaContrasena
+    type: object
+  internal_adapters_primary_http.permisosResponse:
+    properties:
+      permisos:
+        items:
+          $ref: '#/definitions/el-centinela_internal_core_ports.PermisoInstanciaInput'
+        type: array
+    type: object
+  internal_adapters_primary_http.solicitarRecuperacionRequest:
+    properties:
+      email:
+        type: string
+    required:
+    - email
+    type: object
+  internal_adapters_primary_http.verificarTotpRequest:
+    properties:
+      codigo:
+        type: string
+    required:
+    - codigo
     type: object
 info:
   contact:
@@ -421,7 +402,7 @@ paths:
         name: body
         required: true
         schema:
-          $ref: '#/definitions/ports.CambiarContrasenaInput'
+          $ref: '#/definitions/el-centinela_internal_core_ports.CambiarContrasenaInput'
       produces:
       - application/json
       responses:
@@ -435,7 +416,7 @@ paths:
           description: Formato inválido, contraseña actual incorrecta, nueva igual
             a la actual o no cumple las reglas de complejidad
           schema:
-            $ref: '#/definitions/http.ErrorResponse'
+            $ref: '#/definitions/internal_adapters_primary_http.ErrorResponse'
         "401":
           description: Unauthorized
           schema:
@@ -446,7 +427,7 @@ paths:
           description: PASSWORD_CHANGE_REQUIRED — solo este endpoint y logout son
             accesibles mientras el flag esté activo
           schema:
-            $ref: '#/definitions/http.ErrorResponse'
+            $ref: '#/definitions/internal_adapters_primary_http.ErrorResponse'
       security:
       - BearerAuth: []
       summary: Cambiar mi contraseña
@@ -462,7 +443,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/ports.UsuarioDetalleDTO'
+            $ref: '#/definitions/el-centinela_internal_core_ports.UsuarioDetalleDTO'
         "401":
           description: Unauthorized
           schema:
@@ -485,14 +466,14 @@ paths:
         name: body
         required: true
         schema:
-          $ref: '#/definitions/ports.ActualizarPerfilInput'
+          $ref: '#/definitions/el-centinela_internal_core_ports.ActualizarPerfilInput'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/ports.UsuarioResumenDTO'
+            $ref: '#/definitions/el-centinela_internal_core_ports.UsuarioResumenDTO'
         "400":
           description: Bad Request
           schema:
@@ -508,7 +489,7 @@ paths:
         "409":
           description: Email ya en uso
           schema:
-            $ref: '#/definitions/http.ErrorResponse'
+            $ref: '#/definitions/internal_adapters_primary_http.ErrorResponse'
       security:
       - BearerAuth: []
       summary: Actualizar mi perfil
@@ -565,7 +546,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/ports.PaginaAuditoria'
+            $ref: '#/definitions/el-centinela_internal_core_ports.PaginaAuditoria'
         "401":
           description: Unauthorized
           schema:
@@ -666,7 +647,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/ports.ListaUsuariosResult'
+            $ref: '#/definitions/el-centinela_internal_core_ports.ListaUsuariosResult'
         "401":
           description: Unauthorized
           schema:
@@ -696,18 +677,18 @@ paths:
         name: body
         required: true
         schema:
-          $ref: '#/definitions/ports.CrearUsuarioInput'
+          $ref: '#/definitions/el-centinela_internal_core_ports.CrearUsuarioInput'
       produces:
       - application/json
       responses:
         "201":
           description: Created
           schema:
-            $ref: '#/definitions/ports.CrearUsuarioResult'
+            $ref: '#/definitions/el-centinela_internal_core_ports.CrearUsuarioResult'
         "400":
           description: Datos inválidos
           schema:
-            $ref: '#/definitions/http.ErrorResponse'
+            $ref: '#/definitions/internal_adapters_primary_http.ErrorResponse'
         "401":
           description: Unauthorized
           schema:
@@ -723,7 +704,7 @@ paths:
         "409":
           description: Email o username ya registrado
           schema:
-            $ref: '#/definitions/http.ErrorResponse'
+            $ref: '#/definitions/internal_adapters_primary_http.ErrorResponse'
       security:
       - BearerAuth: []
       summary: Crear usuario
@@ -747,7 +728,7 @@ paths:
         "400":
           description: No puede eliminarse a sí mismo
           schema:
-            $ref: '#/definitions/http.ErrorResponse'
+            $ref: '#/definitions/internal_adapters_primary_http.ErrorResponse'
         "401":
           description: Unauthorized
           schema:
@@ -787,11 +768,11 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/ports.UsuarioDetalleDTO'
+            $ref: '#/definitions/el-centinela_internal_core_ports.UsuarioDetalleDTO'
         "400":
           description: UUID inválido
           schema:
-            $ref: '#/definitions/http.ErrorResponse'
+            $ref: '#/definitions/internal_adapters_primary_http.ErrorResponse'
         "401":
           description: Unauthorized
           schema:
@@ -807,7 +788,7 @@ paths:
         "404":
           description: Usuario no encontrado
           schema:
-            $ref: '#/definitions/http.ErrorResponse'
+            $ref: '#/definitions/internal_adapters_primary_http.ErrorResponse'
       security:
       - BearerAuth: []
       summary: Obtener usuario por ID
@@ -830,18 +811,18 @@ paths:
         name: body
         required: true
         schema:
-          $ref: '#/definitions/ports.ActualizarUsuarioInput'
+          $ref: '#/definitions/el-centinela_internal_core_ports.ActualizarUsuarioInput'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/ports.UsuarioResumenDTO'
+            $ref: '#/definitions/el-centinela_internal_core_ports.UsuarioResumenDTO'
         "400":
           description: Datos inválidos
           schema:
-            $ref: '#/definitions/http.ErrorResponse'
+            $ref: '#/definitions/internal_adapters_primary_http.ErrorResponse'
         "401":
           description: Unauthorized
           schema:
@@ -863,7 +844,7 @@ paths:
         "409":
           description: Email ya registrado
           schema:
-            $ref: '#/definitions/http.ErrorResponse'
+            $ref: '#/definitions/internal_adapters_primary_http.ErrorResponse'
       security:
       - BearerAuth: []
       summary: Actualizar usuario
@@ -941,7 +922,7 @@ paths:
           description: OK
           schema:
             items:
-              $ref: '#/definitions/ports.ActividadDTO'
+              $ref: '#/definitions/el-centinela_internal_core_ports.ActividadDTO'
             type: array
         "401":
           description: Unauthorized
@@ -996,11 +977,11 @@ paths:
         "403":
           description: OPERATOR recibe 403 Forbidden
           schema:
-            $ref: '#/definitions/http.ErrorResponse'
+            $ref: '#/definitions/internal_adapters_primary_http.ErrorResponse'
         "404":
           description: Usuario no encontrado en la organización
           schema:
-            $ref: '#/definitions/http.ErrorResponse'
+            $ref: '#/definitions/internal_adapters_primary_http.ErrorResponse'
       security:
       - BearerAuth: []
       summary: Restablecer contraseña (admin)
@@ -1023,11 +1004,11 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/http.permisosResponse'
+            $ref: '#/definitions/internal_adapters_primary_http.permisosResponse'
         "400":
           description: UUID inválido
           schema:
-            $ref: '#/definitions/http.ErrorResponse'
+            $ref: '#/definitions/internal_adapters_primary_http.ErrorResponse'
         "401":
           description: Unauthorized
           schema:
@@ -1043,7 +1024,7 @@ paths:
         "404":
           description: Usuario no encontrado
           schema:
-            $ref: '#/definitions/http.ErrorResponse'
+            $ref: '#/definitions/internal_adapters_primary_http.ErrorResponse'
       security:
       - BearerAuth: []
       summary: Obtener permisos de instancia del usuario
@@ -1067,7 +1048,7 @@ paths:
         name: body
         required: true
         schema:
-          $ref: '#/definitions/http.asignarPermisosRequest'
+          $ref: '#/definitions/internal_adapters_primary_http.asignarPermisosRequest'
       produces:
       - application/json
       responses:
@@ -1114,19 +1095,19 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/ports.QRResult'
+            $ref: '#/definitions/el-centinela_internal_core_ports.QRResult'
         "400":
           description: Error interno al generar el QR
           schema:
-            $ref: '#/definitions/http.ErrorResponse'
+            $ref: '#/definitions/internal_adapters_primary_http.ErrorResponse'
         "401":
           description: Token pre-auth inválido o expirado
           schema:
-            $ref: '#/definitions/http.ErrorResponse'
+            $ref: '#/definitions/internal_adapters_primary_http.ErrorResponse'
         "409":
           description: El 2FA ya está activo, requiere reset administrativo
           schema:
-            $ref: '#/definitions/http.ErrorResponse'
+            $ref: '#/definitions/internal_adapters_primary_http.ErrorResponse'
       security:
       - BearerPreAuth: []
       summary: Obtener QR de vinculación 2FA
@@ -1145,22 +1126,22 @@ paths:
         name: body
         required: true
         schema:
-          $ref: '#/definitions/http.verificarTotpRequest'
+          $ref: '#/definitions/internal_adapters_primary_http.verificarTotpRequest'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/ports.TokenResult'
+            $ref: '#/definitions/el-centinela_internal_core_ports.TokenResult'
         "400":
           description: Código inválido (no tiene 6 dígitos)
           schema:
-            $ref: '#/definitions/http.ErrorResponse'
+            $ref: '#/definitions/internal_adapters_primary_http.ErrorResponse'
         "401":
           description: Código TOTP incorrecto o ya utilizado (anti-replay)
           schema:
-            $ref: '#/definitions/http.ErrorResponse'
+            $ref: '#/definitions/internal_adapters_primary_http.ErrorResponse'
       security:
       - BearerPreAuth: []
       summary: Verificar código TOTP → obtener tokens definitivos
@@ -1180,22 +1161,22 @@ paths:
         name: body
         required: true
         schema:
-          $ref: '#/definitions/http.LoginRequest'
+          $ref: '#/definitions/internal_adapters_primary_http.LoginRequest'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/ports.LoginResult'
+            $ref: '#/definitions/el-centinela_internal_core_ports.LoginResult'
         "400":
           description: Formato de petición inválido
           schema:
-            $ref: '#/definitions/http.ErrorResponse'
+            $ref: '#/definitions/internal_adapters_primary_http.ErrorResponse'
         "401":
           description: Credenciales incorrectas
           schema:
-            $ref: '#/definitions/http.ErrorResponse'
+            $ref: '#/definitions/internal_adapters_primary_http.ErrorResponse'
       summary: Login de usuario
       tags:
       - Autenticación
@@ -1211,7 +1192,7 @@ paths:
         "401":
           description: Refresh token inválido, sesión ya cerrada o cookie ausente
           schema:
-            $ref: '#/definitions/http.ErrorResponse'
+            $ref: '#/definitions/internal_adapters_primary_http.ErrorResponse'
       summary: Cerrar sesión (logout)
       tags:
       - Autenticación
@@ -1228,7 +1209,7 @@ paths:
         name: body
         required: true
         schema:
-          $ref: '#/definitions/http.solicitarRecuperacionRequest'
+          $ref: '#/definitions/internal_adapters_primary_http.solicitarRecuperacionRequest'
       produces:
       - application/json
       responses:
@@ -1241,7 +1222,7 @@ paths:
         "400":
           description: Email inválido
           schema:
-            $ref: '#/definitions/http.ErrorResponse'
+            $ref: '#/definitions/internal_adapters_primary_http.ErrorResponse'
       summary: Solicitar recuperación de contraseña
       tags:
       - Autenticación
@@ -1259,7 +1240,7 @@ paths:
         name: body
         required: true
         schema:
-          $ref: '#/definitions/http.confirmarRecuperacionRequest'
+          $ref: '#/definitions/internal_adapters_primary_http.confirmarRecuperacionRequest'
       produces:
       - application/json
       responses:
@@ -1273,7 +1254,7 @@ paths:
           description: Datos inválidos, código incorrecto, demasiados intentos, contraseña
             débil o igual a la actual
           schema:
-            $ref: '#/definitions/http.ErrorResponse'
+            $ref: '#/definitions/internal_adapters_primary_http.ErrorResponse'
       summary: Confirmar recuperación de contraseña
       tags:
       - Autenticación
@@ -1287,11 +1268,11 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/ports.TokenResult'
+            $ref: '#/definitions/el-centinela_internal_core_ports.TokenResult'
         "401":
           description: Cookie no provista, o refresh token inválido/expirado
           schema:
-            $ref: '#/definitions/http.ErrorResponse'
+            $ref: '#/definitions/internal_adapters_primary_http.ErrorResponse'
       summary: Renovar access token
       tags:
       - Autenticación
@@ -1314,11 +1295,11 @@ paths:
         "200":
           description: stream de eventos
           schema:
-            $ref: '#/definitions/ports.RealtimeEvent'
+            $ref: '#/definitions/el-centinela_internal_core_ports.RealtimeEvent'
         "401":
           description: EVENTS_TICKET_MISSING | EVENTS_TICKET_INVALID
           schema:
-            $ref: '#/definitions/http.ErrorResponse'
+            $ref: '#/definitions/internal_adapters_primary_http.ErrorResponse'
       summary: Stream de eventos en tiempo real (SSE)
       tags:
       - Eventos en tiempo real
@@ -1339,7 +1320,7 @@ paths:
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/http.ErrorResponse'
+            $ref: '#/definitions/internal_adapters_primary_http.ErrorResponse'
       security:
       - BearerAuth: []
       summary: Pedir ticket para el stream de eventos
@@ -1356,20 +1337,22 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/http.listarInstanciasResponse'
+            items:
+              $ref: '#/definitions/el-centinela_internal_core_ports.InstanciaListadaDTO'
+            type: array
         "500":
           description: INTERNAL_ERROR — error al consultar los permisos del usuario
           schema:
-            $ref: '#/definitions/http.ErrorResponse'
+            $ref: '#/definitions/internal_adapters_primary_http.ErrorResponse'
         "502":
           description: PROXMOX_UNAVAILABLE — Proxmox caído, sin red o token rechazado
           schema:
-            $ref: '#/definitions/http.ErrorResponse'
+            $ref: '#/definitions/internal_adapters_primary_http.ErrorResponse'
         "504":
           description: PROXMOX_TIMEOUT — Proxmox no respondió a tiempo; la acción
             puede haberse aplicado
           schema:
-            $ref: '#/definitions/http.ErrorResponse'
+            $ref: '#/definitions/internal_adapters_primary_http.ErrorResponse'
       security:
       - BearerAuth: []
       summary: Listar instancias
@@ -1394,27 +1377,27 @@ paths:
         "400":
           description: INVALID_VMID
           schema:
-            $ref: '#/definitions/http.ErrorResponse'
+            $ref: '#/definitions/internal_adapters_primary_http.ErrorResponse'
         "403":
           description: INSUFFICIENT_PERMISSIONS — solo ADMIN puede eliminar instancias
           schema:
-            $ref: '#/definitions/http.ErrorResponse'
+            $ref: '#/definitions/internal_adapters_primary_http.ErrorResponse'
         "404":
           description: INSTANCE_NOT_FOUND
           schema:
-            $ref: '#/definitions/http.ErrorResponse'
+            $ref: '#/definitions/internal_adapters_primary_http.ErrorResponse'
         "409":
           description: INSTANCE_NOT_STOPPED — la instancia debe estar detenida
           schema:
-            $ref: '#/definitions/http.ErrorResponse'
+            $ref: '#/definitions/internal_adapters_primary_http.ErrorResponse'
         "502":
           description: PROXMOX_UNAVAILABLE
           schema:
-            $ref: '#/definitions/http.ErrorResponse'
+            $ref: '#/definitions/internal_adapters_primary_http.ErrorResponse'
         "504":
           description: PROXMOX_TIMEOUT
           schema:
-            $ref: '#/definitions/http.ErrorResponse'
+            $ref: '#/definitions/internal_adapters_primary_http.ErrorResponse'
       security:
       - BearerAuth: []
       summary: Eliminar instancia
@@ -1435,28 +1418,28 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/ports.InstanciaProxmoxDTO'
+            $ref: '#/definitions/el-centinela_internal_core_ports.InstanciaProxmoxDTO'
         "400":
           description: INVALID_VMID
           schema:
-            $ref: '#/definitions/http.ErrorResponse'
+            $ref: '#/definitions/internal_adapters_primary_http.ErrorResponse'
         "403":
           description: INSTANCE_ACCESS_DENIED — el OPERATOR no tiene este vmid asignado
           schema:
-            $ref: '#/definitions/http.ErrorResponse'
+            $ref: '#/definitions/internal_adapters_primary_http.ErrorResponse'
         "404":
           description: INSTANCE_NOT_FOUND
           schema:
-            $ref: '#/definitions/http.ErrorResponse'
+            $ref: '#/definitions/internal_adapters_primary_http.ErrorResponse'
         "502":
           description: PROXMOX_UNAVAILABLE — Proxmox caído, sin red o token rechazado
           schema:
-            $ref: '#/definitions/http.ErrorResponse'
+            $ref: '#/definitions/internal_adapters_primary_http.ErrorResponse'
         "504":
           description: PROXMOX_TIMEOUT — Proxmox no respondió a tiempo; la acción
             puede haberse aplicado
           schema:
-            $ref: '#/definitions/http.ErrorResponse'
+            $ref: '#/definitions/internal_adapters_primary_http.ErrorResponse'
       security:
       - BearerAuth: []
       summary: Obtener instancia
@@ -1486,29 +1469,29 @@ paths:
         "400":
           description: INVALID_VMID
           schema:
-            $ref: '#/definitions/http.ErrorResponse'
+            $ref: '#/definitions/internal_adapters_primary_http.ErrorResponse'
         "403":
           description: INSTANCE_ACCESS_DENIED — el OPERATOR no tiene FULL_ACCESS sobre
             este vmid
           schema:
-            $ref: '#/definitions/http.ErrorResponse'
+            $ref: '#/definitions/internal_adapters_primary_http.ErrorResponse'
         "404":
           description: INSTANCE_NOT_FOUND
           schema:
-            $ref: '#/definitions/http.ErrorResponse'
+            $ref: '#/definitions/internal_adapters_primary_http.ErrorResponse'
         "409":
           description: INSTANCE_BUSY — la instancia está ejecutando otra tarea
           schema:
-            $ref: '#/definitions/http.ErrorResponse'
+            $ref: '#/definitions/internal_adapters_primary_http.ErrorResponse'
         "502":
           description: PROXMOX_UNAVAILABLE — Proxmox caído, sin red o token rechazado
           schema:
-            $ref: '#/definitions/http.ErrorResponse'
+            $ref: '#/definitions/internal_adapters_primary_http.ErrorResponse'
         "504":
           description: PROXMOX_TIMEOUT — Proxmox no respondió a tiempo; la acción
             puede haberse aplicado
           schema:
-            $ref: '#/definitions/http.ErrorResponse'
+            $ref: '#/definitions/internal_adapters_primary_http.ErrorResponse'
       security:
       - BearerAuth: []
       summary: Iniciar instancia
@@ -1516,16 +1499,16 @@ paths:
       - Instancias Proxmox
   /instances/{vmid}/status/{action}:
     post:
-      description: Ejecuta una acción de ciclo de vida (start, stop, reboot) sobre
-        una VM o contenedor. El endpoint genérico complementa a /start y /stop manteniendo
-        retrocompatibilidad.
+      description: Ejecuta una acción de ciclo de vida (start, stop, shutdown, reboot)
+        sobre una VM o contenedor. El endpoint genérico complementa a /start y /stop
+        manteniendo retrocompatibilidad.
       parameters:
       - description: VMID de la instancia
         in: path
         name: vmid
         required: true
         type: integer
-      - description: Acción a ejecutar (start | stop | reboot)
+      - description: Acción a ejecutar (start | stop | shutdown | reboot)
         in: path
         name: action
         required: true
@@ -1542,27 +1525,27 @@ paths:
         "400":
           description: INVALID_VMID | INVALID_ACTION
           schema:
-            $ref: '#/definitions/http.ErrorResponse'
+            $ref: '#/definitions/internal_adapters_primary_http.ErrorResponse'
         "403":
           description: INSTANCE_ACCESS_DENIED — se requiere FULL_ACCESS
           schema:
-            $ref: '#/definitions/http.ErrorResponse'
+            $ref: '#/definitions/internal_adapters_primary_http.ErrorResponse'
         "404":
           description: INSTANCE_NOT_FOUND
           schema:
-            $ref: '#/definitions/http.ErrorResponse'
+            $ref: '#/definitions/internal_adapters_primary_http.ErrorResponse'
         "409":
           description: INSTANCE_BUSY
           schema:
-            $ref: '#/definitions/http.ErrorResponse'
+            $ref: '#/definitions/internal_adapters_primary_http.ErrorResponse'
         "502":
           description: PROXMOX_UNAVAILABLE
           schema:
-            $ref: '#/definitions/http.ErrorResponse'
+            $ref: '#/definitions/internal_adapters_primary_http.ErrorResponse'
         "504":
           description: PROXMOX_TIMEOUT
           schema:
-            $ref: '#/definitions/http.ErrorResponse'
+            $ref: '#/definitions/internal_adapters_primary_http.ErrorResponse'
       security:
       - BearerAuth: []
       summary: Cambiar estado de instancia
@@ -1592,29 +1575,29 @@ paths:
         "400":
           description: INVALID_VMID
           schema:
-            $ref: '#/definitions/http.ErrorResponse'
+            $ref: '#/definitions/internal_adapters_primary_http.ErrorResponse'
         "403":
           description: INSTANCE_ACCESS_DENIED — el OPERATOR no tiene FULL_ACCESS sobre
             este vmid; INSTANCE_PROTECTED — infraestructura de El Centinela
           schema:
-            $ref: '#/definitions/http.ErrorResponse'
+            $ref: '#/definitions/internal_adapters_primary_http.ErrorResponse'
         "404":
           description: INSTANCE_NOT_FOUND
           schema:
-            $ref: '#/definitions/http.ErrorResponse'
+            $ref: '#/definitions/internal_adapters_primary_http.ErrorResponse'
         "409":
           description: INSTANCE_BUSY — la instancia está ejecutando otra tarea
           schema:
-            $ref: '#/definitions/http.ErrorResponse'
+            $ref: '#/definitions/internal_adapters_primary_http.ErrorResponse'
         "502":
           description: PROXMOX_UNAVAILABLE — Proxmox caído, sin red o token rechazado
           schema:
-            $ref: '#/definitions/http.ErrorResponse'
+            $ref: '#/definitions/internal_adapters_primary_http.ErrorResponse'
         "504":
           description: PROXMOX_TIMEOUT — Proxmox no respondió a tiempo; la acción
             puede haberse aplicado
           schema:
-            $ref: '#/definitions/http.ErrorResponse'
+            $ref: '#/definitions/internal_adapters_primary_http.ErrorResponse'
       security:
       - BearerAuth: []
       summary: Detener instancia
@@ -1631,7 +1614,7 @@ paths:
           description: OK
           schema:
             items:
-              $ref: '#/definitions/ports.RolDTO'
+              $ref: '#/definitions/el-centinela_internal_core_ports.RolDTO'
             type: array
         "401":
           description: Unauthorized

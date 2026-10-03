@@ -292,6 +292,32 @@ func (c *Client) ReiniciarInstancia(ctx context.Context, vmid int) (string, erro
 	return c.cambiarEstado(ctx, vmid, "reboot")
 }
 
+func (c *Client) Shutdown(ctx context.Context, node string, vmid int, vmType string) (string, error) {
+	path := fmt.Sprintf("/api2/json/nodes/%s/%s/%d/status/shutdown", node, vmType, vmid)
+	raw, err := c.doRequest(ctx, http.MethodPost, path, nil)
+	if err != nil {
+		return "", err
+	}
+	var res upidResponse
+	if err := json.Unmarshal(raw, &res); err != nil {
+		return "", fmt.Errorf("%w: error leyendo UPID de shutdown: %v", ports.ErrProxmoxNoDisponible, err)
+	}
+	return res.Data, nil
+}
+
+func (c *Client) Reboot(ctx context.Context, node string, vmid int, vmType string) (string, error) {
+	path := fmt.Sprintf("/api2/json/nodes/%s/%s/%d/status/reboot", node, vmType, vmid)
+	raw, err := c.doRequest(ctx, http.MethodPost, path, nil)
+	if err != nil {
+		return "", err
+	}
+	var res upidResponse
+	if err := json.Unmarshal(raw, &res); err != nil {
+		return "", fmt.Errorf("%w: error leyendo UPID de reboot: %v", ports.ErrProxmoxNoDisponible, err)
+	}
+	return res.Data, nil
+}
+
 // EliminarInstancia elimina de forma permanente una VM o contenedor de Proxmox.
 // Proxmox usa DELETE /nodes/{node}/{tipo}/{vmid}.
 // La instancia debe estar detenida: si está encendida Proxmox responde 500 con

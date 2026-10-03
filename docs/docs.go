@@ -42,7 +42,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/ports.CambiarContrasenaInput"
+                            "$ref": "#/definitions/el-centinela_internal_core_ports.CambiarContrasenaInput"
                         }
                     }
                 ],
@@ -59,7 +59,7 @@ const docTemplate = `{
                     "400": {
                         "description": "Formato inválido, contraseña actual incorrecta, nueva igual a la actual o no cumple las reglas de complejidad",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/internal_adapters_primary_http.ErrorResponse"
                         }
                     },
                     "401": {
@@ -74,7 +74,7 @@ const docTemplate = `{
                     "403": {
                         "description": "PASSWORD_CHANGE_REQUIRED — solo este endpoint y logout son accesibles mientras el flag esté activo",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/internal_adapters_primary_http.ErrorResponse"
                         }
                     }
                 }
@@ -99,7 +99,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/ports.UsuarioDetalleDTO"
+                            "$ref": "#/definitions/el-centinela_internal_core_ports.UsuarioDetalleDTO"
                         }
                     },
                     "401": {
@@ -137,7 +137,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/ports.ActualizarPerfilInput"
+                            "$ref": "#/definitions/el-centinela_internal_core_ports.ActualizarPerfilInput"
                         }
                     }
                 ],
@@ -145,7 +145,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/ports.UsuarioResumenDTO"
+                            "$ref": "#/definitions/el-centinela_internal_core_ports.UsuarioResumenDTO"
                         }
                     },
                     "400": {
@@ -169,7 +169,7 @@ const docTemplate = `{
                     "409": {
                         "description": "Email ya en uso",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/internal_adapters_primary_http.ErrorResponse"
                         }
                     }
                 }
@@ -256,7 +256,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/ports.PaginaAuditoria"
+                            "$ref": "#/definitions/el-centinela_internal_core_ports.PaginaAuditoria"
                         }
                     },
                     "401": {
@@ -407,7 +407,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/ports.ListaUsuariosResult"
+                            "$ref": "#/definitions/el-centinela_internal_core_ports.ListaUsuariosResult"
                         }
                     },
                     "401": {
@@ -454,7 +454,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/ports.CrearUsuarioInput"
+                            "$ref": "#/definitions/el-centinela_internal_core_ports.CrearUsuarioInput"
                         }
                     }
                 ],
@@ -462,13 +462,13 @@ const docTemplate = `{
                     "201": {
                         "description": "Created",
                         "schema": {
-                            "$ref": "#/definitions/ports.CrearUsuarioResult"
+                            "$ref": "#/definitions/el-centinela_internal_core_ports.CrearUsuarioResult"
                         }
                     },
                     "400": {
                         "description": "Datos inválidos",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/internal_adapters_primary_http.ErrorResponse"
                         }
                     },
                     "401": {
@@ -492,7 +492,7 @@ const docTemplate = `{
                     "409": {
                         "description": "Email o username ya registrado",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/internal_adapters_primary_http.ErrorResponse"
                         }
                     }
                 }
@@ -526,13 +526,13 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/ports.UsuarioDetalleDTO"
+                            "$ref": "#/definitions/el-centinela_internal_core_ports.UsuarioDetalleDTO"
                         }
                     },
                     "400": {
                         "description": "UUID inválido",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/internal_adapters_primary_http.ErrorResponse"
                         }
                     },
                     "401": {
@@ -556,7 +556,7 @@ const docTemplate = `{
                     "404": {
                         "description": "Usuario no encontrado",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/internal_adapters_primary_http.ErrorResponse"
                         }
                     }
                 }
@@ -592,7 +592,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/ports.ActualizarUsuarioInput"
+                            "$ref": "#/definitions/el-centinela_internal_core_ports.ActualizarUsuarioInput"
                         }
                     }
                 ],
@@ -600,13 +600,13 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/ports.UsuarioResumenDTO"
+                            "$ref": "#/definitions/el-centinela_internal_core_ports.UsuarioResumenDTO"
                         }
                     },
                     "400": {
                         "description": "Datos inválidos",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/internal_adapters_primary_http.ErrorResponse"
                         }
                     },
                     "401": {
@@ -639,7 +639,7 @@ const docTemplate = `{
                     "409": {
                         "description": "Email ya registrado",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/internal_adapters_primary_http.ErrorResponse"
                         }
                     }
                 }
@@ -674,7 +674,7 @@ const docTemplate = `{
                     "400": {
                         "description": "No puede eliminarse a sí mismo",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/internal_adapters_primary_http.ErrorResponse"
                         }
                     },
                     "401": {
@@ -818,7 +818,7 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/ports.ActividadDTO"
+                                "$ref": "#/definitions/el-centinela_internal_core_ports.ActividadDTO"
                             }
                         }
                     },
@@ -898,13 +898,13 @@ const docTemplate = `{
                     "403": {
                         "description": "OPERATOR recibe 403 Forbidden",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/internal_adapters_primary_http.ErrorResponse"
                         }
                     },
                     "404": {
                         "description": "Usuario no encontrado en la organización",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/internal_adapters_primary_http.ErrorResponse"
                         }
                     }
                 }
@@ -938,13 +938,13 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/http.permisosResponse"
+                            "$ref": "#/definitions/internal_adapters_primary_http.permisosResponse"
                         }
                     },
                     "400": {
                         "description": "UUID inválido",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/internal_adapters_primary_http.ErrorResponse"
                         }
                     },
                     "401": {
@@ -968,7 +968,7 @@ const docTemplate = `{
                     "404": {
                         "description": "Usuario no encontrado",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/internal_adapters_primary_http.ErrorResponse"
                         }
                     }
                 }
@@ -1004,7 +1004,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/http.asignarPermisosRequest"
+                            "$ref": "#/definitions/internal_adapters_primary_http.asignarPermisosRequest"
                         }
                     }
                 ],
@@ -1070,25 +1070,25 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/ports.QRResult"
+                            "$ref": "#/definitions/el-centinela_internal_core_ports.QRResult"
                         }
                     },
                     "400": {
                         "description": "Error interno al generar el QR",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/internal_adapters_primary_http.ErrorResponse"
                         }
                     },
                     "401": {
                         "description": "Token pre-auth inválido o expirado",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/internal_adapters_primary_http.ErrorResponse"
                         }
                     },
                     "409": {
                         "description": "El 2FA ya está activo, requiere reset administrativo",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/internal_adapters_primary_http.ErrorResponse"
                         }
                     }
                 }
@@ -1119,7 +1119,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/http.verificarTotpRequest"
+                            "$ref": "#/definitions/internal_adapters_primary_http.verificarTotpRequest"
                         }
                     }
                 ],
@@ -1127,19 +1127,19 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/ports.TokenResult"
+                            "$ref": "#/definitions/el-centinela_internal_core_ports.TokenResult"
                         }
                     },
                     "400": {
                         "description": "Código inválido (no tiene 6 dígitos)",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/internal_adapters_primary_http.ErrorResponse"
                         }
                     },
                     "401": {
                         "description": "Código TOTP incorrecto o ya utilizado (anti-replay)",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/internal_adapters_primary_http.ErrorResponse"
                         }
                     }
                 }
@@ -1165,7 +1165,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/http.LoginRequest"
+                            "$ref": "#/definitions/internal_adapters_primary_http.LoginRequest"
                         }
                     }
                 ],
@@ -1173,19 +1173,19 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/ports.LoginResult"
+                            "$ref": "#/definitions/el-centinela_internal_core_ports.LoginResult"
                         }
                     },
                     "400": {
                         "description": "Formato de petición inválido",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/internal_adapters_primary_http.ErrorResponse"
                         }
                     },
                     "401": {
                         "description": "Credenciales incorrectas",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/internal_adapters_primary_http.ErrorResponse"
                         }
                     }
                 }
@@ -1208,7 +1208,7 @@ const docTemplate = `{
                     "401": {
                         "description": "Refresh token inválido, sesión ya cerrada o cookie ausente",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/internal_adapters_primary_http.ErrorResponse"
                         }
                     }
                 }
@@ -1234,7 +1234,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/http.solicitarRecuperacionRequest"
+                            "$ref": "#/definitions/internal_adapters_primary_http.solicitarRecuperacionRequest"
                         }
                     }
                 ],
@@ -1251,7 +1251,7 @@ const docTemplate = `{
                     "400": {
                         "description": "Email inválido",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/internal_adapters_primary_http.ErrorResponse"
                         }
                     }
                 }
@@ -1277,7 +1277,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/http.confirmarRecuperacionRequest"
+                            "$ref": "#/definitions/internal_adapters_primary_http.confirmarRecuperacionRequest"
                         }
                     }
                 ],
@@ -1294,7 +1294,7 @@ const docTemplate = `{
                     "400": {
                         "description": "Datos inválidos, código incorrecto, demasiados intentos, contraseña débil o igual a la actual",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/internal_adapters_primary_http.ErrorResponse"
                         }
                     }
                 }
@@ -1314,13 +1314,13 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/ports.TokenResult"
+                            "$ref": "#/definitions/el-centinela_internal_core_ports.TokenResult"
                         }
                     },
                     "401": {
                         "description": "Cookie no provista, o refresh token inválido/expirado",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/internal_adapters_primary_http.ErrorResponse"
                         }
                     }
                 }
@@ -1349,13 +1349,13 @@ const docTemplate = `{
                     "200": {
                         "description": "stream de eventos",
                         "schema": {
-                            "$ref": "#/definitions/ports.RealtimeEvent"
+                            "$ref": "#/definitions/el-centinela_internal_core_ports.RealtimeEvent"
                         }
                     },
                     "401": {
                         "description": "EVENTS_TICKET_MISSING | EVENTS_TICKET_INVALID",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/internal_adapters_primary_http.ErrorResponse"
                         }
                     }
                 }
@@ -1389,7 +1389,7 @@ const docTemplate = `{
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/internal_adapters_primary_http.ErrorResponse"
                         }
                     }
                 }
@@ -1414,25 +1414,28 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/http.listarInstanciasResponse"
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/el-centinela_internal_core_ports.InstanciaListadaDTO"
+                            }
                         }
                     },
                     "500": {
                         "description": "INTERNAL_ERROR — error al consultar los permisos del usuario",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/internal_adapters_primary_http.ErrorResponse"
                         }
                     },
                     "502": {
                         "description": "PROXMOX_UNAVAILABLE — Proxmox caído, sin red o token rechazado",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/internal_adapters_primary_http.ErrorResponse"
                         }
                     },
                     "504": {
                         "description": "PROXMOX_TIMEOUT — Proxmox no respondió a tiempo; la acción puede haberse aplicado",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/internal_adapters_primary_http.ErrorResponse"
                         }
                     }
                 }
@@ -1466,37 +1469,37 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/ports.InstanciaProxmoxDTO"
+                            "$ref": "#/definitions/el-centinela_internal_core_ports.InstanciaProxmoxDTO"
                         }
                     },
                     "400": {
                         "description": "INVALID_VMID",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/internal_adapters_primary_http.ErrorResponse"
                         }
                     },
                     "403": {
                         "description": "INSTANCE_ACCESS_DENIED — el OPERATOR no tiene este vmid asignado",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/internal_adapters_primary_http.ErrorResponse"
                         }
                     },
                     "404": {
                         "description": "INSTANCE_NOT_FOUND",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/internal_adapters_primary_http.ErrorResponse"
                         }
                     },
                     "502": {
                         "description": "PROXMOX_UNAVAILABLE — Proxmox caído, sin red o token rechazado",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/internal_adapters_primary_http.ErrorResponse"
                         }
                     },
                     "504": {
                         "description": "PROXMOX_TIMEOUT — Proxmox no respondió a tiempo; la acción puede haberse aplicado",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/internal_adapters_primary_http.ErrorResponse"
                         }
                     }
                 }
@@ -1531,37 +1534,37 @@ const docTemplate = `{
                     "400": {
                         "description": "INVALID_VMID",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/internal_adapters_primary_http.ErrorResponse"
                         }
                     },
                     "403": {
                         "description": "INSUFFICIENT_PERMISSIONS — solo ADMIN puede eliminar instancias",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/internal_adapters_primary_http.ErrorResponse"
                         }
                     },
                     "404": {
                         "description": "INSTANCE_NOT_FOUND",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/internal_adapters_primary_http.ErrorResponse"
                         }
                     },
                     "409": {
                         "description": "INSTANCE_NOT_STOPPED — la instancia debe estar detenida",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/internal_adapters_primary_http.ErrorResponse"
                         }
                     },
                     "502": {
                         "description": "PROXMOX_UNAVAILABLE",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/internal_adapters_primary_http.ErrorResponse"
                         }
                     },
                     "504": {
                         "description": "PROXMOX_TIMEOUT",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/internal_adapters_primary_http.ErrorResponse"
                         }
                     }
                 }
@@ -1604,37 +1607,37 @@ const docTemplate = `{
                     "400": {
                         "description": "INVALID_VMID",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/internal_adapters_primary_http.ErrorResponse"
                         }
                     },
                     "403": {
                         "description": "INSTANCE_ACCESS_DENIED — el OPERATOR no tiene FULL_ACCESS sobre este vmid",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/internal_adapters_primary_http.ErrorResponse"
                         }
                     },
                     "404": {
                         "description": "INSTANCE_NOT_FOUND",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/internal_adapters_primary_http.ErrorResponse"
                         }
                     },
                     "409": {
                         "description": "INSTANCE_BUSY — la instancia está ejecutando otra tarea",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/internal_adapters_primary_http.ErrorResponse"
                         }
                     },
                     "502": {
                         "description": "PROXMOX_UNAVAILABLE — Proxmox caído, sin red o token rechazado",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/internal_adapters_primary_http.ErrorResponse"
                         }
                     },
                     "504": {
                         "description": "PROXMOX_TIMEOUT — Proxmox no respondió a tiempo; la acción puede haberse aplicado",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/internal_adapters_primary_http.ErrorResponse"
                         }
                     }
                 }
@@ -1647,7 +1650,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Ejecuta una acción de ciclo de vida (start, stop, reboot) sobre una VM o contenedor. El endpoint genérico complementa a /start y /stop manteniendo retrocompatibilidad.",
+                "description": "Ejecuta una acción de ciclo de vida (start, stop, shutdown, reboot) sobre una VM o contenedor. El endpoint genérico complementa a /start y /stop manteniendo retrocompatibilidad.",
                 "produces": [
                     "application/json"
                 ],
@@ -1665,7 +1668,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Acción a ejecutar (start | stop | reboot)",
+                        "description": "Acción a ejecutar (start | stop | shutdown | reboot)",
                         "name": "action",
                         "in": "path",
                         "required": true
@@ -1684,37 +1687,37 @@ const docTemplate = `{
                     "400": {
                         "description": "INVALID_VMID | INVALID_ACTION",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/internal_adapters_primary_http.ErrorResponse"
                         }
                     },
                     "403": {
                         "description": "INSTANCE_ACCESS_DENIED — se requiere FULL_ACCESS",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/internal_adapters_primary_http.ErrorResponse"
                         }
                     },
                     "404": {
                         "description": "INSTANCE_NOT_FOUND",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/internal_adapters_primary_http.ErrorResponse"
                         }
                     },
                     "409": {
                         "description": "INSTANCE_BUSY",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/internal_adapters_primary_http.ErrorResponse"
                         }
                     },
                     "502": {
                         "description": "PROXMOX_UNAVAILABLE",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/internal_adapters_primary_http.ErrorResponse"
                         }
                     },
                     "504": {
                         "description": "PROXMOX_TIMEOUT",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/internal_adapters_primary_http.ErrorResponse"
                         }
                     }
                 }
@@ -1757,37 +1760,37 @@ const docTemplate = `{
                     "400": {
                         "description": "INVALID_VMID",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/internal_adapters_primary_http.ErrorResponse"
                         }
                     },
                     "403": {
                         "description": "INSTANCE_ACCESS_DENIED — el OPERATOR no tiene FULL_ACCESS sobre este vmid; INSTANCE_PROTECTED — infraestructura de El Centinela",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/internal_adapters_primary_http.ErrorResponse"
                         }
                     },
                     "404": {
                         "description": "INSTANCE_NOT_FOUND",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/internal_adapters_primary_http.ErrorResponse"
                         }
                     },
                     "409": {
                         "description": "INSTANCE_BUSY — la instancia está ejecutando otra tarea",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/internal_adapters_primary_http.ErrorResponse"
                         }
                     },
                     "502": {
                         "description": "PROXMOX_UNAVAILABLE — Proxmox caído, sin red o token rechazado",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/internal_adapters_primary_http.ErrorResponse"
                         }
                     },
                     "504": {
                         "description": "PROXMOX_TIMEOUT — Proxmox no respondió a tiempo; la acción puede haberse aplicado",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/internal_adapters_primary_http.ErrorResponse"
                         }
                     }
                 }
@@ -1814,7 +1817,7 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/ports.RolDTO"
+                                "$ref": "#/definitions/el-centinela_internal_core_ports.RolDTO"
                             }
                         }
                     },
@@ -1841,131 +1844,7 @@ const docTemplate = `{
         }
     },
     "definitions": {
-        "http.ErrorResponse": {
-            "type": "object",
-            "properties": {
-                "errorCode": {
-                    "type": "string",
-                    "example": "INVALID_REQUEST"
-                },
-                "message": {
-                    "type": "string",
-                    "example": "Mensaje descriptivo del error."
-                }
-            }
-        },
-        "http.LoginRequest": {
-            "type": "object",
-            "required": [
-                "email",
-                "password"
-            ],
-            "properties": {
-                "email": {
-                    "type": "string"
-                },
-                "password": {
-                    "type": "string"
-                }
-            }
-        },
-        "http.asignarPermisosRequest": {
-            "type": "object",
-            "required": [
-                "permisos"
-            ],
-            "properties": {
-                "permisos": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/ports.PermisoInstanciaInput"
-                    }
-                }
-            }
-        },
-        "http.confirmarRecuperacionRequest": {
-            "type": "object",
-            "required": [
-                "codigo",
-                "email",
-                "nuevaContrasena"
-            ],
-            "properties": {
-                "codigo": {
-                    "type": "string"
-                },
-                "email": {
-                    "type": "string"
-                },
-                "nuevaContrasena": {
-                    "type": "string",
-                    "maxLength": 12,
-                    "minLength": 8
-                }
-            }
-        },
-        "http.instanciasSummaryDTO": {
-            "type": "object",
-            "properties": {
-                "running": {
-                    "type": "integer"
-                },
-                "stopped": {
-                    "type": "integer"
-                },
-                "total": {
-                    "type": "integer"
-                }
-            }
-        },
-        "http.listarInstanciasResponse": {
-            "type": "object",
-            "properties": {
-                "instances": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/ports.InstanciaListadaDTO"
-                    }
-                },
-                "summary": {
-                    "$ref": "#/definitions/http.instanciasSummaryDTO"
-                }
-            }
-        },
-        "http.permisosResponse": {
-            "type": "object",
-            "properties": {
-                "permisos": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/ports.PermisoInstanciaInput"
-                    }
-                }
-            }
-        },
-        "http.solicitarRecuperacionRequest": {
-            "type": "object",
-            "required": [
-                "email"
-            ],
-            "properties": {
-                "email": {
-                    "type": "string"
-                }
-            }
-        },
-        "http.verificarTotpRequest": {
-            "type": "object",
-            "required": [
-                "codigo"
-            ],
-            "properties": {
-                "codigo": {
-                    "type": "string"
-                }
-            }
-        },
-        "ports.ActividadDTO": {
+        "el-centinela_internal_core_ports.ActividadDTO": {
             "type": "object",
             "properties": {
                 "accion": {
@@ -1991,7 +1870,7 @@ const docTemplate = `{
                 }
             }
         },
-        "ports.ActualizarPerfilInput": {
+        "el-centinela_internal_core_ports.ActualizarPerfilInput": {
             "type": "object",
             "properties": {
                 "emailUsuario": {
@@ -2004,7 +1883,7 @@ const docTemplate = `{
                 }
             }
         },
-        "ports.ActualizarUsuarioInput": {
+        "el-centinela_internal_core_ports.ActualizarUsuarioInput": {
             "type": "object",
             "properties": {
                 "activo": {
@@ -2026,7 +1905,7 @@ const docTemplate = `{
                 }
             }
         },
-        "ports.AuditoriaDTO": {
+        "el-centinela_internal_core_ports.AuditoriaDTO": {
             "type": "object",
             "properties": {
                 "accion": {
@@ -2060,7 +1939,7 @@ const docTemplate = `{
                 }
             }
         },
-        "ports.CambiarContrasenaInput": {
+        "el-centinela_internal_core_ports.CambiarContrasenaInput": {
             "type": "object",
             "required": [
                 "contrasenaActual",
@@ -2077,7 +1956,7 @@ const docTemplate = `{
                 }
             }
         },
-        "ports.CrearUsuarioInput": {
+        "el-centinela_internal_core_ports.CrearUsuarioInput": {
             "type": "object",
             "required": [
                 "emailUsuario",
@@ -2108,7 +1987,7 @@ const docTemplate = `{
                 }
             }
         },
-        "ports.CrearUsuarioResult": {
+        "el-centinela_internal_core_ports.CrearUsuarioResult": {
             "type": "object",
             "properties": {
                 "activo": {
@@ -2122,12 +2001,11 @@ const docTemplate = `{
                 }
             }
         },
-        "ports.InstanciaListadaDTO": {
+        "el-centinela_internal_core_ports.InstanciaListadaDTO": {
             "type": "object",
             "properties": {
                 "activeTask": {
-                    "description": "tareaId en curso o null",
-                    "type": "string"
+                    "description": "tareaId en curso o null"
                 },
                 "cpuUsage": {
                     "description": "fracción [0,1]",
@@ -2149,7 +2027,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "nivelAcceso": {
-                    "description": "\"FULL_ACCESS\" | \"READ_ONLY\" | \"\" (ADMIN)",
+                    "description": "\"FULL_ACCESS\" | \"READ_ONLY\" (o \"FULL_ACCESS\" para ADMIN)",
                     "type": "string"
                 },
                 "node": {
@@ -2168,7 +2046,7 @@ const docTemplate = `{
                 }
             }
         },
-        "ports.InstanciaProxmoxDTO": {
+        "el-centinela_internal_core_ports.InstanciaProxmoxDTO": {
             "type": "object",
             "properties": {
                 "cpu": {
@@ -2206,21 +2084,21 @@ const docTemplate = `{
                 }
             }
         },
-        "ports.ListaUsuariosResult": {
+        "el-centinela_internal_core_ports.ListaUsuariosResult": {
             "type": "object",
             "properties": {
                 "summary": {
-                    "$ref": "#/definitions/ports.ResumenUsuariosDTO"
+                    "$ref": "#/definitions/el-centinela_internal_core_ports.ResumenUsuariosDTO"
                 },
                 "users": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/ports.UsuarioResumenDTO"
+                        "$ref": "#/definitions/el-centinela_internal_core_ports.UsuarioResumenDTO"
                     }
                 }
             }
         },
-        "ports.LoginResult": {
+        "el-centinela_internal_core_ports.LoginResult": {
             "type": "object",
             "properties": {
                 "cambioContrasenaRequerido": {
@@ -2235,14 +2113,14 @@ const docTemplate = `{
                 }
             }
         },
-        "ports.PaginaAuditoria": {
+        "el-centinela_internal_core_ports.PaginaAuditoria": {
             "type": "object",
             "properties": {
                 "items": {
                     "description": "Registros de esta página",
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/ports.AuditoriaDTO"
+                        "$ref": "#/definitions/el-centinela_internal_core_ports.AuditoriaDTO"
                     }
                 },
                 "pagina": {
@@ -2255,7 +2133,7 @@ const docTemplate = `{
                 }
             }
         },
-        "ports.PermisoInstanciaInput": {
+        "el-centinela_internal_core_ports.PermisoInstanciaInput": {
             "type": "object",
             "properties": {
                 "nivelAcceso": {
@@ -2266,7 +2144,7 @@ const docTemplate = `{
                 }
             }
         },
-        "ports.QRResult": {
+        "el-centinela_internal_core_ports.QRResult": {
             "type": "object",
             "properties": {
                 "qrBase64": {
@@ -2278,7 +2156,7 @@ const docTemplate = `{
                 }
             }
         },
-        "ports.RealtimeEvent": {
+        "el-centinela_internal_core_ports.RealtimeEvent": {
             "description": "Esquema genérico de evento del canal en tiempo real (RF-11). Los enums usan valores en inglés MAYÚSCULA y los campos nombres en español camelCase.",
             "type": "object",
             "properties": {
@@ -2309,7 +2187,7 @@ const docTemplate = `{
                 }
             }
         },
-        "ports.ResumenUsuariosDTO": {
+        "el-centinela_internal_core_ports.ResumenUsuariosDTO": {
             "type": "object",
             "properties": {
                 "admins": {
@@ -2323,7 +2201,7 @@ const docTemplate = `{
                 }
             }
         },
-        "ports.RolDTO": {
+        "el-centinela_internal_core_ports.RolDTO": {
             "type": "object",
             "properties": {
                 "descripcion": {
@@ -2334,7 +2212,7 @@ const docTemplate = `{
                 }
             }
         },
-        "ports.TokenResult": {
+        "el-centinela_internal_core_ports.TokenResult": {
             "type": "object",
             "properties": {
                 "accessToken": {
@@ -2346,7 +2224,7 @@ const docTemplate = `{
                 }
             }
         },
-        "ports.UsuarioDetalleDTO": {
+        "el-centinela_internal_core_ports.UsuarioDetalleDTO": {
             "type": "object",
             "properties": {
                 "activo": {
@@ -2391,7 +2269,7 @@ const docTemplate = `{
                 }
             }
         },
-        "ports.UsuarioResumenDTO": {
+        "el-centinela_internal_core_ports.UsuarioResumenDTO": {
             "type": "object",
             "properties": {
                 "activo": {
@@ -2424,6 +2302,102 @@ const docTemplate = `{
                 },
                 "totpVinculado": {
                     "type": "boolean"
+                }
+            }
+        },
+        "internal_adapters_primary_http.ErrorResponse": {
+            "type": "object",
+            "properties": {
+                "errorCode": {
+                    "type": "string",
+                    "example": "INVALID_REQUEST"
+                },
+                "message": {
+                    "type": "string",
+                    "example": "Mensaje descriptivo del error."
+                }
+            }
+        },
+        "internal_adapters_primary_http.LoginRequest": {
+            "type": "object",
+            "required": [
+                "email",
+                "password"
+            ],
+            "properties": {
+                "email": {
+                    "type": "string"
+                },
+                "password": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_adapters_primary_http.asignarPermisosRequest": {
+            "type": "object",
+            "required": [
+                "permisos"
+            ],
+            "properties": {
+                "permisos": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/el-centinela_internal_core_ports.PermisoInstanciaInput"
+                    }
+                }
+            }
+        },
+        "internal_adapters_primary_http.confirmarRecuperacionRequest": {
+            "type": "object",
+            "required": [
+                "codigo",
+                "email",
+                "nuevaContrasena"
+            ],
+            "properties": {
+                "codigo": {
+                    "type": "string"
+                },
+                "email": {
+                    "type": "string"
+                },
+                "nuevaContrasena": {
+                    "type": "string",
+                    "maxLength": 12,
+                    "minLength": 8
+                }
+            }
+        },
+        "internal_adapters_primary_http.permisosResponse": {
+            "type": "object",
+            "properties": {
+                "permisos": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/el-centinela_internal_core_ports.PermisoInstanciaInput"
+                    }
+                }
+            }
+        },
+        "internal_adapters_primary_http.solicitarRecuperacionRequest": {
+            "type": "object",
+            "required": [
+                "email"
+            ],
+            "properties": {
+                "email": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_adapters_primary_http.verificarTotpRequest": {
+            "type": "object",
+            "required": [
+                "codigo"
+            ],
+            "properties": {
+                "codigo": {
+                    "type": "string"
                 }
             }
         }

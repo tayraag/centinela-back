@@ -65,6 +65,20 @@ func (m *mockProxmoxPort) ReiniciarInstancia(ctx context.Context, vmid int) (str
 	return "UPID:test:reboot", nil
 }
 
+func (m *mockProxmoxPort) Shutdown(ctx context.Context, node string, vmid int, vmType string) (string, error) {
+	if m.errAccion != nil {
+		return "", m.errAccion
+	}
+	return "UPID:test:shutdown", nil
+}
+
+func (m *mockProxmoxPort) Reboot(ctx context.Context, node string, vmid int, vmType string) (string, error) {
+	if m.errAccion != nil {
+		return "", m.errAccion
+	}
+	return "UPID:test:reboot", nil
+}
+
 func (m *mockProxmoxPort) EliminarInstancia(ctx context.Context, vmid int) error {
 	return m.errAccion
 }
@@ -160,20 +174,18 @@ func TestListarInstancias_AdminVisualizaTodas(t *testing.T) {
 		t.Fatalf("Código de estado esperado 200, obtenido %d", w.Code)
 	}
 
-	var res struct {
-		Instances []ports.InstanciaListadaDTO `json:"instances"`
-	}
+	var res []ports.InstanciaListadaDTO
 	if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil {
 		t.Fatalf("Error deserializando respuesta: %v", err)
 	}
 
-	if len(res.Instances) != 3 {
-		t.Fatalf("ADMIN debe ver las 3 instancias (100%%), pero recibió %d", len(res.Instances))
+	if len(res) != 3 {
+		t.Fatalf("ADMIN debe ver las 3 instancias (100%%), pero recibió %d", len(res))
 	}
 
 	// Comprobar normalización: qemu -> vm
-	if res.Instances[0].Type != "vm" || res.Instances[1].Type != "lxc" {
-		t.Errorf("Normalización incorrecta: %+v", res.Instances)
+	if res[0].Type != "vm" || res[1].Type != "lxc" {
+		t.Errorf("Normalización incorrecta: %+v", res)
 	}
 }
 
@@ -207,18 +219,16 @@ func TestListarInstancias_OperatorVisualizaSoloAsignadas(t *testing.T) {
 		t.Fatalf("Código de estado esperado 200, obtenido %d", w.Code)
 	}
 
-	var res struct {
-		Instances []ports.InstanciaListadaDTO `json:"instances"`
-	}
+	var res []ports.InstanciaListadaDTO
 	if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil {
 		t.Fatalf("Error deserializando respuesta: %v", err)
 	}
 
-	if len(res.Instances) != 1 {
-		t.Fatalf("OPERATOR debe ver exclusivamente su instancia asignada (1), pero recibió %d", len(res.Instances))
+	if len(res) != 1 {
+		t.Fatalf("OPERATOR debe ver exclusivamente su instancia asignada (1), pero recibió %d", len(res))
 	}
-	if res.Instances[0].ID != 101 {
-		t.Errorf("Se esperaba la instancia 101, pero se recibió id=%d", res.Instances[0].ID)
+	if res[0].ID != 101 {
+		t.Errorf("Se esperaba la instancia 101, pero se recibió id=%d", res[0].ID)
 	}
 }
 

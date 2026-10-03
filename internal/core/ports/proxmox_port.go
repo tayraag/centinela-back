@@ -68,12 +68,12 @@ type InstanciaListadaDTO struct {
 	Status string `json:"status"`
 
 	// Campos extendidos de telemetría (retrocompatibles: omitempty)
-	Ip          string  `json:"ip,omitempty"`          // dirección IP de la instancia (si está disponible)
-	CpuUsage    float64 `json:"cpuUsage"`              // fracción [0,1]
-	RamUsage    int64   `json:"ramUsage"`              // bytes usados
-	MaxRam      int64   `json:"maxRam"`               // bytes máximos
-	NivelAcceso string  `json:"nivelAcceso,omitempty"` // "FULL_ACCESS" | "READ_ONLY" | "" (ADMIN)
-	ActiveTask  *string `json:"activeTask"`            // tareaId en curso o null
+	Ip          *string     `json:"ip"`          // dirección IP de la instancia (si está disponible)
+	CpuUsage    *float64    `json:"cpuUsage"`    // fracción [0,1]
+	RamUsage    *int64      `json:"ramUsage"`    // bytes usados
+	MaxRam      *int64      `json:"maxRam"`      // bytes máximos
+	NivelAcceso string      `json:"nivelAcceso"` // "FULL_ACCESS" | "READ_ONLY" (o "FULL_ACCESS" para ADMIN)
+	ActiveTask  interface{} `json:"activeTask"`  // tareaId en curso o null
 }
 
 // ProxmoxPort define el contrato hacia la API de Proxmox VE.
@@ -97,6 +97,12 @@ type ProxmoxPort interface {
 
 	// ReiniciarInstancia reinicia (reboot) una VM o contenedor. Devuelve el UPID.
 	ReiniciarInstancia(ctx context.Context, vmid int) (upid string, err error)
+
+	// Shutdown realiza un apagado ordenado de la VM o contenedor. Devuelve el UPID.
+	Shutdown(ctx context.Context, node string, vmid int, vmType string) (string, error)
+
+	// Reboot reinicia la VM o contenedor de forma genérica con los parámetros exigidos.
+	Reboot(ctx context.Context, node string, vmid int, vmType string) (string, error)
 
 	// EliminarInstancia elimina permanentemente una VM o contenedor del cluster.
 	// La instancia DEBE estar detenida antes de llamar a este método; si está

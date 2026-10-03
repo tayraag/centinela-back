@@ -45,6 +45,8 @@ func (p *proxmoxTareas) ListarInstancias(context.Context) ([]ports.InstanciaProx
 func (p *proxmoxTareas) IniciarInstancia(context.Context, int) (string, error) { return "", nil }
 func (p *proxmoxTareas) DetenerInstancia(context.Context, int) (string, error) { return "", nil }
 func (p *proxmoxTareas) ReiniciarInstancia(context.Context, int) (string, error) { return "", nil }
+func (p *proxmoxTareas) Shutdown(context.Context, string, int, string) (string, error) { return "", nil }
+func (p *proxmoxTareas) Reboot(context.Context, string, int, string) (string, error) { return "", nil }
 func (p *proxmoxTareas) EliminarInstancia(context.Context, int) error { return nil }
 
 type tareasEnMemoria struct {
