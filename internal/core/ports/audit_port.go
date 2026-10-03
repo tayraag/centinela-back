@@ -1,4 +1,4 @@
-﻿package ports
+package ports
 
 import (
 	"context"
@@ -95,6 +95,7 @@ const (
 	AccionIniciarVM   = "INICIAR_VM"
 	AccionDetenerVM   = "DETENER_VM"
 	AccionReiniciarVM = "REINICIAR_VM"
+	AccionEliminarVM  = "ELIMINAR_VM"
 	AccionSuspenderVM = "SUSPENDER_VM"
 	AccionResumeVM    = "REANUDAR_VM"
 )

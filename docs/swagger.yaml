@@ -43,6 +43,24 @@ definitions:
     - email
     - nuevaContrasena
     type: object
+  http.instanciasSummaryDTO:
+    properties:
+      running:
+        type: integer
+      stopped:
+        type: integer
+      total:
+        type: integer
+    type: object
+  http.listarInstanciasResponse:
+    properties:
+      instances:
+        items:
+          $ref: '#/definitions/ports.InstanciaListadaDTO'
+        type: array
+      summary:
+        $ref: '#/definitions/http.instanciasSummaryDTO'
+    type: object
   http.permisosResponse:
     properties:
       permisos:
@@ -174,12 +192,31 @@ definitions:
     type: object
   ports.InstanciaListadaDTO:
     properties:
+      activeTask:
+        description: tareaId en curso o null
+        type: string
+      cpuUsage:
+        description: fracción [0,1]
+        type: number
       id:
+        description: Campos base (contrato original — no romper)
+        type: integer
+      ip:
+        description: 'Campos extendidos de telemetría (retrocompatibles: omitempty)'
+        type: string
+      maxRam:
+        description: bytes máximos
         type: integer
       name:
         type: string
+      nivelAcceso:
+        description: '"FULL_ACCESS" | "READ_ONLY" | "" (ADMIN)'
+        type: string
       node:
         type: string
+      ramUsage:
+        description: bytes usados
+        type: integer
       status:
         type: string
       type:
@@ -188,9 +225,21 @@ definitions:
     type: object
   ports.InstanciaProxmoxDTO:
     properties:
+      cpu:
+        description: Telemetría en tiempo real (0 cuando la instancia está detenida)
+        type: number
       estado:
         description: '"running" | "stopped" | ...'
         type: string
+      maxCpu:
+        description: cantidad de vCPUs asignadas
+        type: integer
+      maxMem:
+        description: RAM máxima asignada (bytes)
+        type: integer
+      mem:
+        description: RAM usada (bytes)
+        type: integer
       nodo:
         type: string
       nombre:
@@ -1300,16 +1349,14 @@ paths:
     get:
       description: Lee en vivo el inventario de Proxmox VE (VMs y contenedores). Un
         ADMIN recibe el cluster completo; un OPERATOR recibe únicamente las instancias
-        que tiene asignadas.
+        que tiene asignadas. Incluye telemetría (CPU, RAM) y tareas activas.
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            items:
-              $ref: '#/definitions/ports.InstanciaListadaDTO'
-            type: array
+            $ref: '#/definitions/http.listarInstanciasResponse'
         "500":
           description: INTERNAL_ERROR — error al consultar los permisos del usuario
           schema:
@@ -1329,9 +1376,53 @@ paths:
       tags:
       - Instancias Proxmox
   /instances/{vmid}:
+    delete:
+      description: Elimina permanentemente una VM o contenedor de Proxmox. La instancia
+        debe estar detenida (stopped) antes de invocar este endpoint; si está encendida
+        se responde 409.
+      parameters:
+      - description: VMID de la instancia
+        in: path
+        name: vmid
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: Instancia eliminada correctamente
+        "400":
+          description: INVALID_VMID
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "403":
+          description: INSUFFICIENT_PERMISSIONS — solo ADMIN puede eliminar instancias
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "404":
+          description: INSTANCE_NOT_FOUND
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "409":
+          description: INSTANCE_NOT_STOPPED — la instancia debe estar detenida
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "502":
+          description: PROXMOX_UNAVAILABLE
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "504":
+          description: PROXMOX_TIMEOUT
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Eliminar instancia
+      tags:
+      - Instancias Proxmox
     get:
-      description: Devuelve el estado actual (running/stopped, tipo, nodo) de una
-        VM o contenedor leído en vivo desde Proxmox VE.
+      description: Devuelve el estado actual (running/stopped, tipo, nodo, telemetría)
+        de una VM o contenedor leído en vivo desde Proxmox VE.
       parameters:
       - description: VMID de la instancia
         in: path
@@ -1397,7 +1488,8 @@ paths:
           schema:
             $ref: '#/definitions/http.ErrorResponse'
         "403":
-          description: INSTANCE_ACCESS_DENIED — el OPERATOR no tiene este vmid asignado
+          description: INSTANCE_ACCESS_DENIED — el OPERATOR no tiene FULL_ACCESS sobre
+            este vmid
           schema:
             $ref: '#/definitions/http.ErrorResponse'
         "404":
@@ -1405,8 +1497,7 @@ paths:
           schema:
             $ref: '#/definitions/http.ErrorResponse'
         "409":
-          description: INSTANCE_BUSY — la instancia está ejecutando otra tarea (Proxmox
-            la tiene bloqueada)
+          description: INSTANCE_BUSY — la instancia está ejecutando otra tarea
           schema:
             $ref: '#/definitions/http.ErrorResponse'
         "502":
@@ -1421,6 +1512,60 @@ paths:
       security:
       - BearerAuth: []
       summary: Iniciar instancia
+      tags:
+      - Instancias Proxmox
+  /instances/{vmid}/status/{action}:
+    post:
+      description: Ejecuta una acción de ciclo de vida (start, stop, reboot) sobre
+        una VM o contenedor. El endpoint genérico complementa a /start y /stop manteniendo
+        retrocompatibilidad.
+      parameters:
+      - description: VMID de la instancia
+        in: path
+        name: vmid
+        required: true
+        type: integer
+      - description: Acción a ejecutar (start | stop | reboot)
+        in: path
+        name: action
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: upid y tareaId
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: INVALID_VMID | INVALID_ACTION
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "403":
+          description: INSTANCE_ACCESS_DENIED — se requiere FULL_ACCESS
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "404":
+          description: INSTANCE_NOT_FOUND
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "409":
+          description: INSTANCE_BUSY
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "502":
+          description: PROXMOX_UNAVAILABLE
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "504":
+          description: PROXMOX_TIMEOUT
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Cambiar estado de instancia
       tags:
       - Instancias Proxmox
   /instances/{vmid}/stop:
@@ -1449,8 +1594,8 @@ paths:
           schema:
             $ref: '#/definitions/http.ErrorResponse'
         "403":
-          description: INSTANCE_ACCESS_DENIED — el OPERATOR no tiene este vmid asignado;
-            INSTANCE_PROTECTED — la instancia es infraestructura de El Centinela
+          description: INSTANCE_ACCESS_DENIED — el OPERATOR no tiene FULL_ACCESS sobre
+            este vmid; INSTANCE_PROTECTED — infraestructura de El Centinela
           schema:
             $ref: '#/definitions/http.ErrorResponse'
         "404":
@@ -1458,8 +1603,7 @@ paths:
           schema:
             $ref: '#/definitions/http.ErrorResponse'
         "409":
-          description: INSTANCE_BUSY — la instancia está ejecutando otra tarea (Proxmox
-            la tiene bloqueada)
+          description: INSTANCE_BUSY — la instancia está ejecutando otra tarea
           schema:
             $ref: '#/definitions/http.ErrorResponse'
         "502":

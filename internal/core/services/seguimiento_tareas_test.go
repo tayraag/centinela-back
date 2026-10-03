@@ -44,6 +44,8 @@ func (p *proxmoxTareas) ListarInstancias(context.Context) ([]ports.InstanciaProx
 }
 func (p *proxmoxTareas) IniciarInstancia(context.Context, int) (string, error) { return "", nil }
 func (p *proxmoxTareas) DetenerInstancia(context.Context, int) (string, error) { return "", nil }
+func (p *proxmoxTareas) ReiniciarInstancia(context.Context, int) (string, error) { return "", nil }
+func (p *proxmoxTareas) EliminarInstancia(context.Context, int) error { return nil }
 
 type tareasEnMemoria struct {
 	mu     sync.Mutex
@@ -65,6 +67,9 @@ func (r *tareasEnMemoria) ActualizarEstado(_ context.Context, id uuid.UUID, esta
 		return nil
 	}
 	return errors.New("no existe")
+}
+func (r *tareasEnMemoria) BuscarTareasActivasPorVmids(ctx context.Context, vmids []int) (map[int]string, error) {
+	return map[int]string{}, nil
 }
 func (r *tareasEnMemoria) estado(id uuid.UUID) string {
 	r.mu.Lock()

@@ -646,36 +646,29 @@ Con respecto a los query params en la url DE EJEMPLO de arriba:
   },
   "instances": [
     {
-      "id": "qemu/102",
+      "id": 102,
       "name": "web-server",
-      "type": "VM",
+      "type": "vm",
       "status": "running",
       "node": "pve1",
-      "vCpu": 4,
-      "ramTotalGb": 8.0,
-      "storageUsedGb": 20.5,
-      "storageTotalGb": 50.0,
-      "storageUsagePercent": 41.0,
-      "mainIp": "192.168.1.50",
-      "permissions": ["START", "STOP", "REBOOT", "EDIT", "SNAPSHOT", "DELETE"],
-      "availableActions": ["STOP", "REBOOT", "SNAPSHOT"], //Se separó estrictamente permissions (las acciones que el rol del usuario tiene permitidas) de availableActions (las acciones que el estado actual de la máquina permite ejecutar). Un operador puede tener permiso de iniciar (START), pero si la máquina ya está encendida, esa opción desaparece de las acciones disponibles.
-      "activeTask": null //devuelve null (si la maquina está inactiva) o el estado actual de la acción
+      "ip": "192.168.1.50",
+      "cpuUsage": 0.45,
+      "ramUsage": 4831838208,
+      "maxRam": 8589934592,
+      "nivelAcceso": "FULL_ACCESS",
+      "activeTask": null
     },
     {
-      "id": "lxc/105",
+      "id": 105,
       "name": "db-cache",
-      "type": "LXC",
+      "type": "lxc",
       "status": "stopped",
       "node": "pve1",
-      "vCpu": 2,
-      "ramTotalGb": 4.0,
-      "storageUsedGb": 10.0,
-      "storageTotalGb": 20.0,
-      "storageUsagePercent": 50.0,
-      "mainIp": null,
-      "permissions": ["START", "STOP", "REBOOT", "EDIT", "SNAPSHOT", "DELETE"],
-      "availableActions": ["START", "EDIT", "DELETE"],
-      "activeTask": "STARTING"
+      "cpuUsage": 0.0,
+      "ramUsage": 0,
+      "maxRam": 4294967296,
+      "nivelAcceso": "READ_ONLY",
+      "activeTask": "UPID:pve1:0001:start..."
     }
   ]
 }
@@ -746,13 +739,13 @@ Estas acciones (iniciar, apagar, forzar apagado, reiniciar) no necesitan que el 
 
 &nbsp;
 
-**POST /api/instances/{id}/start**
+**POST /api/instances/{id}/status/{action}**
 
-**POST /api/instances/{id}/shutdown** (Apagado ordenado)&nbsp;
+Donde `{action}` puede ser: `start` (Iniciar), `stop` (Forzar apagado) o `reboot` (Reiniciar).
+*Nota: Se mantienen los alias directos `/start` y `/stop` por retrocompatibilidad.*
 
-**POST /api/instances/{id}/stop** (Forzar apagado)&nbsp;
-
-**POST /api/instances/{id}/reboot**
+**DELETE /api/instances/{id}** (Eliminar instancia)
+Requiere rol ADMIN estrictamente, y la instancia debe estar en estado `stopped`.
 
 Sí hay una respuesta para el front, pero está agrupada más abajo para no repetirla.
 

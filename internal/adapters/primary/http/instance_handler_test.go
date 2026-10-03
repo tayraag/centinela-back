@@ -58,12 +58,37 @@ func (m *mockProxmoxPort) EstadoTarea(ctx context.Context, upid string) (*ports.
 	return &ports.EstadoTareaDTO{Terminada: true, ExitStatus: "OK"}, nil
 }
 
+func (m *mockProxmoxPort) ReiniciarInstancia(ctx context.Context, vmid int) (string, error) {
+	if m.errAccion != nil {
+		return "", m.errAccion
+	}
+	return "UPID:test:reboot", nil
+}
+
+func (m *mockProxmoxPort) EliminarInstancia(ctx context.Context, vmid int) error {
+	return m.errAccion
+}
+
 // seguimientoNulo implementa ports.SeguimientoTareas sin hacer nada.
 type seguimientoNulo struct{}
 
 func (seguimientoNulo) Seguir(context.Context, uuid.UUID, int, string, string) (uuid.UUID, error) {
 	return uuid.New(), nil
 }
+
+type mockTareaRepository struct{}
+func (m *mockTareaRepository) Crear(context.Context, *domain.TareaAsincrona) error { return nil }
+func (m *mockTareaRepository) ActualizarEstado(context.Context, uuid.UUID, string) error { return nil }
+func (m *mockTareaRepository) BuscarTareasActivasPorVmids(context.Context, []int) (map[int]string, error) {
+	return map[int]string{}, nil
+}
+
+type mockAuditService struct{}
+func (m *mockAuditService) Registrar(context.Context, ports.RegistrarAuditoriaInput) {}
+func (m *mockAuditService) ListarAuditoria(context.Context, uuid.UUID, ports.FiltrosAuditoria, ports.OpcionesAuditoria) (*ports.PaginaAuditoria, error) { return nil, nil }
+func (m *mockAuditService) ExportarCSV(context.Context, uuid.UUID, ports.FiltrosAuditoria) ([]byte, error) { return nil, nil }
+func (m *mockAuditService) ExportarJSON(context.Context, uuid.UUID, ports.FiltrosAuditoria) ([]byte, error) { return nil, nil }
+
 
 // mockUserRepository implementa ports.UserRepository para pruebas
 type mockUserRepository struct {
@@ -92,7 +117,11 @@ func (m *mockUserRepository) ListarPermisosDeUsuario(ctx context.Context, usuari
 	return m.permisosVMIDs, nil
 }
 func (m *mockUserRepository) ListarPermisosConNivel(ctx context.Context, usuarioID uuid.UUID) ([]ports.PermisoInstanciaInput, error) {
-	return nil, nil
+	var res []ports.PermisoInstanciaInput
+	for _, vmid := range m.permisosVMIDs {
+		res = append(res, ports.PermisoInstanciaInput{Vmid: vmid, NivelAcceso: ports.NivelAccesoFullAccess})
+	}
+	return res, nil
 }
 func (m *mockUserRepository) ReemplazarPermisos(ctx context.Context, usuarioID uuid.UUID, permisos []ports.PermisoInstanciaInput) error {
 	return nil
@@ -115,7 +144,7 @@ func TestListarInstancias_AdminVisualizaTodas(t *testing.T) {
 		permisosVMIDs: []int{100}, // Aunque solo tenga 100 en la BD, por ser ADMIN debe ver todas
 	}
 
-	handler := adaptersHttp.NewInstanceHandler(mockPx, mockRepo, seguimientoNulo{})
+	handler := adaptersHttp.NewInstanceHandler(mockPx, mockRepo, seguimientoNulo{}, &mockTareaRepository{}, &mockAuditService{})
 
 	router := gin.New()
 	router.GET("/api/instances", func(c *gin.Context) {
@@ -131,18 +160,20 @@ func TestListarInstancias_AdminVisualizaTodas(t *testing.T) {
 		t.Fatalf("Código de estado esperado 200, obtenido %d", w.Code)
 	}
 
-	var res []ports.InstanciaListadaDTO
+	var res struct {
+		Instances []ports.InstanciaListadaDTO `json:"instances"`
+	}
 	if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil {
 		t.Fatalf("Error deserializando respuesta: %v", err)
 	}
 
-	if len(res) != 3 {
-		t.Fatalf("ADMIN debe ver las 3 instancias (100%%), pero recibió %d", len(res))
+	if len(res.Instances) != 3 {
+		t.Fatalf("ADMIN debe ver las 3 instancias (100%%), pero recibió %d", len(res.Instances))
 	}
 
 	// Comprobar normalización: qemu -> vm
-	if res[0].Type != "vm" || res[1].Type != "lxc" {
-		t.Errorf("Normalización incorrecta: %+v", res)
+	if res.Instances[0].Type != "vm" || res.Instances[1].Type != "lxc" {
+		t.Errorf("Normalización incorrecta: %+v", res.Instances)
 	}
 }
 
@@ -160,7 +191,7 @@ func TestListarInstancias_OperatorVisualizaSoloAsignadas(t *testing.T) {
 		permisosVMIDs: []int{101}, // El operador solo tiene asignada la instancia 101
 	}
 
-	handler := adaptersHttp.NewInstanceHandler(mockPx, mockRepo, seguimientoNulo{})
+	handler := adaptersHttp.NewInstanceHandler(mockPx, mockRepo, seguimientoNulo{}, &mockTareaRepository{}, &mockAuditService{})
 
 	router := gin.New()
 	router.GET("/api/instances", func(c *gin.Context) {
@@ -176,16 +207,18 @@ func TestListarInstancias_OperatorVisualizaSoloAsignadas(t *testing.T) {
 		t.Fatalf("Código de estado esperado 200, obtenido %d", w.Code)
 	}
 
-	var res []ports.InstanciaListadaDTO
+	var res struct {
+		Instances []ports.InstanciaListadaDTO `json:"instances"`
+	}
 	if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil {
 		t.Fatalf("Error deserializando respuesta: %v", err)
 	}
 
-	if len(res) != 1 {
-		t.Fatalf("OPERATOR debe ver exclusivamente su instancia asignada (1), pero recibió %d", len(res))
+	if len(res.Instances) != 1 {
+		t.Fatalf("OPERATOR debe ver exclusivamente su instancia asignada (1), pero recibió %d", len(res.Instances))
 	}
-	if res[0].ID != 101 {
-		t.Errorf("Se esperaba la instancia 101, pero se recibió id=%d", res[0].ID)
+	if res.Instances[0].ID != 101 {
+		t.Errorf("Se esperaba la instancia 101, pero se recibió id=%d", res.Instances[0].ID)
 	}
 }
 
@@ -197,7 +230,7 @@ func TestListarInstancias_ProxmoxInaccesible(t *testing.T) {
 	}
 	mockRepo := &mockUserRepository{}
 
-	handler := adaptersHttp.NewInstanceHandler(mockPx, mockRepo, seguimientoNulo{})
+	handler := adaptersHttp.NewInstanceHandler(mockPx, mockRepo, seguimientoNulo{}, &mockTareaRepository{}, &mockAuditService{})
 
 	router := gin.New()
 	router.GET("/api/instances", func(c *gin.Context) {
@@ -229,7 +262,7 @@ func TestListarInstancias_ProxmoxTimeout(t *testing.T) {
 	mockPx := &mockProxmoxPort{
 		errListar: fmt.Errorf("%w: %w", ports.ErrProxmoxNoDisponible, ports.ErrProxmoxTimeout),
 	}
-	handler := adaptersHttp.NewInstanceHandler(mockPx, &mockUserRepository{}, seguimientoNulo{})
+	handler := adaptersHttp.NewInstanceHandler(mockPx, &mockUserRepository{}, seguimientoNulo{}, &mockTareaRepository{}, &mockAuditService{})
 
 	router := gin.New()
 	router.GET("/api/instances", func(c *gin.Context) {
@@ -255,7 +288,7 @@ func TestListarInstancias_ProxmoxTimeout(t *testing.T) {
 func TestAccionesDeEnergia_InstanciaOcupadaEs409(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	mockPx := &mockProxmoxPort{errAccion: fmt.Errorf("%w: can't lock file '/var/lock/qemu-server/lock-110.conf' - got timeout", ports.ErrInstanciaOcupada)}
-	handler := adaptersHttp.NewInstanceHandler(mockPx, &mockUserRepository{}, seguimientoNulo{})
+	handler := adaptersHttp.NewInstanceHandler(mockPx, &mockUserRepository{}, seguimientoNulo{}, &mockTareaRepository{}, &mockAuditService{})
 
 	router := gin.New()
 	router.POST("/api/instances/:vmid/start", handler.IniciarInstancia)
@@ -304,7 +337,7 @@ func TestMapeoDeErroresProxmox_EnTodosLosEndpoints(t *testing.T) {
 	}
 
 	probar := func(mock *mockProxmoxPort, metodo, ruta string) (int, map[string]string) {
-		handler := adaptersHttp.NewInstanceHandler(mock, &mockUserRepository{}, seguimientoNulo{})
+		handler := adaptersHttp.NewInstanceHandler(mock, &mockUserRepository{}, seguimientoNulo{}, &mockTareaRepository{}, &mockAuditService{})
 		router := gin.New()
 		router.Use(func(c *gin.Context) {
 			c.Set(string(middleware.ContextKeyRol), "ADMIN")

@@ -39,24 +39,41 @@ var ErrProxmoxCredenciales = errors.New("credenciales de Proxmox rechazadas o no
 var ErrProxmoxTimeout = errors.New("Proxmox VE no respondió a tiempo")
 
 // InstanciaProxmoxDTO proyecta el estado de una instancia (VM o contenedor)
-// leído desde la API de Proxmox.
+// leído desde la API de Proxmox. Los campos de telemetría (Cpu, Mem, MaxMem)
+// provienen directamente de cluster/resources y solo tienen valor cuando la
+// instancia está en running; en stopped Proxmox devuelve 0.
 type InstanciaProxmoxDTO struct {
 	Vmid   int    `json:"vmid"`
 	Nombre string `json:"nombre"`
 	Tipo   string `json:"tipo"` // "qemu" | "lxc"
 	Nodo   string `json:"nodo"`
 	Estado string `json:"estado"` // "running" | "stopped" | ...
+
+	// Telemetría en tiempo real (0 cuando la instancia está detenida)
+	Cpu    float64 `json:"cpu"`    // uso de CPU: fracción [0,1]
+	Mem    int64   `json:"mem"`    // RAM usada (bytes)
+	MaxMem int64   `json:"maxMem"` // RAM máxima asignada (bytes)
+	MaxCpu int     `json:"maxCpu"` // cantidad de vCPUs asignadas
 }
 
 // InstanciaListadaDTO es la proyección normalizada que consume el Front en el
 // listado del inventario. Nombres de campo y valores fijados por contrato:
 // type usa "vm" (no "qemu") para las máquinas virtuales.
 type InstanciaListadaDTO struct {
+	// Campos base (contrato original — no romper)
 	ID     int    `json:"id"`
 	Name   string `json:"name"`
 	Type   string `json:"type"` // "vm" | "lxc"
 	Node   string `json:"node"`
 	Status string `json:"status"`
+
+	// Campos extendidos de telemetría (retrocompatibles: omitempty)
+	Ip          string  `json:"ip,omitempty"`          // dirección IP de la instancia (si está disponible)
+	CpuUsage    float64 `json:"cpuUsage"`              // fracción [0,1]
+	RamUsage    int64   `json:"ramUsage"`              // bytes usados
+	MaxRam      int64   `json:"maxRam"`               // bytes máximos
+	NivelAcceso string  `json:"nivelAcceso,omitempty"` // "FULL_ACCESS" | "READ_ONLY" | "" (ADMIN)
+	ActiveTask  *string `json:"activeTask"`            // tareaId en curso o null
 }
 
 // ProxmoxPort define el contrato hacia la API de Proxmox VE.
@@ -77,6 +94,14 @@ type ProxmoxPort interface {
 
 	// DetenerInstancia apaga (forzado) una VM o contenedor. Devuelve el UPID.
 	DetenerInstancia(ctx context.Context, vmid int) (upid string, err error)
+
+	// ReiniciarInstancia reinicia (reboot) una VM o contenedor. Devuelve el UPID.
+	ReiniciarInstancia(ctx context.Context, vmid int) (upid string, err error)
+
+	// EliminarInstancia elimina permanentemente una VM o contenedor del cluster.
+	// La instancia DEBE estar detenida antes de llamar a este método; si está
+	// encendida Proxmox responde con error y se retorna ErrInstanciaOcupada.
+	EliminarInstancia(ctx context.Context, vmid int) error
 
 	// EstadoTarea consulta GET /nodes/{node}/tasks/{upid}/status.
 	EstadoTarea(ctx context.Context, upid string) (*EstadoTareaDTO, error)

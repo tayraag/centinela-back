@@ -176,6 +176,12 @@ type clusterResourceEntry struct {
 	Name   string `json:"name"`
 	Node   string `json:"node"`
 	Status string `json:"status"`
+
+	// Telemetría disponible en cluster/resources (0 cuando la instancia está detenida)
+	Cpu    float64 `json:"cpu"`    // fracción [0,1] de uso de CPU
+	Mem    int64   `json:"mem"`    // RAM usada en bytes
+	MaxMem int64   `json:"maxmem"` // RAM máxima asignada en bytes
+	MaxCpu int     `json:"maxcpu"` // cantidad de vCPUs asignadas
 }
 
 type clusterResourcesResponse struct {
@@ -237,6 +243,10 @@ func (c *Client) ObtenerInstancia(ctx context.Context, vmid int) (*ports.Instanc
 		Tipo:   entry.Type,
 		Nodo:   entry.Node,
 		Estado: entry.Status,
+		Cpu:    entry.Cpu,
+		Mem:    entry.Mem,
+		MaxMem: entry.MaxMem,
+		MaxCpu: entry.MaxCpu,
 	}, nil
 }
 
@@ -261,6 +271,10 @@ func (c *Client) ListarInstancias(ctx context.Context) ([]ports.InstanciaProxmox
 			Tipo:   entry.Type,
 			Nodo:   entry.Node,
 			Estado: entry.Status,
+			Cpu:    entry.Cpu,
+			Mem:    entry.Mem,
+			MaxMem: entry.MaxMem,
+			MaxCpu: entry.MaxCpu,
 		})
 	}
 	return dtos, nil
@@ -272,6 +286,24 @@ func (c *Client) IniciarInstancia(ctx context.Context, vmid int) (string, error)
 
 func (c *Client) DetenerInstancia(ctx context.Context, vmid int) (string, error) {
 	return c.cambiarEstado(ctx, vmid, "stop")
+}
+
+func (c *Client) ReiniciarInstancia(ctx context.Context, vmid int) (string, error) {
+	return c.cambiarEstado(ctx, vmid, "reboot")
+}
+
+// EliminarInstancia elimina de forma permanente una VM o contenedor de Proxmox.
+// Proxmox usa DELETE /nodes/{node}/{tipo}/{vmid}.
+// La instancia debe estar detenida: si está encendida Proxmox responde 500 con
+// un mensaje de bloqueo y se retorna ErrInstanciaOcupada.
+func (c *Client) EliminarInstancia(ctx context.Context, vmid int) error {
+	entry, err := c.buscarInstancia(ctx, vmid)
+	if err != nil {
+		return err
+	}
+	path := fmt.Sprintf("/api2/json/nodes/%s/%s/%d", entry.Node, entry.Type, vmid)
+	_, err = c.doRequest(ctx, http.MethodDelete, path, nil)
+	return err
 }
 
 type upidResponse struct {

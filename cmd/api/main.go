@@ -146,7 +146,7 @@ func main() {
 	auditHandler := httpHandlers.NewAuditHandler(auditService)
 	eventosService := services.NewEventosService(kvStore, authRepo, instanceRepo, auditService)
 	seguimientoTareas := services.NewSeguimientoTareas(proxmoxClient, postgres.NewTareaRepository(db), eventosService, time.Second)
-	instanceHandler := httpHandlers.NewInstanceHandler(proxmoxClient, userRepo, seguimientoTareas)
+	instanceHandler := httpHandlers.NewInstanceHandler(proxmoxClient, userRepo, seguimientoTareas, postgres.NewTareaRepository(db), auditService)
 	eventsHandler := httpHandlers.NewEventsHandler(eventosService)
 
 	// 6. Configurar el Router HTTP (Gin)
@@ -269,6 +269,8 @@ func main() {
 			instances.POST("/:vmid/start", middleware.RequireInstanceAccess(instanceRepo, "vmid", ports.NivelAccesoFullAccess), instanceHandler.IniciarInstancia)
 			// Las acciones destructivas llevan además RejectProtectedInstance (VMIDs de infraestructura).
 			instances.POST("/:vmid/stop", middleware.RequireInstanceAccess(instanceRepo, "vmid", ports.NivelAccesoFullAccess), middleware.RejectProtectedInstance(vmidsProtegidos, "vmid"), instanceHandler.DetenerInstancia)
+			instances.POST("/:vmid/status/:action", middleware.RequireInstanceAccess(instanceRepo, "vmid", ports.NivelAccesoFullAccess), middleware.RejectProtectedInstance(vmidsProtegidos, "vmid"), instanceHandler.CambiarEstado)
+			instances.DELETE("/:vmid", middleware.RequireRole("ADMIN"), middleware.RejectProtectedInstance(vmidsProtegidos, "vmid"), instanceHandler.EliminarInstancia)
 		}
 		// ==========================================
 		// Swagger UI: apagada por defecto.

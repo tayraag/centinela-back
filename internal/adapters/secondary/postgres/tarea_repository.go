@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"fmt"
+	"strconv"
 
 	"el-centinela/internal/core/domain"
 	"el-centinela/internal/core/ports"
@@ -38,4 +39,38 @@ func (r *TareaRepository) ActualizarEstado(ctx context.Context, id uuid.UUID, es
 		return fmt.Errorf("error al actualizar tarea: %w", err)
 	}
 	return nil
+}
+
+// BuscarTareasActivasPorVmids devuelve un mapa vmid → tareaId (string UUID) para
+// todas las tareas en estado RUNNING que correspondan a alguno de los vmids dados.
+// Se hace en un único query para no iterar N veces contra la DB.
+func (r *TareaRepository) BuscarTareasActivasPorVmids(ctx context.Context, vmids []int) (map[int]string, error) {
+	if len(vmids) == 0 {
+		return map[int]string{}, nil
+	}
+
+	// instancia_id está guardado como string (strconv.Itoa(vmid)) en seguimiento_tareas.go
+	vmidStrs := make([]string, len(vmids))
+	for i, v := range vmids {
+		vmidStrs[i] = strconv.Itoa(v)
+	}
+
+	var tareas []domain.TareaAsincrona
+	if err := r.db.WithContext(ctx).
+		Where("instancia_id IN ? AND estado = ?", vmidStrs, ports.TareaRunning).
+		Find(&tareas).Error; err != nil {
+		return nil, fmt.Errorf("error al buscar tareas activas: %w", err)
+	}
+
+	resultado := make(map[int]string, len(tareas))
+	for _, t := range tareas {
+		vmid, err := strconv.Atoi(t.InstanciaID)
+		if err != nil {
+			continue // instancia_id malformado: ignorar silenciosamente
+		}
+		// Si hay más de una tarea RUNNING para el mismo vmid (no debería pasar),
+		// se queda con la última encontrada.
+		resultado[vmid] = t.ID.String()
+	}
+	return resultado, nil
 }
