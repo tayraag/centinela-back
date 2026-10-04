@@ -133,16 +133,30 @@ func mapearErrorProxmox(c *gin.Context, err error) {
 // Un ADMIN ve todo el cluster; un OPERATOR solo sus instancias asignadas.
 //
 // @Summary      Listar instancias
-// @Description  Lee en vivo el inventario de Proxmox VE (VMs y contenedores). Un ADMIN recibe el cluster completo; un OPERATOR recibe únicamente las instancias que tiene asignadas. Incluye telemetría (CPU, RAM) y tareas activas.
+// @Description  OPERATIVO. Lee en vivo el inventario de Proxmox VE (VMs y contenedores). Un ADMIN recibe el cluster completo; un OPERATOR recibe únicamente las instancias que tiene asignadas. Incluye telemetría (CPU, RAM), nivel de acceso y tarea activa. ip y activeTask pueden ser null.
 // @Tags         Instancias Proxmox
 // @Produce      json
 // @Security     BearerAuth
-// @Success      200 {array} ports.InstanciaListadaDTO
+// @Success      200 {array} InstanciaInventarioResponse
+// @Failure      401 {object} ErrorResponse "TOKEN_MISSING | TOKEN_INVALID | TOKEN_EXPIRED | TOKEN_REVOKED"
 // @Failure      500 {object} ErrorResponse "INTERNAL_ERROR — error al consultar los permisos del usuario"
 // @Failure      502 {object} ErrorResponse "PROXMOX_UNAVAILABLE — Proxmox caído, sin red o token rechazado"
 // @Failure      504 {object} ErrorResponse "PROXMOX_TIMEOUT — Proxmox no respondió a tiempo; la acción puede haberse aplicado"
 // @Router       /instances [get]
 func (h *InstanceHandler) ListarInstancias(c *gin.Context) {
+	// Operación exclusivamente documental: la ruta NO está registrada todavía y hoy
+	// responde 404 NOT_FOUND. El contrato objetivo vive aquí para que Swagger lo publique.
+	// @Summary      Consultar estado consolidado del nodo (planificado)
+	// @Description  PLANIFICADO; NO OPERATIVO. Contrato objetivo para ADMIN y OPERATOR autenticados. La ruta no está registrada y actualmente responde 404 NOT_FOUND.
+	// @Tags         Estado del nodo
+	// @Produce      json
+	// @Security     BearerAuth
+	// @Success      200 {object} EstadoNodeResponse
+	// @Failure      401 {object} ErrorResponse "TOKEN_MISSING | TOKEN_INVALID | TOKEN_EXPIRED | TOKEN_REVOKED"
+	// @Failure      403 {object} ErrorResponse "INSUFFICIENT_PERMISSIONS"
+	// @x-implementation-status "planned"
+	// @Router       /node/status [get]
+
 	instancias, err := h.proxmox.ListarInstancias(c.Request.Context())
 	if err != nil {
 		mapearErrorProxmox(c, err)
