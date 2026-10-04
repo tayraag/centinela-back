@@ -38,6 +38,18 @@ type EstadoNodeResponse struct {
 	FetchedAt        string                `json:"fetchedAt" binding:"required" format:"date-time" example:"2026-10-03T14:30:05Z"`
 }
 
+// AccionAceptadaResponse es el cuerpo 202 de las acciones de ciclo de vida aceptadas.
+// upid identifica la tarea creada en Proxmox; tareaId identifica la tarea registrada
+// por el backend y es el mismo valor que recibe el evento TASK_FINISHED al terminar.
+//
+// tareaId se omite cuando el registro de la tarea falla. La acción ya se aplicó en
+// Proxmox para ese momento, por lo que la respuesta conserva únicamente upid y el
+// cliente no puede correlacionar el evento: debe reconciliar por upid.
+type AccionAceptadaResponse struct {
+	Upid    string  `json:"upid" binding:"required" example:"UPID:pve:0008380E:0131F1BF:6A84EA54:vzstart:110:root@pam:ctid=110:starttime=6934A2E3:"`
+	TareaID *string `json:"tareaId,omitempty" example:"3f2504e0-4f89-11d3-9a0c-0305e82c3301"`
+}
+
 // InstanciaInventarioResponse documenta cada elemento del inventario operativo.
 type InstanciaInventarioResponse struct {
 	ID          int     `json:"id" binding:"required" example:"110"`

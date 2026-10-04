@@ -75,19 +75,153 @@ func TestContratoEtapa1(t *testing.T) {
 		}
 	}
 
+	// ==========================================================
+	// T02 — Acciones aceptadas y catálogo completo de errores
+	// ==========================================================
+
+	const acceptedDef = "http.AccionAceptadaResponse"
+
+	// El sobre de error real del servidor es { errorCode, message }.
+	errorResponse := objeto(t, definitions, "http.ErrorResponse")
+	for _, campo := range []string{"errorCode", "message"} {
+		prop := objeto(t, objeto(t, errorResponse, "properties"), campo)
+		if tipo := cadena(t, prop, "type"); tipo != "string" {
+			t.Errorf("ErrorResponse.%s debe ser string, obtuvo %q", campo, tipo)
+		}
+	}
+
+	// 202: upid obligatorio, tareaId opcional (se omite si el registro falla).
+	verificarObjetoRequerido(t, definitions, acceptedDef, []string{"upid"})
+	tareaID := propiedad(t, definitions, acceptedDef, "tareaId")
+	if tipo := cadena(t, tareaID, "type"); tipo != "string" {
+		t.Errorf("tareaId debe ser string, obtuvo %q", tipo)
+	}
+	if requeridosDe(t, objeto(t, definitions, acceptedDef))["tareaId"] {
+		t.Error("tareaId no debe ser obligatorio: se omite cuando no se puede registrar la tarea")
+	}
+
+	// Los ocho pares error/status observados en las acciones aceptadas.
+	pares := []struct{ codigo, errorCode string }{
+		{"400", "INVALID_VMID"},
+		{"401", "MISSING_TOKEN"},
+		{"403", "INSTANCE_ACCESS_DENIED"},
+		{"404", "INSTANCE_NOT_FOUND"},
+		{"409", "INSTANCE_BUSY"},
+		{"500", "INTERNAL_ERROR"},
+		{"502", "PROXMOX_UNAVAILABLE"},
+		{"504", "PROXMOX_TIMEOUT"},
+	}
+
+	for _, ruta := range []string{"/instances/{vmid}/start", "/instances/{vmid}/stop"} {
+		item := objeto(t, paths, ruta)
+		operacion := objeto(t, item, "post")
+		verificarBearer(t, operacion)
+		verificarRespuesta(t, operacion, "202", acceptedDef)
+
+		respuestas := objeto(t, operacion, "responses")
+		if len(respuestas) != len(pares)+1 {
+			t.Errorf("%s POST documenta %d respuestas, se esperaban %d (202 más ocho errores)",
+				ruta, len(respuestas), len(pares)+1)
+		}
+		for _, par := range pares {
+			if _, existe := respuestas[par.codigo]; !existe {
+				t.Errorf("%s POST no documenta el estado %s (%s)", ruta, par.codigo, par.errorCode)
+				continue
+			}
+			verificarRespuesta(t, operacion, par.codigo, "http.ErrorResponse")
+			descripcion := cadena(t, objeto(t, respuestas, par.codigo), "description")
+			if !strings.Contains(descripcion, par.errorCode) {
+				t.Errorf("%s %s no nombra %s: %q", ruta, par.codigo, par.errorCode, descripcion)
+			}
+		}
+
+		// No se inventan verbos: start y stop son POST y nada más.
+		for _, verbo := range []string{"get", "put", "patch", "delete"} {
+			if _, existe := item[verbo]; existe {
+				t.Errorf("%s no debe declarar el verbo %s: el servidor solo registra POST", ruta, verbo)
+			}
+		}
+
+		// Los códigos de autenticación reales no incluyen los inventados.
+		for _, inventado := range []string{"TOKEN_MISSING", "TOKEN_INVALID", "TOKEN_EXPIRED"} {
+			if strings.Contains(cadena(t, objeto(t, respuestas, "401"), "description"), inventado) {
+				t.Errorf("%s 401 no debe documentar %s: el servidor no lo emite", ruta, inventado)
+			}
+		}
+	}
+
+	// La ambigüedad de PROXMOX_TIMEOUT debe quedar explícita en 504.
+	timeout := descripcionRespuesta(t, paths, "/instances/{vmid}/start", "post", "504")
+	if !strings.Contains(timeout, "puede haberse aplicado") {
+		t.Errorf("504 debe advertir que la acción pudo aplicarse: %q", timeout)
+	}
+
+	// INSTANCE_PROTECTED solo existe donde RejectProtectedInstance está registrado: stop.
+	stop403 := descripcionRespuesta(t, paths, "/instances/{vmid}/stop", "post", "403")
+	if !strings.Contains(stop403, "INSTANCE_PROTECTED") {
+		t.Errorf("stop 403 debe documentar INSTANCE_PROTECTED: %q", stop403)
+	}
+	start403 := descripcionRespuesta(t, paths, "/instances/{vmid}/start", "post", "403")
+	if strings.Contains(start403, "INSTANCE_PROTECTED") {
+		t.Errorf("start no pasa por RejectProtectedInstance, no debe documentar INSTANCE_PROTECTED: %q", start403)
+	}
+
+	// Pause: contrato objetivo, todavía no registrado.
+	pause := objeto(t, objeto(t, paths, "/instances/{vmid}/pause"), "post")
+	if estado := cadena(t, pause, "x-implementation-status"); estado != "planned" {
+		t.Errorf("POST pause debe marcarse planned, obtuvo %q", estado)
+	}
+	if descripcion := cadena(t, pause, "description"); !strings.Contains(descripcion, "NO OPERATIVO") {
+		t.Errorf("POST pause no advierte su estado planificado: %q", descripcion)
+	}
+	verificarRespuesta(t, pause, "202", acceptedDef)
+
 	contenidoContrato, err := os.ReadFile("contrato-etapa1.md")
 	if err != nil {
 		t.Fatalf("leer contrato-etapa1.md: %v", err)
 	}
 	contrato := string(contenidoContrato)
 	for _, fragmento := range []string{
+		// T01 — lecturas.
 		"GET /api/node/status", "planificada", "404 NOT_FOUND", "GET /api/instances", "operativa",
 		"usagePercent", "instancesSummary", "fetchedAt", "nivelAcceso", "activeTask",
+		// T02 — acciones aceptadas.
+		"POST /api/instances/:vmid/start", "POST /api/instances/:vmid/stop",
+		"202", "upid", "tareaId", "pause",
+		// T02 — los ocho pares error/status.
+		"INVALID_VMID", "MISSING_TOKEN", "INSTANCE_ACCESS_DENIED", "INSTANCE_PROTECTED",
+		"INSTANCE_NOT_FOUND", "INSTANCE_BUSY", "INTERNAL_ERROR",
+		"PROXMOX_UNAVAILABLE", "PROXMOX_TIMEOUT",
+		// T02 — sobre real y diferencias con lo solicitado.
+		`{ "errorCode", "message" }`, "204",
 	} {
 		if !strings.Contains(contrato, fragmento) {
 			t.Errorf("contrato-etapa1.md no contiene %q", fragmento)
 		}
 	}
+}
+
+// descripcionRespuesta devuelve la descripción de un estado de una operación.
+func descripcionRespuesta(t *testing.T, paths map[string]any, ruta, verbo, codigo string) string {
+	t.Helper()
+	operacion := objeto(t, objeto(t, paths, ruta), verbo)
+	respuesta := objeto(t, objeto(t, operacion, "responses"), codigo)
+	return cadena(t, respuesta, "description")
+}
+
+func requeridosDe(t *testing.T, definicion map[string]any) map[string]bool {
+	t.Helper()
+	requeridos := map[string]bool{}
+	requeridosRaw, ok := definicion["required"].([]any)
+	if !ok {
+		return requeridos
+	}
+	for _, valor := range requeridosRaw {
+		if campo, ok := valor.(string); ok {
+			requeridos[campo] = true
+		}
+	}
+	return requeridos
 }
 
 func objeto(t *testing.T, padre map[string]any, clave string) map[string]any {
