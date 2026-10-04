@@ -133,16 +133,30 @@ func mapearErrorProxmox(c *gin.Context, err error) {
 // Un ADMIN ve todo el cluster; un OPERATOR solo sus instancias asignadas.
 //
 // @Summary      Listar instancias
-// @Description  Lee en vivo el inventario de Proxmox VE (VMs y contenedores). Un ADMIN recibe el cluster completo; un OPERATOR recibe únicamente las instancias que tiene asignadas. Incluye telemetría (CPU, RAM) y tareas activas.
+// @Description  OPERATIVO. Lee en vivo el inventario de Proxmox VE (VMs y contenedores). Un ADMIN recibe el cluster completo; un OPERATOR recibe únicamente las instancias que tiene asignadas. Incluye telemetría (CPU, RAM), nivel de acceso y tarea activa. ip y activeTask pueden ser null.
 // @Tags         Instancias Proxmox
 // @Produce      json
 // @Security     BearerAuth
-// @Success      200 {array} ports.InstanciaListadaDTO
+// @Success      200 {array} InstanciaInventarioResponse
+// @Failure      401 {object} ErrorResponse "MISSING_TOKEN | INVALID_TOKEN | TOKEN_REVOKED"
 // @Failure      500 {object} ErrorResponse "INTERNAL_ERROR — error al consultar los permisos del usuario"
 // @Failure      502 {object} ErrorResponse "PROXMOX_UNAVAILABLE — Proxmox caído, sin red o token rechazado"
 // @Failure      504 {object} ErrorResponse "PROXMOX_TIMEOUT — Proxmox no respondió a tiempo; la acción puede haberse aplicado"
 // @Router       /instances [get]
 func (h *InstanceHandler) ListarInstancias(c *gin.Context) {
+	// Operación exclusivamente documental: la ruta NO está registrada todavía y hoy
+	// responde 404 NOT_FOUND. El contrato objetivo vive aquí para que Swagger lo publique.
+	// @Summary      Consultar estado consolidado del nodo (planificado)
+	// @Description  PLANIFICADO; NO OPERATIVO. Contrato objetivo para ADMIN y OPERATOR autenticados. La ruta no está registrada y actualmente responde 404 NOT_FOUND.
+	// @Tags         Estado del nodo
+	// @Produce      json
+	// @Security     BearerAuth
+	// @Success      200 {object} EstadoNodeResponse
+	// @Failure      401 {object} ErrorResponse "MISSING_TOKEN | INVALID_TOKEN | TOKEN_REVOKED"
+	// @Failure      403 {object} ErrorResponse "WRONG_TOKEN_TYPE | 2FA_REQUIRED | PASSWORD_CHANGE_REQUIRED | INSUFFICIENT_PERMISSIONS"
+	// @x-implementation-status "planned"
+	// @Router       /node/status [get]
+
 	instancias, err := h.proxmox.ListarInstancias(c.Request.Context())
 	if err != nil {
 		mapearErrorProxmox(c, err)
@@ -242,11 +256,13 @@ func (h *InstanceHandler) ListarInstancias(c *gin.Context) {
 // @Security     BearerAuth
 // @Param        vmid path int true "VMID de la instancia"
 // @Success      200 {object} ports.InstanciaProxmoxDTO
-// @Failure      400 {object} ErrorResponse "INVALID_VMID"
-// @Failure      403 {object} ErrorResponse "INSTANCE_ACCESS_DENIED — el OPERATOR no tiene este vmid asignado"
-// @Failure      404 {object} ErrorResponse "INSTANCE_NOT_FOUND"
+// @Failure      400 {object} ErrorResponse "INVALID_VMID — el vmid de la ruta no es un número entero"
+// @Failure      401 {object} ErrorResponse "MISSING_TOKEN | INVALID_TOKEN | TOKEN_REVOKED"
+// @Failure      403 {object} ErrorResponse "WRONG_TOKEN_TYPE | 2FA_REQUIRED | PASSWORD_CHANGE_REQUIRED | NO_ROLE | NO_USER | INVALID_USER_ID | INSTANCE_ACCESS_DENIED — el OPERATOR no tiene este vmid asignado"
+// @Failure      404 {object} ErrorResponse "INSTANCE_NOT_FOUND — la instancia no existe en Proxmox"
+// @Failure      500 {object} ErrorResponse "INTERNAL_ERROR — al verificar permisos de acceso o error inesperado de Proxmox"
 // @Failure      502 {object} ErrorResponse "PROXMOX_UNAVAILABLE — Proxmox caído, sin red o token rechazado"
-// @Failure      504 {object} ErrorResponse "PROXMOX_TIMEOUT — Proxmox no respondió a tiempo; la acción puede haberse aplicado"
+// @Failure      504 {object} ErrorResponse "PROXMOX_TIMEOUT — Proxmox no respondió a tiempo"
 // @Router       /instances/{vmid} [get]
 func (h *InstanceHandler) ObtenerInstancia(c *gin.Context) {
 	vmid, ok := extraerVmid(c)
@@ -268,17 +284,19 @@ func (h *InstanceHandler) ObtenerInstancia(c *gin.Context) {
 // IniciarInstancia arranca una instancia Proxmox.
 //
 // @Summary      Iniciar instancia
-// @Description  Dispara el arranque de una VM o contenedor en Proxmox VE. La operación es asíncrona: devuelve el UPID de la tarea que Proxmox crea para seguir su progreso.
+// @Description  OPERATIVO. Dispara el arranque de una VM o contenedor en Proxmox VE. La operación es asíncrona: responde 202 Accepted con el UPID de la tarea creada en Proxmox. No espera a que la instancia quede encedida.
 // @Tags         Instancias Proxmox
 // @Produce      json
 // @Security     BearerAuth
 // @Param        vmid path int true "VMID de la instancia"
-// @Success      202 {object} map[string]string "upid de la tarea en Proxmox y tareaId (llega en el evento TASK_FINISHED al terminar)"
-// @Failure      400 {object} ErrorResponse "INVALID_VMID"
-// @Failure      403 {object} ErrorResponse "INSTANCE_ACCESS_DENIED — el OPERATOR no tiene FULL_ACCESS sobre este vmid"
-// @Failure      404 {object} ErrorResponse "INSTANCE_NOT_FOUND"
-// @Failure      409 {object} ErrorResponse "INSTANCE_BUSY — la instancia está ejecutando otra tarea"
-// @Failure      502 {object} ErrorResponse "PROXMOX_UNAVAILABLE — Proxmox caído, sin red o token rechazado"
+// @Success      202 {object} AccionAceptadaResponse "Acción aceptada: upid de la tarea en Proxmox y tareaId. tareaId se omite si no se pudo registrar la tarea"
+// @Failure      400 {object} ErrorResponse "INVALID_VMID — el vmid de la ruta no es un número entero"
+// @Failure      401 {object} ErrorResponse "MISSING_TOKEN | INVALID_TOKEN | TOKEN_REVOKED"
+// @Failure      403 {object} ErrorResponse "WRONG_TOKEN_TYPE | 2FA_REQUIRED | PASSWORD_CHANGE_REQUIRED | NO_ROLE | NO_USER | INVALID_USER_ID | INSTANCE_ACCESS_DENIED — el OPERATOR no tiene FULL_ACCESS sobre este vmid"
+// @Failure      404 {object} ErrorResponse "INSTANCE_NOT_FOUND — la instancia no existe en Proxmox"
+// @Failure      409 {object} ErrorResponse "INSTANCE_BUSY — la instancia está ejecutando otra tarea; reintentar al recibir TASK_FINISHED"
+// @Failure      500 {object} ErrorResponse "INTERNAL_ERROR — al verificar permisos de acceso o error inesperado de Proxmox"
+// @Failure      502 {object} ErrorResponse "PROXMOX_UNAVAILABLE — Proxmox caído, sin red o token rechazado; la orden NO llegó a aplicarse"
 // @Failure      504 {object} ErrorResponse "PROXMOX_TIMEOUT — Proxmox no respondió a tiempo; la acción puede haberse aplicado"
 // @Router       /instances/{vmid}/start [post]
 func (h *InstanceHandler) IniciarInstancia(c *gin.Context) {
@@ -307,17 +325,19 @@ func (h *InstanceHandler) IniciarInstancia(c *gin.Context) {
 // DetenerInstancia detiene (apagado forzado) una instancia Proxmox.
 //
 // @Summary      Detener instancia
-// @Description  Dispara el apagado forzado de una VM o contenedor en Proxmox VE. La operación es asíncrona: devuelve el UPID de la tarea que Proxmox crea para seguir su progreso.
+// @Description  OPERATIVO. Dispara el apagado forzado de una VM o contenedor en Proxmox VE. La operación es asíncrona: responde 202 Accepted con el UPID de la tarea creada en Proxmox. No espera a que la instancia quede detenida.
 // @Tags         Instancias Proxmox
 // @Produce      json
 // @Security     BearerAuth
 // @Param        vmid path int true "VMID de la instancia"
-// @Success      202 {object} map[string]string "upid de la tarea en Proxmox y tareaId (llega en el evento TASK_FINISHED al terminar)"
-// @Failure      400 {object} ErrorResponse "INVALID_VMID"
-// @Failure      403 {object} ErrorResponse "INSTANCE_ACCESS_DENIED — el OPERATOR no tiene FULL_ACCESS sobre este vmid; INSTANCE_PROTECTED — infraestructura de El Centinela"
-// @Failure      404 {object} ErrorResponse "INSTANCE_NOT_FOUND"
-// @Failure      409 {object} ErrorResponse "INSTANCE_BUSY — la instancia está ejecutando otra tarea"
-// @Failure      502 {object} ErrorResponse "PROXMOX_UNAVAILABLE — Proxmox caído, sin red o token rechazado"
+// @Success      202 {object} AccionAceptadaResponse "Acción aceptada: upid de la tarea en Proxmox y tareaId. tareaId se omite si no se pudo registrar la tarea"
+// @Failure      400 {object} ErrorResponse "INVALID_VMID — el vmid de la ruta no es un número entero"
+// @Failure      401 {object} ErrorResponse "MISSING_TOKEN | INVALID_TOKEN | TOKEN_REVOKED"
+// @Failure      403 {object} ErrorResponse "WRONG_TOKEN_TYPE | 2FA_REQUIRED | PASSWORD_CHANGE_REQUIRED | NO_ROLE | NO_USER | INVALID_USER_ID | INSTANCE_ACCESS_DENIED | INSTANCE_PROTECTED — infraestructura de El Centinela"
+// @Failure      404 {object} ErrorResponse "INSTANCE_NOT_FOUND — la instancia no existe en Proxmox"
+// @Failure      409 {object} ErrorResponse "INSTANCE_BUSY — la instancia está ejecutando otra tarea; reintentar al recibir TASK_FINISHED"
+// @Failure      500 {object} ErrorResponse "INTERNAL_ERROR — al verificar permisos de acceso o error inesperado de Proxmox"
+// @Failure      502 {object} ErrorResponse "PROXMOX_UNAVAILABLE — Proxmox caído, sin red o token rechazado; la orden NO llegó a aplicarse"
 // @Failure      504 {object} ErrorResponse "PROXMOX_TIMEOUT — Proxmox no respondió a tiempo; la acción puede haberse aplicado"
 // @Router       /instances/{vmid}/stop [post]
 func (h *InstanceHandler) DetenerInstancia(c *gin.Context) {
@@ -356,21 +376,44 @@ var accionesValidas = map[string]bool{
 // por retrocompatibilidad) y agrega soporte para reboot y shutdown.
 //
 // @Summary      Cambiar estado de instancia
-// @Description  Ejecuta una acción de ciclo de vida (start, stop, shutdown, reboot) sobre una VM o contenedor. El endpoint genérico complementa a /start y /stop manteniendo retrocompatibilidad.
+// @Description  OPERATIVO. Ejecuta una acción de ciclo de vida (start, stop, shutdown, reboot) sobre una VM o contenedor. El endpoint genérico complementa a /start y /stop manteniendo retrocompatibilidad. La acción Pause NO está implementada: use POST /instances/{vmid}/pause, que hoy responde 404 NOT_FOUND.
 // @Tags         Instancias Proxmox
 // @Produce      json
 // @Security     BearerAuth
 // @Param        vmid   path int    true "VMID de la instancia"
-// @Param        action path string true "Acción a ejecutar (start | stop | shutdown | reboot)"
-// @Success      202 {object} map[string]string "upid y tareaId"
-// @Failure      400 {object} ErrorResponse "INVALID_VMID | INVALID_ACTION"
-// @Failure      403 {object} ErrorResponse "INSTANCE_ACCESS_DENIED — se requiere FULL_ACCESS"
-// @Failure      404 {object} ErrorResponse "INSTANCE_NOT_FOUND"
-// @Failure      409 {object} ErrorResponse "INSTANCE_BUSY"
-// @Failure      502 {object} ErrorResponse "PROXMOX_UNAVAILABLE"
-// @Failure      504 {object} ErrorResponse "PROXMOX_TIMEOUT"
+// @Param        action path string true "Acción a ejecutar (start | stop | shutdown | reboot). pause NO es válida: responde 400 INVALID_ACTION"
+// @Success      202 {object} AccionAceptadaResponse "Acción aceptada: upid de la tarea en Proxmox y tareaId. tareaId se omite si no se pudo registrar la tarea"
+// @Failure      400 {object} ErrorResponse "INVALID_VMID | INVALID_ACTION — acción distinta de start, stop, shutdown o reboot"
+// @Failure      401 {object} ErrorResponse "MISSING_TOKEN | INVALID_TOKEN | TOKEN_REVOKED"
+// @Failure      403 {object} ErrorResponse "WRONG_TOKEN_TYPE | 2FA_REQUIRED | PASSWORD_CHANGE_REQUIRED | NO_ROLE | NO_USER | INVALID_USER_ID | INSTANCE_ACCESS_DENIED | INSTANCE_PROTECTED"
+// @Failure      404 {object} ErrorResponse "INSTANCE_NOT_FOUND — la instancia no existe en Proxmox"
+// @Failure      409 {object} ErrorResponse "INSTANCE_BUSY — la instancia está ejecutando otra tarea; reintentar al recibir TASK_FINISHED"
+// @Failure      500 {object} ErrorResponse "INTERNAL_ERROR — al verificar permisos de acceso o error inesperado de Proxmox"
+// @Failure      502 {object} ErrorResponse "PROXMOX_UNAVAILABLE — Proxmox caído, sin red o token rechazado; la orden NO llegó a aplicarse"
+// @Failure      504 {object} ErrorResponse "PROXMOX_TIMEOUT — Proxmox no respondió a tiempo; la acción puede haberse aplicado"
 // @Router       /instances/{vmid}/status/{action} [post]
 func (h *InstanceHandler) CambiarEstado(c *gin.Context) {
+	// Contrato objetivo de la acción Pause. NO OPERATIVO: la ruta NO está registrada
+	// en el router y hoy responde 404 NOT_FOUND. Se documenta junto a las acciones
+	// reales para que el frontend no la confunda con shutdown ni con reboot.
+	// @Summary      Pausar instancia (planificado)
+	// @Description  PLANIFICADO; NO OPERATIVO. Contrato objetivo para pausar una VM o contenedor en Proxmox VE. La ruta no está registrada y actualmente responde 404 NOT_FOUND; pause tampoco es una acción válida en POST /instances/{vmid}/status/{action} (responde 400 INVALID_ACTION).
+	// @Tags         Instancias Proxmox
+	// @Produce      json
+	// @Security     BearerAuth
+	// @Param        vmid path int true "VMID de la instancia"
+	// @Success      202 {object} AccionAceptadaResponse "Acción aceptada: upid de la tarea en Proxmox y tareaId"
+	// @Failure      400 {object} ErrorResponse "INVALID_VMID"
+	// @Failure      401 {object} ErrorResponse "MISSING_TOKEN | INVALID_TOKEN | TOKEN_REVOKED"
+	// @Failure      403 {object} ErrorResponse "WRONG_TOKEN_TYPE | 2FA_REQUIRED | PASSWORD_CHANGE_REQUIRED | NO_ROLE | NO_USER | INVALID_USER_ID | INSTANCE_ACCESS_DENIED | INSTANCE_PROTECTED"
+	// @Failure      404 {object} ErrorResponse "INSTANCE_NOT_FOUND"
+	// @Failure      409 {object} ErrorResponse "INSTANCE_BUSY"
+	// @Failure      500 {object} ErrorResponse "INTERNAL_ERROR"
+	// @Failure      502 {object} ErrorResponse "PROXMOX_UNAVAILABLE"
+	// @Failure      504 {object} ErrorResponse "PROXMOX_TIMEOUT"
+	// @x-implementation-status "planned"
+	// @Router       /instances/{vmid}/pause [post]
+
 	vmid, ok := extraerVmid(c)
 	if !ok {
 		return
@@ -432,18 +475,20 @@ func (h *InstanceHandler) CambiarEstado(c *gin.Context) {
 // Rechaza la operación con 409 si la instancia está encendida.
 //
 // @Summary      Eliminar instancia
-// @Description  Elimina permanentemente una VM o contenedor de Proxmox. La instancia debe estar detenida (stopped) antes de invocar este endpoint; si está encendida se responde 409.
+// @Description  OPERATIVO. Elimina permanentemente una VM o contenedor de Proxmox. La instancia debe estar detenida (stopped) antes de invocar este endpoint; si está encendida se responde 409. Responde 204 No Content sin cuerpo: la eliminación es síncrona y NO devuelve upid ni tareaId, a diferencia de las acciones de energía.
 // @Tags         Instancias Proxmox
 // @Produce      json
 // @Security     BearerAuth
 // @Param        vmid path int true "VMID de la instancia"
-// @Success      204 "Instancia eliminada correctamente"
-// @Failure      400 {object} ErrorResponse "INVALID_VMID"
-// @Failure      403 {object} ErrorResponse "INSUFFICIENT_PERMISSIONS — solo ADMIN puede eliminar instancias"
-// @Failure      404 {object} ErrorResponse "INSTANCE_NOT_FOUND"
+// @Success      204 "Instancia eliminada correctamente. Sin cuerpo de respuesta"
+// @Failure      400 {object} ErrorResponse "INVALID_VMID — el vmid de la ruta no es un número entero"
+// @Failure      401 {object} ErrorResponse "MISSING_TOKEN | INVALID_TOKEN | TOKEN_REVOKED"
+// @Failure      403 {object} ErrorResponse "WRONG_TOKEN_TYPE | 2FA_REQUIRED | PASSWORD_CHANGE_REQUIRED | NO_ROLE | INVALID_ROLE | INSUFFICIENT_PERMISSIONS | INVALID_VMID | INSTANCE_PROTECTED — solo ADMIN puede eliminar instancias"
+// @Failure      404 {object} ErrorResponse "INSTANCE_NOT_FOUND — la instancia no existe en Proxmox"
 // @Failure      409 {object} ErrorResponse "INSTANCE_NOT_STOPPED — la instancia debe estar detenida"
-// @Failure      502 {object} ErrorResponse "PROXMOX_UNAVAILABLE"
-// @Failure      504 {object} ErrorResponse "PROXMOX_TIMEOUT"
+// @Failure      500 {object} ErrorResponse "INTERNAL_ERROR — error inesperado de Proxmox"
+// @Failure      502 {object} ErrorResponse "PROXMOX_UNAVAILABLE — Proxmox caído, sin red o token rechazado"
+// @Failure      504 {object} ErrorResponse "PROXMOX_TIMEOUT — Proxmox no respondió a tiempo"
 // @Router       /instances/{vmid} [delete]
 func (h *InstanceHandler) EliminarInstancia(c *gin.Context) {
 	vmid, ok := extraerVmid(c)
