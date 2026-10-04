@@ -1328,7 +1328,7 @@ const docTemplate = `{
         },
         "/events": {
             "get": {
-                "description": "Abre un stream text/event-stream. Requiere el ticket de POST /api/events/ticket, que se consume al conectar (un solo uso). Cada evento llega como ` + "`" + `data: \u003cRealtimeEvent en JSON\u003e` + "`" + `. Si el backend corta el stream (logout, revocación de sesiones o usuario desactivado) envía antes ` + "`" + `event: cierre` + "`" + ` con ` + "`" + `{\"motivo\": \"...\"}` + "`" + `. Cada 25 s llega un comentario ` + "`" + `: ping` + "`" + ` para mantener la conexión.",
+                "description": "Abre un stream ` + "`" + `text/event-stream` + "`" + ` autenticado con el ticket de ` + "`" + `POST /api/events/ticket` + "`" + `, que es de un solo uso y vence a los 30 s: si se conecta dos veces o después de vencer, responde 401 y hay que pedir otro. El ticket se consume con ` + "`" + `GETDEL` + "`" + ` al abrir el stream y el servidor manda ` + "`" + `Cache-Control: no-cache` + "`" + `, ` + "`" + `Connection: keep-alive` + "`" + ` y ` + "`" + `X-Accel-Buffering: no` + "`" + ` para que un proxy nginx no acumule el stream. El framing tiene cuatro formas: (1) ` + "`" + `: conectado` + "`" + ` apenas se abre, que ` + "`" + `EventSource` + "`" + ` ignora; (2) un frame ` + "`" + `id: \u003cevento.id\u003e` + "`" + ` seguido de ` + "`" + `data: \u003chttp.SSEEventPayload en JSON\u003e` + "`" + ` por cada evento, que ` + "`" + `EventSource` + "`" + ` entrega en ` + "`" + `onmessage` + "`" + `; (3) ` + "`" + `: ping` + "`" + ` cada 25 s para que ningún proxy corte la conexión por inactividad; (4) ` + "`" + `event: cierre` + "`" + ` con ` + "`" + `{\"motivo\": ...}` + "`" + ` cuando el backend corta el stream, con motivo ` + "`" + `LOGOUT` + "`" + `, ` + "`" + `SESSIONS_REVOKED` + "`" + ` o ` + "`" + `USER_INACTIVE` + "`" + `. Importante: ` + "`" + `EventSource` + "`" + ` reconecta solo con la misma URL, y el ticket ya fue consumido, por lo que hay que cerrar la fuente y abrir un stream nuevo con un ticket nuevo.",
                 "produces": [
                     "text/event-stream"
                 ],
@@ -1347,9 +1347,9 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "200": {
-                        "description": "stream de eventos",
+                        "description": "evento del stream, envuelto en el frame data: del protocolo SSE",
                         "schema": {
-                            "$ref": "#/definitions/ports.RealtimeEvent"
+                            "$ref": "#/definitions/http.SSEEventPayload"
                         }
                     },
                     "401": {
@@ -1357,8 +1357,35 @@ const docTemplate = `{
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
+                    },
+                    "503": {
+                        "description": "EVENTS_UNAVAILABLE",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
                     }
                 }
+            }
+        },
+        "/events/contrato-sse": {
+            "get": {
+                "description": "Índice de los esquemas que el stream ` + "`" + `GET /api/events` + "`" + ` puede emitir: ` + "`" + `http.TaskSuccess` + "`" + ` (evento ` + "`" + `TASK_FINISHED` + "`" + ` con ` + "`" + `estado` + "`" + ` ` + "`" + `COMPLETED` + "`" + `), ` + "`" + `http.TaskFailed` + "`" + ` (el mismo evento con ` + "`" + `estado` + "`" + ` ` + "`" + `FAILED` + "`" + ` y su campo ` + "`" + `error` + "`" + `) y ` + "`" + `http.SSECierrePayload` + "`" + ` (el cuerpo del frame ` + "`" + `event: cierre` + "`" + `). Este es el ` + "`" + `detalles` + "`" + ` de los eventos, no el sobre completo, que es ` + "`" + `http.SSEEventPayload` + "`" + `. No es una ruta del servidor y no se puede invocar: el stream real y su framing se documentan en ` + "`" + `GET /api/events` + "`" + `.",
+                "produces": [
+                    "text/event-stream"
+                ],
+                "tags": [
+                    "Eventos en tiempo real"
+                ],
+                "summary": "Formas concretas del payload del stream SSE (solo documentación)",
+                "responses": {
+                    "200": {
+                        "description": "índice de las formas concretas del stream",
+                        "schema": {
+                            "$ref": "#/definitions/http.SSETiposPayload"
+                        }
+                    }
+                },
+                "x-implementation-status": "documentation-only"
             }
         },
         "/events/ticket": {
@@ -1368,7 +1395,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Devuelve un ticket de un solo uso, válido por 30 segundos, para abrir GET /api/events?ticket=... El navegador (EventSource) no puede mandar el header Authorization, y así el JWT nunca viaja en la URL.",
+                "description": "Devuelve un ticket de un solo uso, válido por 30 s, para abrir GET /api/events?ticket=... El navegador (EventSource) no puede mandar el header Authorization, y así el JWT nunca viaja en la URL. Esta operación sí usa ` + "`" + `Authorization: Bearer \u003caccessToken\u003e` + "`" + `; el ticket es el que se lo reemplaza en el stream.",
                 "produces": [
                     "application/json"
                 ],
@@ -1378,16 +1405,19 @@ const docTemplate = `{
                 "summary": "Pedir ticket para el stream de eventos",
                 "responses": {
                     "200": {
-                        "description": "ticket",
+                        "description": "ticket de un solo uso, válido 30 s",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
+                            "$ref": "#/definitions/http.SSETicketResponse"
                         }
                     },
                     "401": {
-                        "description": "Unauthorized",
+                        "description": "MISSING_TOKEN | INVALID_TOKEN | TOKEN_REVOKED",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "EVENTS_UNAVAILABLE",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -2274,6 +2304,198 @@ const docTemplate = `{
                 }
             }
         },
+        "http.SSECierrePayload": {
+            "type": "object",
+            "required": [
+                "motivo"
+            ],
+            "properties": {
+                "motivo": {
+                    "type": "string",
+                    "enum": [
+                        "LOGOUT",
+                        "SESSIONS_REVOKED",
+                        "USER_INACTIVE"
+                    ],
+                    "example": "LOGOUT"
+                }
+            }
+        },
+        "http.SSEDetallesEvento": {
+            "type": "object",
+            "properties": {
+                "accion": {
+                    "type": "string",
+                    "example": "start"
+                },
+                "error": {
+                    "type": "string",
+                    "x-nullable": true,
+                    "example": "CT 201 not running"
+                },
+                "estado": {
+                    "type": "string",
+                    "enum": [
+                        "RUNNING",
+                        "COMPLETED",
+                        "FAILED"
+                    ],
+                    "example": "COMPLETED"
+                },
+                "tareaId": {
+                    "type": "string",
+                    "example": "3f2504e0-4f89-11d3-9a0c-0305e82c3301"
+                }
+            }
+        },
+        "http.SSEEventPayload": {
+            "type": "object",
+            "required": [
+                "fechaHora",
+                "id",
+                "mensaje",
+                "recursoId",
+                "recursoTipo",
+                "severidad",
+                "tipo"
+            ],
+            "properties": {
+                "detalles": {
+                    "$ref": "#/definitions/http.SSEDetallesEvento"
+                },
+                "fechaHora": {
+                    "type": "string",
+                    "format": "date-time",
+                    "example": "2026-09-30T11:24:03-03:00"
+                },
+                "id": {
+                    "type": "string",
+                    "example": "75d0322d-1d76-4dbf-ad0d-2571c458aa63"
+                },
+                "mensaje": {
+                    "type": "string",
+                    "example": "La tarea de encendido finalizó correctamente"
+                },
+                "recursoId": {
+                    "type": "string",
+                    "example": "110"
+                },
+                "recursoTipo": {
+                    "type": "string",
+                    "enum": [
+                        "VM",
+                        "LXC",
+                        "NODE"
+                    ],
+                    "example": "VM"
+                },
+                "severidad": {
+                    "type": "string",
+                    "enum": [
+                        "INFO",
+                        "WARNING",
+                        "CRITICAL"
+                    ],
+                    "example": "INFO"
+                },
+                "tipo": {
+                    "type": "string",
+                    "enum": [
+                        "INSTANCE_STATE_CHANGED",
+                        "INSTANCE_CREATED",
+                        "RESOURCE_SATURATION",
+                        "TASK_FINISHED"
+                    ],
+                    "example": "TASK_FINISHED"
+                }
+            }
+        },
+        "http.SSETicketResponse": {
+            "type": "object",
+            "required": [
+                "ticket"
+            ],
+            "properties": {
+                "ticket": {
+                    "type": "string",
+                    "example": "3cb3438a-7dec-4116-b54a-369501674c92"
+                }
+            }
+        },
+        "http.SSETiposPayload": {
+            "type": "object",
+            "required": [
+                "cierre",
+                "taskFailed",
+                "taskSuccess"
+            ],
+            "properties": {
+                "cierre": {
+                    "$ref": "#/definitions/http.SSECierrePayload"
+                },
+                "taskFailed": {
+                    "$ref": "#/definitions/http.TaskFailed"
+                },
+                "taskSuccess": {
+                    "$ref": "#/definitions/http.TaskSuccess"
+                }
+            }
+        },
+        "http.TaskFailed": {
+            "type": "object",
+            "required": [
+                "accion",
+                "estado",
+                "tareaId"
+            ],
+            "properties": {
+                "accion": {
+                    "type": "string",
+                    "example": "stop"
+                },
+                "error": {
+                    "type": "string",
+                    "x-nullable": true,
+                    "example": "CT 201 not running"
+                },
+                "estado": {
+                    "type": "string",
+                    "enum": [
+                        "FAILED"
+                    ],
+                    "example": "FAILED"
+                },
+                "tareaId": {
+                    "type": "string",
+                    "example": "3f2504e0-4f89-11d3-9a0c-0305e82c3301"
+                }
+            }
+        },
+        "http.TaskSuccess": {
+            "type": "object",
+            "required": [
+                "accion",
+                "estado",
+                "tareaId"
+            ],
+            "properties": {
+                "accion": {
+                    "type": "string",
+                    "example": "start"
+                },
+                "estado": {
+                    "type": "string",
+                    "enum": [
+                        "COMPLETED"
+                    ],
+                    "example": "COMPLETED"
+                },
+                "tareaId": {
+                    "type": "string",
+                    "example": "3f2504e0-4f89-11d3-9a0c-0305e82c3301"
+                }
+            }
+        },
         "http.asignarPermisosRequest": {
             "type": "object",
             "required": [
@@ -2617,37 +2839,6 @@ const docTemplate = `{
                 },
                 "secretoManual": {
                     "description": "Solo retornado en la vinculación inicial, nunca más",
-                    "type": "string"
-                }
-            }
-        },
-        "ports.RealtimeEvent": {
-            "description": "Esquema genérico de evento del canal en tiempo real (RF-11). Los enums usan valores en inglés MAYÚSCULA y los campos nombres en español camelCase.",
-            "type": "object",
-            "properties": {
-                "detalles": {
-                    "type": "object",
-                    "additionalProperties": {}
-                },
-                "fechaHora": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "mensaje": {
-                    "type": "string"
-                },
-                "recursoId": {
-                    "type": "string"
-                },
-                "recursoTipo": {
-                    "type": "string"
-                },
-                "severidad": {
-                    "type": "string"
-                },
-                "tipo": {
                     "type": "string"
                 }
             }

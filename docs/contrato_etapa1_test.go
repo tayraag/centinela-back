@@ -5,6 +5,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"el-centinela/internal/core/ports"
 )
 
 func TestContratoEtapa1(t *testing.T) {
@@ -176,6 +178,226 @@ func TestContratoEtapa1(t *testing.T) {
 	}
 	verificarRespuesta(t, pause, "202", acceptedDef)
 
+	// ==========================================================
+	// T03 — Stream SSE: payload, ticket de un solo uso y framing
+	// ==========================================================
+
+	stream := objeto(t, objeto(t, paths, "/events"), "get")
+
+	// El stream no usa BearerAuth: EventSource no manda Authorization y el
+	// servidor no registra ese middleware en la ruta. El ticket lo reemplaza.
+	if seguridad, existe := stream["security"]; existe {
+		t.Errorf("GET /events no debe declarar security: se autentica con el ticket de un solo uso, no %#v", seguridad)
+	}
+	verificarProduce(t, stream, "text/event-stream")
+
+	// El ticket viaja en la query porque es lo único que EventSource puede mandar.
+	verificarParametro(t, stream, "ticket", "query", true)
+
+	// El data: del stream se documenta en http.* como el resto del contrato,
+	// no en ports.* como estaba referenciado antes.
+	verificarRespuesta(t, stream, "200", "http.SSEEventPayload")
+	verificarRespuesta(t, stream, "401", "http.ErrorResponse")
+	verificarRespuesta(t, stream, "503", "http.ErrorResponse")
+
+	// Los dos 401 y el 503 son los que el handler emite de verdad.
+	missing := descripcionRespuesta(t, paths, "/events", "get", "401")
+	for _, codigo := range []string{"EVENTS_TICKET_MISSING", "EVENTS_TICKET_INVALID"} {
+		if !strings.Contains(missing, codigo) {
+			t.Errorf("GET /events 401 no nombra %s: %q", codigo, missing)
+		}
+	}
+	if inaccesible := descripcionRespuesta(t, paths, "/events", "get", "503"); !strings.Contains(inaccesible, "EVENTS_UNAVAILABLE") {
+		t.Errorf("GET /events 503 debe documentar EVENTS_UNAVAILABLE: %q", inaccesible)
+	}
+
+	const payloadDef = "http.SSEEventPayload"
+	verificarObjetoRequerido(t, definitions, payloadDef, []string{
+		"id", "tipo", "severidad", "recursoTipo", "recursoId", "mensaje", "fechaHora",
+	})
+
+	// detalles se omite cuando el evento no trae datos extra.
+	if requeridosDe(t, objeto(t, definitions, payloadDef))["detalles"] {
+		t.Error("detalles no debe ser obligatorio: se omite con omitempty")
+	}
+
+	if formato := cadena(t, propiedad(t, definitions, payloadDef, "fechaHora"), "format"); formato != "date-time" {
+		t.Errorf("fechaHora debe usar formato date-time/RFC3339, obtuvo %q", formato)
+	}
+
+	// Los tres enums traveling en el sobre, con los valores exactos de ports.
+	verificarEnum(t, definitions, payloadDef, "tipo",
+		"INSTANCE_STATE_CHANGED", "INSTANCE_CREATED", "RESOURCE_SATURATION", "TASK_FINISHED")
+	verificarEnum(t, definitions, payloadDef, "severidad", "INFO", "WARNING", "CRITICAL")
+	verificarEnum(t, definitions, payloadDef, "recursoTipo", "VM", "LXC", "NODE")
+
+	// detalles es un objeto propio y todas sus claves son opcionales: su forma
+	// depende del tipo de evento.
+	detalles := propiedad(t, definitions, payloadDef, "detalles")
+	if ref := cadena(t, detalles, "$ref"); ref != "#/definitions/http.SSEDetallesEvento" {
+		t.Fatalf("detalles debe referenciar http.SSEDetallesEvento, obtuvo %q", ref)
+	}
+	const detallesDef = "http.SSEDetallesEvento"
+	requeridosDetalles := requeridosDe(t, objeto(t, definitions, detallesDef))
+	propiedadesDetalles := objeto(t, objeto(t, definitions, detallesDef), "properties")
+	for _, campo := range []string{"tareaId", "estado", "accion", "error"} {
+		if _, ok := propiedadesDetalles[campo]; !ok {
+			t.Errorf("%s no define la propiedad %s", detallesDef, campo)
+		}
+		if requeridosDetalles[campo] {
+			t.Errorf("%s.%s no debe ser obligatorio: el servidor lo omite según el tipo de evento", detallesDef, campo)
+		}
+	}
+	verificarEnum(t, definitions, detallesDef, "estado", "RUNNING", "COMPLETED", "FAILED")
+
+	// Las dos formas concretas de detalles en TASK_FINISHED.
+	const successDef = "http.TaskSuccess"
+	verificarObjetoRequerido(t, definitions, successDef, []string{"tareaId", "estado", "accion"})
+	verificarEnum(t, definitions, successDef, "estado", "COMPLETED")
+	if _, existe := objeto(t, objeto(t, definitions, successDef), "properties")["error"]; existe {
+		t.Errorf("%s no debe definir error: el servidor solo lo agrega cuando la tarea falla", successDef)
+	}
+
+	const failedDef = "http.TaskFailed"
+	verificarObjetoRequerido(t, definitions, failedDef, []string{"tareaId", "estado", "accion"})
+	verificarEnum(t, definitions, failedDef, "estado", "FAILED")
+	errorFallido := propiedad(t, definitions, failedDef, "error")
+	if tipo := cadena(t, errorFallido, "type"); tipo != "string" {
+		t.Errorf("%s.error debe ser string, obtuvo %q", failedDef, tipo)
+	}
+	if nullable, ok := errorFallido["x-nullable"].(bool); !ok || !nullable {
+		t.Errorf("%s.error debe declarar x-nullable: true", failedDef)
+	}
+	if requeridosDe(t, objeto(t, definitions, failedDef))["error"] {
+		t.Errorf("%s.error no debe ser obligatorio: puede venir vacío", failedDef)
+	}
+
+	// El corte del backend viaja como evento `cierre` con su propio motivo.
+	const cierreDef = "http.SSECierrePayload"
+	verificarObjetoRequerido(t, definitions, cierreDef, []string{"motivo"})
+	verificarEnum(t, definitions, cierreDef, "motivo", "LOGOUT", "SESSIONS_REVOKED", "USER_INACTIVE")
+
+	// Pedir el ticket sí va autenticado: ahí el Bearer funciona sin problema.
+	ticket := objeto(t, objeto(t, paths, "/events/ticket"), "post")
+	verificarBearer(t, ticket)
+	verificarRespuesta(t, ticket, "200", "http.SSETicketResponse")
+	verificarObjetoRequerido(t, definitions, "http.SSETicketResponse", []string{"ticket"})
+	verificarRespuesta(t, ticket, "401", "http.ErrorResponse")
+	verificarRespuesta(t, ticket, "503", "http.ErrorResponse")
+	if revocado := descripcionRespuesta(t, paths, "/events/ticket", "post", "401"); !strings.Contains(revocado, "TOKEN_REVOKED") {
+		t.Errorf("POST /events/ticket 401 debe documentar TOKEN_REVOKED: %q", revocado)
+	}
+	if inaccesible := descripcionRespuesta(t, paths, "/events/ticket", "post", "503"); !strings.Contains(inaccesible, "EVENTS_UNAVAILABLE") {
+		t.Errorf("POST /events/ticket 503 debe documentar EVENTS_UNAVAILABLE: %q", inaccesible)
+	}
+
+	// El framing del stream queda escrito en la descripción de la operación.
+	descripcionStream := cadena(t, stream, "description")
+	for _, fragmento := range []string{
+		"data:", "id:", "event: cierre", ": ping", ": conectado",
+		"un solo uso", "30 s", "Cache-Control: no-cache", "X-Accel-Buffering: no",
+	} {
+		if !strings.Contains(descripcionStream, fragmento) {
+			t.Errorf("la descripción de GET /events no documenta el framing %q: %q", fragmento, descripcionStream)
+		}
+	}
+
+	// El stream ya no debe exponer el esquema crudo de ports.
+	if _, existe := definitions["ports.RealtimeEvent"]; existe {
+		t.Error("ports.RealtimeEvent no debe seguir en definitions: el contrato SSE vive en http.*")
+	}
+
+	// Las variantes concretas no tienen respuesta propia en el stream, así
+	// que se publican desde una entrada marcada como solo documentación. No puede
+	// declarar seguridad ni quedar como una ruta invocable.
+	const refRuta = "/events/contrato-sse"
+	referencia := objeto(t, objeto(t, paths, refRuta), "get")
+	if estado := cadena(t, referencia, "x-implementation-status"); estado != "documentation-only" {
+		t.Errorf("%s debe marcarse documentation-only, obtuvo %q", refRuta, estado)
+	}
+	if seguridad, existe := referencia["security"]; existe {
+		t.Errorf("%s no es una ruta real: no debe declarar security, no %#v", refRuta, seguridad)
+	}
+	descripcionReferencia := cadena(t, referencia, "description")
+	if !strings.Contains(descripcionReferencia, "No es una ruta del servidor") {
+		t.Errorf("%s debe aclarar que no es una ruta del servidor: %q", refRuta, descripcionReferencia)
+	}
+	verificarRespuesta(t, referencia, "200", "http.SSETiposPayload")
+
+	// El índice arrastra las tres formas concretas para que swag las emita.
+	verificarObjetoRequerido(t, definitions, "http.SSETiposPayload", []string{"taskSuccess", "taskFailed", "cierre"})
+
+	// ==========================================================
+	// T03 — el contrato documentado tiene que coincidir con el servidor
+	// ==========================================================
+
+	// Los enums de Swagger se comparan contra las constantes que realmente
+	// valida ports, no contra una copia escrita a mano: si el backend agrega un
+	// valor, esta comparación lo delata.
+	tipos := []string{
+		ports.EventoInstanciaEstado, ports.EventoInstanciaCreada,
+		ports.EventoSaturacion, ports.EventoTareaFinalizada,
+	}
+	verificarEnum(t, definitions, payloadDef, "tipo", tipos...)
+	verificarEnum(t, definitions, payloadDef, "severidad",
+		ports.SeveridadInfo, ports.SeveridadWarning, ports.SeveridadCritical)
+	verificarEnum(t, definitions, payloadDef, "recursoTipo",
+		ports.RecursoVM, ports.RecursoLXC, ports.RecursoNodo)
+	verificarEnum(t, definitions, detallesDef, "estado",
+		ports.TareaRunning, ports.TareaCompleted, ports.TareaFailed)
+
+	// Y el sobre real, serializado como lo hace el handler, tiene que tener
+	// exactamente las claves documentadas: ni una de más ni una de menos.
+	serializar := func(evento ports.RealtimeEvent) map[string]any {
+		t.Helper()
+		crudo, err := json.Marshal(evento)
+		if err != nil {
+			t.Fatalf("serializar el evento: %v", err)
+		}
+		var sobre map[string]any
+		if err := json.Unmarshal(crudo, &sobre); err != nil {
+			t.Fatalf("decodificar el evento: %v", err)
+		}
+		return sobre
+	}
+
+	const mensajeOk = "La tarea de encendido finalizó correctamente"
+	const mensajeFallo = "La tarea de apagado falló"
+
+	eventoOk, err := ports.NewRealtimeEvent(ports.EventoTareaFinalizada, ports.SeveridadInfo, mensajeOk)
+	if err != nil {
+		t.Fatalf("construir el evento de éxito: %v", err)
+	}
+	// Se arma igual que seguimiento_tareas.eventoTareaFinalizada.
+	eventoOk = eventoOk.ConRecurso(ports.RecursoVM, "110").ConDetalles(map[string]any{
+		"tareaId": "3f2504e0-4f89-11d3-9a0c-0305e82c3301",
+		"estado":  ports.TareaCompleted,
+		"accion":  "start",
+	})
+
+	eventoFallo, err := ports.NewRealtimeEvent(ports.EventoTareaFinalizada, ports.SeveridadWarning, mensajeFallo)
+	if err != nil {
+		t.Fatalf("construir el evento de fallo: %v", err)
+	}
+	eventoFallo = eventoFallo.ConRecurso(ports.RecursoLXC, "201").ConDetalles(map[string]any{
+		"tareaId": "3f2504e0-4f89-11d3-9a0c-0305e82c3302",
+		"estado":  ports.TareaFailed,
+		"accion":  "stop",
+		"error":   "CT 201 not running",
+	})
+
+	compararClaves(t, serializar(eventoOk), payloadDef, definitions, "sobre de éxito")
+	compararClaves(t, serializar(eventoFallo), payloadDef, definitions, "sobre de fallo")
+
+	compararClaves(t, serializar(eventoOk)["detalles"], successDef, definitions, "detalles de éxito")
+	compararClaves(t, serializar(eventoFallo)["detalles"], failedDef, definitions, "detalles de fallo")
+
+	// El sobre real no puede tener claves que el contrato no declare.
+	compararTodasLasClaves(t, serializar(eventoOk), payloadDef, definitions, "sobre de éxito")
+	compararTodasLasClaves(t, serializar(eventoFallo), payloadDef, definitions, "sobre de fallo")
+	compararTodasLasClaves(t, serializar(eventoOk)["detalles"], successDef, definitions, "detalles de éxito")
+	compararTodasLasClaves(t, serializar(eventoFallo)["detalles"], failedDef, definitions, "detalles de fallo")
+
 	contenidoContrato, err := os.ReadFile("contrato-etapa1.md")
 	if err != nil {
 		t.Fatalf("leer contrato-etapa1.md: %v", err)
@@ -194,10 +416,111 @@ func TestContratoEtapa1(t *testing.T) {
 		"PROXMOX_UNAVAILABLE", "PROXMOX_TIMEOUT",
 		// T02 — sobre real y diferencias con lo solicitado.
 		`{ "errorCode", "message" }`, "204",
+		// T03 — stream SSE, ticket y framing.
+		"GET /api/events", "POST /api/events/ticket", "http.SSEEventPayload",
+		"http.TaskSuccess", "http.TaskFailed", "http.SSEDetallesEvento",
+		"http.SSETicketResponse", "http.SSECierrePayload", "http.SSETiposPayload",
+		"EVENTS_TICKET_MISSING", "EVENTS_TICKET_INVALID", "EVENTS_UNAVAILABLE",
+		"TOKEN_REVOKED", "LOGOUT", "SESSIONS_REVOKED", "USER_INACTIVE",
+		"un solo uso", "30 s", "text/event-stream", "TASK_FINISHED",
 	} {
 		if !strings.Contains(contrato, fragmento) {
 			t.Errorf("contrato-etapa1.md no contiene %q", fragmento)
 		}
+	}
+}
+
+// compararClaves exige que el objeto real tenga, al menos, todas las claves que
+// la definición declara obligatorias.
+func compararClaves(t *testing.T, real any, definicion string, definitions map[string]any, contexto string) {
+	t.Helper()
+	objetoReal := objetoReal(t, real, contexto)
+	for campo := range requeridosDe(t, objeto(t, definitions, definicion)) {
+		if _, existe := objetoReal[campo]; !existe {
+			t.Errorf("el %s real no trae la clave obligatoria %s de %s", contexto, campo, definicion)
+		}
+	}
+}
+
+// compararTodasLasClaves exige que el objeto real no tenga ninguna clave fuera
+// de la definición. Es la dirección inversa de compararClaves: evita que el
+// servidor empiece a mandar campos que el frontend no conoce.
+func compararTodasLasClaves(t *testing.T, real any, definicion string, definitions map[string]any, contexto string) {
+	t.Helper()
+	objetoReal := objetoReal(t, real, contexto)
+	declaradas := objeto(t, objeto(t, definitions, definicion), "properties")
+	for campo := range objetoReal {
+		if _, existe := declaradas[campo]; !existe {
+			t.Errorf("el %s real manda la clave %q, que %s no documenta", contexto, campo, definicion)
+		}
+	}
+}
+
+// objetoReal exige que el valor serializado sea un objeto JSON.
+func objetoReal(t *testing.T, real any, contexto string) map[string]any {
+	t.Helper()
+	objetoReal, ok := real.(map[string]any)
+	if !ok {
+		t.Fatalf("el %s no es un objeto: %#v", contexto, real)
+	}
+	return objetoReal
+}
+
+// verificarProduce comprueba el media type que declara la operación.
+func verificarProduce(t *testing.T, operacion map[string]any, mediaType string) {
+	t.Helper()
+	produce, ok := operacion["produces"].([]any)
+	if !ok || len(produce) != 1 {
+		t.Fatalf("produces debe declarar %q: %#v", mediaType, operacion["produces"])
+	}
+	if declarado, ok := produce[0].(string); !ok || declarado != mediaType {
+		t.Fatalf("produce declara %q, se esperaba %q", declarado, mediaType)
+	}
+}
+
+// verificarParametro comprueba que la operación declare un parámetro concreto.
+func verificarParametro(t *testing.T, operacion map[string]any, nombre, lugar string, obligatorio bool) {
+	t.Helper()
+	parametros, ok := operacion["parameters"].([]any)
+	if !ok {
+		t.Fatalf("la operación no declara parámetros: %#v", operacion["parameters"])
+	}
+	for _, bruto := range parametros {
+		parametro, ok := bruto.(map[string]any)
+		if !ok || parametro["name"] != nombre {
+			continue
+		}
+		if in := cadena(t, parametro, "in"); in != lugar {
+			t.Errorf("el parámetro %s debe ir en %s, obtuvo %q", nombre, lugar, in)
+		}
+		if tipo := cadena(t, parametro, "type"); tipo != "string" {
+			t.Errorf("el parámetro %s debe ser string, obtuvo %q", nombre, tipo)
+		}
+		if _, esBool := parametro["required"].(bool); esBool != obligatorio {
+			t.Errorf("el parámetro %s required debe ser %v, obtuvo %#v", nombre, obligatorio, parametro["required"])
+		}
+		return
+	}
+	t.Errorf("la operación no declara el parámetro %s", nombre)
+}
+
+// verificarEnum comprueba que la propiedad declare exactamente los valores dados.
+func verificarEnum(t *testing.T, definitions map[string]any, definicion, campo string, esperados ...string) {
+	t.Helper()
+	enum, ok := propiedad(t, definitions, definicion, campo)["enum"].([]any)
+	if !ok {
+		t.Fatalf("%s.%s no declara enum: %#v", definicion, campo, propiedad(t, definitions, definicion, campo))
+	}
+	obtenidos := make([]string, 0, len(enum))
+	for _, valor := range enum {
+		texto, ok := valor.(string)
+		if !ok {
+			t.Fatalf("%s.%s declara un enum no textual: %#v", definicion, campo, valor)
+		}
+		obtenidos = append(obtenidos, texto)
+	}
+	if strings.Join(obtenidos, ",") != strings.Join(esperados, ",") {
+		t.Errorf("%s.%s declara enum %v, se esperaba %v", definicion, campo, obtenidos, esperados)
 	}
 }
 
