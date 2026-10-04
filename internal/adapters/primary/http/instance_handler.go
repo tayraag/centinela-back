@@ -96,6 +96,32 @@ func extraerVmid(c *gin.Context) (int, bool) {
 	return vmid, true
 }
 
+// estadosRequeridosPorAccion es la matriz de estados operativos: el estado en
+// el que debe estar la instancia para que la acción tenga sentido.
+var estadosRequeridosPorAccion = map[string]string{
+	"start":    "stopped",
+	"stop":     "running",
+	"shutdown": "running",
+	"reboot":   "running",
+}
+
+// validarEstadoParaAccion consulta el estado actual (lectura) y aborta con 409
+// INSTANCE_INVALID_STATE si es incompatible con la acción, sin emitir ninguna
+// orden de escritura a Proxmox. Devuelve la instancia consultada.
+func (h *InstanceHandler) validarEstadoParaAccion(c *gin.Context, vmid int, accion string) (*ports.InstanciaProxmoxDTO, bool) {
+	instancia, err := h.proxmox.ObtenerInstancia(c.Request.Context(), vmid)
+	if err != nil {
+		mapearErrorProxmox(c, err)
+		return nil, false
+	}
+	if instancia.Estado != estadosRequeridosPorAccion[accion] {
+		SendError(c, http.StatusConflict, "INSTANCE_INVALID_STATE",
+			"La instancia se encuentra en un estado incompatible para la acción solicitada")
+		return nil, false
+	}
+	return instancia, true
+}
+
 // mapearErrorProxmox traduce los errores de ports.ProxmoxPort al contrato HTTP.
 // El detalle del error nunca llega al cliente, pero se registra en el log para
 // poder diagnosticar la causa real (token rechazado, red, URL mal configurada).
@@ -292,9 +318,9 @@ func (h *InstanceHandler) ObtenerInstancia(c *gin.Context) {
 // @Success      202 {object} AccionAceptadaResponse "Acción aceptada: upid de la tarea en Proxmox y tareaId. tareaId se omite si no se pudo registrar la tarea"
 // @Failure      400 {object} ErrorResponse "INVALID_VMID — el vmid de la ruta no es un número entero"
 // @Failure      401 {object} ErrorResponse "MISSING_TOKEN | INVALID_TOKEN | TOKEN_REVOKED"
-// @Failure      403 {object} ErrorResponse "WRONG_TOKEN_TYPE | 2FA_REQUIRED | PASSWORD_CHANGE_REQUIRED | NO_ROLE | NO_USER | INVALID_USER_ID | INSTANCE_ACCESS_DENIED — el OPERATOR no tiene FULL_ACCESS sobre este vmid"
+// @Failure      403 {object} ErrorResponse "WRONG_TOKEN_TYPE | 2FA_REQUIRED | PASSWORD_CHANGE_REQUIRED | NO_ROLE | NO_USER | INVALID_USER_ID | INSTANCE_ACCESS_DENIED — el OPERATOR no tiene FULL_ACCESS sobre este vmid | INSTANCE_PROTECTED — infraestructura de El Centinela"
 // @Failure      404 {object} ErrorResponse "INSTANCE_NOT_FOUND — la instancia no existe en Proxmox"
-// @Failure      409 {object} ErrorResponse "INSTANCE_BUSY — la instancia está ejecutando otra tarea; reintentar al recibir TASK_FINISHED"
+// @Failure      409 {object} ErrorResponse "INSTANCE_INVALID_STATE — la instancia no está stopped | INSTANCE_BUSY — la instancia está ejecutando otra tarea; reintentar al recibir TASK_FINISHED"
 // @Failure      500 {object} ErrorResponse "INTERNAL_ERROR — al verificar permisos de acceso o error inesperado de Proxmox"
 // @Failure      502 {object} ErrorResponse "PROXMOX_UNAVAILABLE — Proxmox caído, sin red o token rechazado; la orden NO llegó a aplicarse"
 // @Failure      504 {object} ErrorResponse "PROXMOX_TIMEOUT — Proxmox no respondió a tiempo; la acción puede haberse aplicado"
@@ -302,6 +328,9 @@ func (h *InstanceHandler) ObtenerInstancia(c *gin.Context) {
 func (h *InstanceHandler) IniciarInstancia(c *gin.Context) {
 	vmid, ok := extraerVmid(c)
 	if !ok {
+		return
+	}
+	if _, ok := h.validarEstadoParaAccion(c, vmid, "start"); !ok {
 		return
 	}
 	upid, err := h.proxmox.IniciarInstancia(c.Request.Context(), vmid)
@@ -335,7 +364,7 @@ func (h *InstanceHandler) IniciarInstancia(c *gin.Context) {
 // @Failure      401 {object} ErrorResponse "MISSING_TOKEN | INVALID_TOKEN | TOKEN_REVOKED"
 // @Failure      403 {object} ErrorResponse "WRONG_TOKEN_TYPE | 2FA_REQUIRED | PASSWORD_CHANGE_REQUIRED | NO_ROLE | NO_USER | INVALID_USER_ID | INSTANCE_ACCESS_DENIED | INSTANCE_PROTECTED — infraestructura de El Centinela"
 // @Failure      404 {object} ErrorResponse "INSTANCE_NOT_FOUND — la instancia no existe en Proxmox"
-// @Failure      409 {object} ErrorResponse "INSTANCE_BUSY — la instancia está ejecutando otra tarea; reintentar al recibir TASK_FINISHED"
+// @Failure      409 {object} ErrorResponse "INSTANCE_INVALID_STATE — la instancia no está running | INSTANCE_BUSY — la instancia está ejecutando otra tarea; reintentar al recibir TASK_FINISHED"
 // @Failure      500 {object} ErrorResponse "INTERNAL_ERROR — al verificar permisos de acceso o error inesperado de Proxmox"
 // @Failure      502 {object} ErrorResponse "PROXMOX_UNAVAILABLE — Proxmox caído, sin red o token rechazado; la orden NO llegó a aplicarse"
 // @Failure      504 {object} ErrorResponse "PROXMOX_TIMEOUT — Proxmox no respondió a tiempo; la acción puede haberse aplicado"
@@ -343,6 +372,9 @@ func (h *InstanceHandler) IniciarInstancia(c *gin.Context) {
 func (h *InstanceHandler) DetenerInstancia(c *gin.Context) {
 	vmid, ok := extraerVmid(c)
 	if !ok {
+		return
+	}
+	if _, ok := h.validarEstadoParaAccion(c, vmid, "stop"); !ok {
 		return
 	}
 	upid, err := h.proxmox.DetenerInstancia(c.Request.Context(), vmid)
@@ -387,7 +419,7 @@ var accionesValidas = map[string]bool{
 // @Failure      401 {object} ErrorResponse "MISSING_TOKEN | INVALID_TOKEN | TOKEN_REVOKED"
 // @Failure      403 {object} ErrorResponse "WRONG_TOKEN_TYPE | 2FA_REQUIRED | PASSWORD_CHANGE_REQUIRED | NO_ROLE | NO_USER | INVALID_USER_ID | INSTANCE_ACCESS_DENIED | INSTANCE_PROTECTED"
 // @Failure      404 {object} ErrorResponse "INSTANCE_NOT_FOUND — la instancia no existe en Proxmox"
-// @Failure      409 {object} ErrorResponse "INSTANCE_BUSY — la instancia está ejecutando otra tarea; reintentar al recibir TASK_FINISHED"
+// @Failure      409 {object} ErrorResponse "INSTANCE_INVALID_STATE — start exige stopped; stop, shutdown y reboot exigen running | INSTANCE_BUSY — la instancia está ejecutando otra tarea; reintentar al recibir TASK_FINISHED"
 // @Failure      500 {object} ErrorResponse "INTERNAL_ERROR — al verificar permisos de acceso o error inesperado de Proxmox"
 // @Failure      502 {object} ErrorResponse "PROXMOX_UNAVAILABLE — Proxmox caído, sin red o token rechazado; la orden NO llegó a aplicarse"
 // @Failure      504 {object} ErrorResponse "PROXMOX_TIMEOUT — Proxmox no respondió a tiempo; la acción puede haberse aplicado"
@@ -427,11 +459,12 @@ func (h *InstanceHandler) CambiarEstado(c *gin.Context) {
 	}
 
 	// Obtener la instancia primero para saber su nodo y tipo (necesario para shutdown y reboot)
-	instancia, err := h.proxmox.ObtenerInstancia(c.Request.Context(), vmid)
-	if err != nil {
-		mapearErrorProxmox(c, err)
+	// y validar la matriz de estados antes de cualquier orden de escritura.
+	instancia, ok := h.validarEstadoParaAccion(c, vmid, accion)
+	if !ok {
 		return
 	}
+	var err error
 
 	var (
 		upid        string

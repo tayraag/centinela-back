@@ -1,4 +1,4 @@
-﻿# Estándar de Códigos HTTP y Manejo de Errores
+# Estándar de Códigos HTTP y Manejo de Errores
 
 Esta tabla define el contrato de respuestas HTTP que utilizará toda la API de El Centinela para asegurar la consistencia entre el Backend y el Frontend.
 
@@ -58,7 +58,9 @@ Cuando la API devuelva un error (códigos 400 a 500), el cuerpo de la respuesta 
 | ---- | --------- | ------ |
 | 400 | `INVALID_VMID` | El vmid de la ruta no es un número. |
 | 403 | `INSTANCE_ACCESS_DENIED` | El OPERATOR no tiene permiso (o nivel suficiente) sobre la instancia. |
-| 403 | `INSTANCE_PROTECTED` | La instancia es infraestructura de El Centinela (VMID 100–105) y no se puede apagar. |
+| 400 | `INVALID_ACTION` | La acción de `/status/:action` no es `start`, `stop`, `shutdown` ni `reboot`. |
+| 403 | `INSTANCE_PROTECTED` | La instancia es infraestructura de El Centinela (VMID 100–105, configurable con `PROXMOX_PROTECTED_VMIDS`) y no admite operaciones de energía (`start`, `stop`, `shutdown`, `reboot`). |
+| 409 | `INSTANCE_INVALID_STATE` | El estado actual es incompatible con la acción: `start` exige `stopped`; `stop`, `shutdown` y `reboot` exigen `running`. Se valida antes de enviar órdenes a Proxmox. |
 | 404 | `INSTANCE_NOT_FOUND` | El vmid no existe en Proxmox. |
 | 409 | `INSTANCE_BUSY` | La instancia está ejecutando otra tarea (Proxmox la tiene bloqueada, por ejemplo un `start` seguido de un `stop`). Reintentar cuando llegue el `TASK_FINISHED` de la tarea anterior. |
 | 502 | `PROXMOX_UNAVAILABLE` | Proxmox no está disponible: red caída, token rechazado o error del propio Proxmox. La orden **no** llegó a aplicarse. |

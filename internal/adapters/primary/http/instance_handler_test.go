@@ -24,13 +24,15 @@ type mockProxmoxPort struct {
 	errListar  error
 	errAccion  error // error de IniciarInstancia / DetenerInstancia
 	errDetalle error // error de ObtenerInstancia
+	estado     string // estado que informa ObtenerInstancia
+	escrituras int    // órdenes de escritura recibidas (start/stop/shutdown/reboot)
 }
 
 func (m *mockProxmoxPort) ObtenerInstancia(ctx context.Context, vmid int) (*ports.InstanciaProxmoxDTO, error) {
 	if m.errDetalle != nil {
 		return nil, m.errDetalle
 	}
-	return &ports.InstanciaProxmoxDTO{Vmid: vmid}, nil
+	return &ports.InstanciaProxmoxDTO{Vmid: vmid, Estado: m.estado}, nil
 }
 
 func (m *mockProxmoxPort) ListarInstancias(ctx context.Context) ([]ports.InstanciaProxmoxDTO, error) {
@@ -41,6 +43,7 @@ func (m *mockProxmoxPort) ListarInstancias(ctx context.Context) ([]ports.Instanc
 }
 
 func (m *mockProxmoxPort) IniciarInstancia(ctx context.Context, vmid int) (string, error) {
+	m.escrituras++
 	if m.errAccion != nil {
 		return "", m.errAccion
 	}
@@ -48,6 +51,7 @@ func (m *mockProxmoxPort) IniciarInstancia(ctx context.Context, vmid int) (strin
 }
 
 func (m *mockProxmoxPort) DetenerInstancia(ctx context.Context, vmid int) (string, error) {
+	m.escrituras++
 	if m.errAccion != nil {
 		return "", m.errAccion
 	}
@@ -66,6 +70,7 @@ func (m *mockProxmoxPort) ReiniciarInstancia(ctx context.Context, vmid int) (str
 }
 
 func (m *mockProxmoxPort) Shutdown(ctx context.Context, node string, vmid int, vmType string) (string, error) {
+	m.escrituras++
 	if m.errAccion != nil {
 		return "", m.errAccion
 	}
@@ -73,6 +78,7 @@ func (m *mockProxmoxPort) Shutdown(ctx context.Context, node string, vmid int, v
 }
 
 func (m *mockProxmoxPort) Reboot(ctx context.Context, node string, vmid int, vmType string) (string, error) {
+	m.escrituras++
 	if m.errAccion != nil {
 		return "", m.errAccion
 	}
@@ -297,14 +303,12 @@ func TestListarInstancias_ProxmoxTimeout(t *testing.T) {
 // DoD: un bloqueo de Proxmox responde 409 INSTANCE_BUSY, no 502 PROXMOX_UNAVAILABLE.
 func TestAccionesDeEnergia_InstanciaOcupadaEs409(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	mockPx := &mockProxmoxPort{errAccion: fmt.Errorf("%w: can't lock file '/var/lock/qemu-server/lock-110.conf' - got timeout", ports.ErrInstanciaOcupada)}
-	handler := adaptersHttp.NewInstanceHandler(mockPx, &mockUserRepository{}, seguimientoNulo{}, &mockTareaRepository{}, &mockAuditService{})
-
-	router := gin.New()
-	router.POST("/api/instances/:vmid/start", handler.IniciarInstancia)
-	router.POST("/api/instances/:vmid/stop", handler.DetenerInstancia)
-
 	for _, ruta := range []string{"/api/instances/110/start", "/api/instances/110/stop"} {
+		mockPx := &mockProxmoxPort{estado: estadoParaRuta(ruta), errAccion: fmt.Errorf("%w: can't lock file '/var/lock/qemu-server/lock-110.conf' - got timeout", ports.ErrInstanciaOcupada)}
+		handler := adaptersHttp.NewInstanceHandler(mockPx, &mockUserRepository{}, seguimientoNulo{}, &mockTareaRepository{}, &mockAuditService{})
+		router := gin.New()
+		router.POST("/api/instances/:vmid/start", handler.IniciarInstancia)
+		router.POST("/api/instances/:vmid/stop", handler.DetenerInstancia)
 		w := httptest.NewRecorder()
 		req, _ := http.NewRequest(http.MethodPost, ruta, nil)
 		router.ServeHTTP(w, req)
@@ -367,7 +371,7 @@ func TestMapeoDeErroresProxmox_EnTodosLosEndpoints(t *testing.T) {
 
 	for _, caso := range casos {
 		for _, ep := range endpoints {
-			mock := &mockProxmoxPort{errListar: caso.err, errDetalle: caso.err, errAccion: caso.err}
+			mock := &mockProxmoxPort{estado: estadoParaRuta(ep.ruta), errListar: caso.err, errDetalle: caso.err, errAccion: caso.err}
 			status, cuerpo := probar(mock, ep.metodo, ep.ruta)
 			if status != caso.status || cuerpo["errorCode"] != caso.codigo {
 				t.Errorf("%s en %s %s: se esperaba %d %s, vino %d %v", caso.nombre, ep.metodo, ep.ruta, caso.status, caso.codigo, status, cuerpo)
@@ -385,8 +389,82 @@ func TestMapeoDeErroresProxmox_EnTodosLosEndpoints(t *testing.T) {
 
 	// El 409 INSTANCE_BUSY de las acciones de energía no cambia.
 	for _, ruta := range []string{"/api/instances/110/start", "/api/instances/110/stop"} {
-		if status, cuerpo := probar(&mockProxmoxPort{errAccion: ocupada}, http.MethodPost, ruta); status != http.StatusConflict || cuerpo["errorCode"] != "INSTANCE_BUSY" {
+		if status, cuerpo := probar(&mockProxmoxPort{estado: estadoParaRuta(ruta), errAccion: ocupada}, http.MethodPost, ruta); status != http.StatusConflict || cuerpo["errorCode"] != "INSTANCE_BUSY" {
 			t.Errorf("%s ocupada: se esperaba 409 INSTANCE_BUSY, vino %d %v", ruta, status, cuerpo)
 		}
+	}
+}
+
+// estadoParaRuta devuelve el estado que habilita la acción de la ruta.
+func estadoParaRuta(ruta string) string {
+	if strings.HasSuffix(ruta, "/start") {
+		return "stopped"
+	}
+	return "running"
+}
+
+func ejecutarAccion(mock *mockProxmoxPort, ruta string) (int, map[string]string) {
+	gin.SetMode(gin.TestMode)
+	handler := adaptersHttp.NewInstanceHandler(mock, &mockUserRepository{}, seguimientoNulo{}, &mockTareaRepository{}, &mockAuditService{})
+	router := gin.New()
+	router.POST("/api/instances/:vmid/start", handler.IniciarInstancia)
+	router.POST("/api/instances/:vmid/stop", handler.DetenerInstancia)
+	router.POST("/api/instances/:vmid/status/:action", handler.CambiarEstado)
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodPost, ruta, nil)
+	router.ServeHTTP(w, req)
+	var cuerpo map[string]string
+	_ = json.Unmarshal(w.Body.Bytes(), &cuerpo)
+	return w.Code, cuerpo
+}
+
+// Matriz de estados: acción incompatible => 409 y NINGUNA orden de escritura a Proxmox.
+func TestAccionesDeEnergia_EstadoIncompatibleEs409SinEscribir(t *testing.T) {
+	casos := []struct{ ruta, estado string }{
+		{"/api/instances/110/start", "running"},
+		{"/api/instances/110/stop", "stopped"},
+		{"/api/instances/110/status/start", "running"},
+		{"/api/instances/110/status/stop", "stopped"},
+		{"/api/instances/110/status/shutdown", "stopped"},
+		{"/api/instances/110/status/reboot", "stopped"},
+	}
+	for _, caso := range casos {
+		mock := &mockProxmoxPort{estado: caso.estado}
+		status, cuerpo := ejecutarAccion(mock, caso.ruta)
+		if status != http.StatusConflict || cuerpo["errorCode"] != "INSTANCE_INVALID_STATE" ||
+			cuerpo["message"] != "La instancia se encuentra en un estado incompatible para la acción solicitada" {
+			t.Errorf("%s (%s): se esperaba 409 INSTANCE_INVALID_STATE, vino %d %v", caso.ruta, caso.estado, status, cuerpo)
+		}
+		if mock.escrituras != 0 {
+			t.Errorf("%s: no debía escribir en Proxmox y escribió %d veces", caso.ruta, mock.escrituras)
+		}
+	}
+}
+
+// Acción compatible => 202 con upid y tareaId.
+func TestAccionesDeEnergia_EstadoValidEs202(t *testing.T) {
+	casos := []struct{ ruta, estado string }{
+		{"/api/instances/110/start", "stopped"},
+		{"/api/instances/110/stop", "running"},
+		{"/api/instances/110/status/start", "stopped"},
+		{"/api/instances/110/status/stop", "running"},
+		{"/api/instances/110/status/shutdown", "running"},
+		{"/api/instances/110/status/reboot", "running"},
+	}
+	for _, caso := range casos {
+		mock := &mockProxmoxPort{estado: caso.estado}
+		status, cuerpo := ejecutarAccion(mock, caso.ruta)
+		if status != http.StatusAccepted || cuerpo["upid"] == "" || cuerpo["tareaId"] == "" || mock.escrituras != 1 {
+			t.Errorf("%s: se esperaba 202 con upid y tareaId, vino %d %v", caso.ruta, status, cuerpo)
+		}
+	}
+}
+
+// Verbo no contemplado en la ruta polimórfica => 400 INVALID_ACTION sin tocar Proxmox.
+func TestCambiarEstado_AccionInvalidaEs400(t *testing.T) {
+	mock := &mockProxmoxPort{estado: "running"}
+	status, cuerpo := ejecutarAccion(mock, "/api/instances/110/status/pause")
+	if status != http.StatusBadRequest || cuerpo["errorCode"] != "INVALID_ACTION" || mock.escrituras != 0 {
+		t.Errorf("se esperaba 400 INVALID_ACTION, vino %d %v", status, cuerpo)
 	}
 }
