@@ -961,3 +961,40 @@ func TestContrato_ClienteDelBackend_EstadoNodo(t *testing.T) {
 		t.Error("Un nodo inexistente debe dar error")
 	}
 }
+
+// El cliente del backend lee y normaliza las interfaces de VMs (guest agent,
+// prefix numérico) y contenedores (prefix string, data null si está apagado).
+func TestContrato_ClienteDelBackend_Interfaces(t *testing.T) {
+	e := nuevoEntorno(t, "")
+	cliente := e.cliente()
+	ctx := context.Background()
+
+	// LXC encendido: prefix "24" (string) normalizado a 24.
+	lxc, err := cliente.ObtenerInterfaces(ctx, "proxmox", "lxc", 101)
+	if err != nil || len(lxc) != 2 {
+		t.Fatalf("Interfaces de la 101: %+v, %v", lxc, err)
+	}
+	if eth0 := lxc[1]; eth0.Nombre != "eth0" || eth0.MAC != "bc:24:11:3a:10:01" || eth0.Direcciones[0] != (ports.DireccionIP{IP: "192.168.1.101", Prefijo: 24, Version: 4}) || eth0.Direcciones[1].Version != 6 {
+		t.Errorf("eth0 de la 101: %+v", eth0)
+	}
+
+	// LXC apagado: {"data": null} → sin interfaces y sin error.
+	if apagado, err := cliente.ObtenerInterfaces(ctx, "proxmox", "lxc", 201); err != nil || len(apagado) != 0 {
+		t.Errorf("Un contenedor apagado devuelve lista vacía sin error: %+v, %v", apagado, err)
+	}
+
+	// QEMU con agente: prefix 24 (número).
+	e.pedir("POST", "/nodes/proxmox/qemu/110/status/start", url.Values{})
+	e.avanzar(3 * time.Second)
+	vm, err := cliente.ObtenerInterfaces(ctx, "proxmox", "qemu", 110)
+	if err != nil || len(vm) != 2 || vm[1].Direcciones[0] != (ports.DireccionIP{IP: "192.168.1.110", Prefijo: 24, Version: 4}) {
+		t.Errorf("Interfaces de la 110: %+v, %v", vm, err)
+	}
+
+	// QEMU sin agente o apagada: error de Proxmox (el servicio lo convierte en ip = nil).
+	for _, vmid := range []int{9003, 100, 9000} {
+		if _, err := cliente.ObtenerInterfaces(ctx, "proxmox", "qemu", vmid); err == nil {
+			t.Errorf("La VM %d (sin agente o apagada) debe dar error", vmid)
+		}
+	}
+}

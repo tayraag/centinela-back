@@ -65,8 +65,11 @@ nodo. `cores` son los hilos lógicos del nodo, sobre los que Proxmox calcula
 `GET /api/instances` devuelve un array. Cada elemento contiene siempre:
 
 - `id`, `name`, `type`, `node` y `status`.
-- `ip`: cadena o `null`. La implementación actual todavía no obtiene la IP, por
-  lo que hoy el valor es `null`.
+- `ip`: cadena o `null`. Se obtiene en vivo: en las VM, con el QEMU Guest
+  Agent; en los contenedores, con sus interfaces. Se informa la primera IPv4
+  (sin contar loopback) o, si no hay, la primera IPv6 global. Vale `null` si la
+  instancia está apagada, no tiene agente o red, o no respondió a tiempo (2 s por
+  instancia y 2,2 s para todo el listado): nunca provoca un error.
 - `cpuUsage`: fracción entre 0 y 1; vale 0 cuando la instancia está detenida.
 - `ramUsage` y `maxRam`: bytes usados y bytes máximos asignados.
 - `nivelAcceso`: `FULL_ACCESS` o `READ_ONLY`; para `ADMIN` siempre se informa

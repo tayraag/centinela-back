@@ -104,7 +104,7 @@ Una VM creada con `POST` y `agent=1` queda con el agente configurado pero no cor
 | `lxc/{vmid}/interfaces` | **string**: `"24"` | `inet` / `inet6` | Lo arma Proxmox (verificado contra PVE 9.2.2). |
 | `qemu/{vmid}/agent/network-get-interfaces` | **número**: `24` | `ipv4` / `ipv6` | Proxmox reenvía la respuesta del QEMU Guest Agent, que define `prefix` como entero (QAPI `GuestIpAddress`). |
 
-Quien consuma estos endpoints (por ejemplo, el inventario unificado) tiene que leer `prefix` como string en los contenedores y como número en las VM, y tratar el `{"data": null}` de un contenedor apagado como "sin IP", no como un error.
+El inventario (`GET /api/instances`, `internal/core/services/inventario_service.go`) consume estos endpoints: lee `prefix` como string en los contenedores y como número en las VM, y trata el `{"data": null}` de un contenedor apagado como "sin IP", no como un error.
 
 Además, `cluster/resources` devuelve el nodo, dos storages (`local-lvm` y `local`) y la zona de red, igual que la captura. El backend los descarta y se queda solo con VMs y contenedores.
 

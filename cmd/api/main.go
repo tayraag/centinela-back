@@ -151,7 +151,8 @@ func main() {
 	seguimientoTareas := services.NewSeguimientoTareas(proxmoxClient, tareaRepo, eventosService, auditService,
 		services.ConfigSeguimiento{Workers: enteroDeEntorno("UPID_WORKERS", 8)})
 	seguimientoTareas.Iniciar(ctx)
-	instanceHandler := httpHandlers.NewInstanceHandler(proxmoxClient, userRepo, seguimientoTareas, tareaRepo, auditService)
+	instanceHandler := httpHandlers.NewInstanceHandler(proxmoxClient, userRepo, seguimientoTareas, tareaRepo, auditService,
+		services.NewInventarioService(proxmoxClient))
 	eventsHandler := httpHandlers.NewEventsHandler(eventosService)
 	nodeHandler := httpHandlers.NewNodeHandler(services.NewNodoService(proxmoxClient, kvStore, valorODefecto(os.Getenv("PROXMOX_NODE"), "proxmox")))
 

@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -419,4 +420,107 @@ func (c *Client) ObtenerEstadoNodo(ctx context.Context, node string) (*ports.Nod
 		DiscoTotal: d.RootFS.Total, DiscoUsado: d.RootFS.Used,
 		UptimeSegs: d.Uptime,
 	}, nil
+}
+
+// prefijoFlexible acepta el prefix como número (guest agent de qemu: 24) o como
+// string (/interfaces de lxc: "24"), igual que Proxmox VE 9.2.2.
+type prefijoFlexible int
+
+func (p *prefijoFlexible) UnmarshalJSON(b []byte) error {
+	texto := strings.Trim(string(b), `"`)
+	if texto == "" || texto == "null" {
+		*p = 0
+		return nil
+	}
+	n, err := strconv.Atoi(texto)
+	if err != nil {
+		return fmt.Errorf("prefix inválido %s: %w", b, err)
+	}
+	*p = prefijoFlexible(n)
+	return nil
+}
+
+type direccionCruda struct {
+	IP      string          `json:"ip-address"`
+	Tipo    string          `json:"ip-address-type"` // qemu: ipv4/ipv6 · lxc: inet/inet6
+	Prefijo prefijoFlexible `json:"prefix"`
+}
+
+type interfazCruda struct {
+	Nombre      string           `json:"name"`
+	MACAgente   string           `json:"hardware-address"` // qemu (y lxc en PVE 8+)
+	MACLXC      string           `json:"hwaddr"`           // lxc
+	Direcciones []direccionCruda `json:"ip-addresses"`
+	Inet        string           `json:"inet"`  // lxc: "192.168.1.101/24"
+	Inet6       string           `json:"inet6"` // lxc: "fe80::.../64"
+}
+
+// ObtenerInterfaces lee las interfaces de red de una instancia y las normaliza.
+func (c *Client) ObtenerInterfaces(ctx context.Context, node, tipo string, vmid int) ([]ports.InterfazRed, error) {
+	var crudas []interfazCruda
+	switch tipo {
+	case ports.TipoInstanciaQemu:
+		raw, err := c.doRequest(ctx, http.MethodGet, fmt.Sprintf("/api2/json/nodes/%s/qemu/%d/agent/network-get-interfaces", url.PathEscape(node), vmid), nil)
+		if err != nil {
+			return nil, err
+		}
+		var parsed struct {
+			Data struct {
+				Result []interfazCruda `json:"result"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(raw, &parsed); err != nil {
+			return nil, fmt.Errorf("%w: respuesta del guest agent inválida: %v", ports.ErrProxmoxNoDisponible, err)
+		}
+		crudas = parsed.Data.Result
+	case ports.TipoInstanciaLXC:
+		raw, err := c.doRequest(ctx, http.MethodGet, fmt.Sprintf("/api2/json/nodes/%s/lxc/%d/interfaces", url.PathEscape(node), vmid), nil)
+		if err != nil {
+			return nil, err
+		}
+		var parsed struct {
+			Data []interfazCruda `json:"data"` // null con el contenedor apagado
+		}
+		if err := json.Unmarshal(raw, &parsed); err != nil {
+			return nil, fmt.Errorf("%w: respuesta de interfaces inválida: %v", ports.ErrProxmoxNoDisponible, err)
+		}
+		crudas = parsed.Data
+	default:
+		return nil, fmt.Errorf("tipo de instancia desconocido %q", tipo)
+	}
+
+	interfaces := make([]ports.InterfazRed, 0, len(crudas))
+	for _, cr := range crudas {
+		itf := ports.InterfazRed{Nombre: cr.Nombre, MAC: strings.ToLower(cr.MACAgente)}
+		if itf.MAC == "" {
+			itf.MAC = strings.ToLower(cr.MACLXC)
+		}
+		for _, d := range cr.Direcciones {
+			itf.Direcciones = append(itf.Direcciones, ports.DireccionIP{IP: d.IP, Prefijo: int(d.Prefijo), Version: versionIP(d.Tipo, d.IP)})
+		}
+		// Proxmox viejos de lxc solo traen inet/inet6 ("ip/prefijo").
+		if len(itf.Direcciones) == 0 {
+			for _, cidr := range []string{cr.Inet, cr.Inet6} {
+				if ip, prefijo, ok := strings.Cut(strings.TrimSpace(cidr), "/"); ok && ip != "" {
+					n, _ := strconv.Atoi(prefijo)
+					itf.Direcciones = append(itf.Direcciones, ports.DireccionIP{IP: ip, Prefijo: n, Version: versionIP("", ip)})
+				}
+			}
+		}
+		interfaces = append(interfaces, itf)
+	}
+	return interfaces, nil
+}
+
+func versionIP(tipo, ip string) int {
+	switch tipo {
+	case "ipv4", "inet":
+		return 4
+	case "ipv6", "inet6":
+		return 6
+	}
+	if strings.Contains(ip, ":") {
+		return 6
+	}
+	return 4
 }

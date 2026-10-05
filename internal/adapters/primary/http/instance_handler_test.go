@@ -62,6 +62,10 @@ func (m *mockProxmoxPort) ObtenerEstadoNodo(context.Context, string) (*ports.Nod
 	return &ports.NodeStatusDTO{}, nil
 }
 
+func (m *mockProxmoxPort) ObtenerInterfaces(context.Context, string, string, int) ([]ports.InterfazRed, error) {
+	return nil, nil
+}
+
 func (m *mockProxmoxPort) EstadoTarea(ctx context.Context, upid string) (*ports.EstadoTareaDTO, error) {
 	return &ports.EstadoTareaDTO{Terminada: true, ExitStatus: "OK"}, nil
 }
@@ -91,6 +95,14 @@ func (m *mockProxmoxPort) Reboot(ctx context.Context, node string, vmid int, vmT
 
 func (m *mockProxmoxPort) EliminarInstancia(ctx context.Context, vmid int) error {
 	return m.errAccion
+}
+
+// inventarioNulo implementa ports.InventarioService sin resolver ninguna IP.
+type inventarioNulo struct{}
+
+func (inventarioNulo) Listar(context.Context) ([]ports.InstanciaInventario, error) { return nil, nil }
+func (inventarioNulo) ResolverIPs(context.Context, []ports.InstanciaProxmoxDTO) map[int]*string {
+	return map[int]*string{}
 }
 
 // seguimientoNulo implementa ports.SeguimientoTareas sin hacer nada.
@@ -171,7 +183,7 @@ func TestListarInstancias_AdminVisualizaTodas(t *testing.T) {
 		permisosVMIDs: []int{100}, // Aunque solo tenga 100 en la BD, por ser ADMIN debe ver todas
 	}
 
-	handler := adaptersHttp.NewInstanceHandler(mockPx, mockRepo, seguimientoNulo{}, &mockTareaRepository{}, &mockAuditService{})
+	handler := adaptersHttp.NewInstanceHandler(mockPx, mockRepo, seguimientoNulo{}, &mockTareaRepository{}, &mockAuditService{}, inventarioNulo{})
 
 	router := gin.New()
 	router.GET("/api/instances", func(c *gin.Context) {
@@ -216,7 +228,7 @@ func TestListarInstancias_OperatorVisualizaSoloAsignadas(t *testing.T) {
 		permisosVMIDs: []int{101}, // El operador solo tiene asignada la instancia 101
 	}
 
-	handler := adaptersHttp.NewInstanceHandler(mockPx, mockRepo, seguimientoNulo{}, &mockTareaRepository{}, &mockAuditService{})
+	handler := adaptersHttp.NewInstanceHandler(mockPx, mockRepo, seguimientoNulo{}, &mockTareaRepository{}, &mockAuditService{}, inventarioNulo{})
 
 	router := gin.New()
 	router.GET("/api/instances", func(c *gin.Context) {
@@ -253,7 +265,7 @@ func TestListarInstancias_ProxmoxInaccesible(t *testing.T) {
 	}
 	mockRepo := &mockUserRepository{}
 
-	handler := adaptersHttp.NewInstanceHandler(mockPx, mockRepo, seguimientoNulo{}, &mockTareaRepository{}, &mockAuditService{})
+	handler := adaptersHttp.NewInstanceHandler(mockPx, mockRepo, seguimientoNulo{}, &mockTareaRepository{}, &mockAuditService{}, inventarioNulo{})
 
 	router := gin.New()
 	router.GET("/api/instances", func(c *gin.Context) {
@@ -285,7 +297,7 @@ func TestListarInstancias_ProxmoxTimeout(t *testing.T) {
 	mockPx := &mockProxmoxPort{
 		errListar: fmt.Errorf("%w: %w", ports.ErrProxmoxNoDisponible, ports.ErrProxmoxTimeout),
 	}
-	handler := adaptersHttp.NewInstanceHandler(mockPx, &mockUserRepository{}, seguimientoNulo{}, &mockTareaRepository{}, &mockAuditService{})
+	handler := adaptersHttp.NewInstanceHandler(mockPx, &mockUserRepository{}, seguimientoNulo{}, &mockTareaRepository{}, &mockAuditService{}, inventarioNulo{})
 
 	router := gin.New()
 	router.GET("/api/instances", func(c *gin.Context) {
@@ -312,7 +324,7 @@ func TestAccionesDeEnergia_InstanciaOcupadaEs409(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	for _, ruta := range []string{"/api/instances/110/start", "/api/instances/110/stop"} {
 		mockPx := &mockProxmoxPort{estado: estadoParaRuta(ruta), errAccion: fmt.Errorf("%w: can't lock file '/var/lock/qemu-server/lock-110.conf' - got timeout", ports.ErrInstanciaOcupada)}
-		handler := adaptersHttp.NewInstanceHandler(mockPx, &mockUserRepository{}, seguimientoNulo{}, &mockTareaRepository{}, &mockAuditService{})
+		handler := adaptersHttp.NewInstanceHandler(mockPx, &mockUserRepository{}, seguimientoNulo{}, &mockTareaRepository{}, &mockAuditService{}, inventarioNulo{})
 		router := gin.New()
 		router.POST("/api/instances/:vmid/start", handler.IniciarInstancia)
 		router.POST("/api/instances/:vmid/stop", handler.DetenerInstancia)
@@ -358,7 +370,7 @@ func TestMapeoDeErroresProxmox_EnTodosLosEndpoints(t *testing.T) {
 	}
 
 	probar := func(mock *mockProxmoxPort, metodo, ruta string) (int, map[string]string) {
-		handler := adaptersHttp.NewInstanceHandler(mock, &mockUserRepository{}, seguimientoNulo{}, &mockTareaRepository{}, &mockAuditService{})
+		handler := adaptersHttp.NewInstanceHandler(mock, &mockUserRepository{}, seguimientoNulo{}, &mockTareaRepository{}, &mockAuditService{}, inventarioNulo{})
 		router := gin.New()
 		router.Use(func(c *gin.Context) {
 			c.Set(string(middleware.ContextKeyRol), "ADMIN")
@@ -412,7 +424,7 @@ func estadoParaRuta(ruta string) string {
 
 func ejecutarAccion(mock *mockProxmoxPort, ruta string) (int, map[string]string) {
 	gin.SetMode(gin.TestMode)
-	handler := adaptersHttp.NewInstanceHandler(mock, &mockUserRepository{}, seguimientoNulo{}, &mockTareaRepository{}, &mockAuditService{})
+	handler := adaptersHttp.NewInstanceHandler(mock, &mockUserRepository{}, seguimientoNulo{}, &mockTareaRepository{}, &mockAuditService{}, inventarioNulo{})
 	router := gin.New()
 	router.POST("/api/instances/:vmid/start", handler.IniciarInstancia)
 	router.POST("/api/instances/:vmid/stop", handler.DetenerInstancia)
@@ -473,5 +485,64 @@ func TestCambiarEstado_AccionInvalidaEs400(t *testing.T) {
 	status, cuerpo := ejecutarAccion(mock, "/api/instances/110/status/pause")
 	if status != http.StatusBadRequest || cuerpo["errorCode"] != "INVALID_ACTION" || mock.escrituras != 0 {
 		t.Errorf("se esperaba 400 INVALID_ACTION, vino %d %v", status, cuerpo)
+	}
+}
+// inventarioFalso resuelve IPs fijas y registra qué instancias le pidieron.
+type inventarioFalso struct {
+	inventarioNulo
+	pedidas []int
+}
+
+func (f *inventarioFalso) ResolverIPs(_ context.Context, instancias []ports.InstanciaProxmoxDTO) map[int]*string {
+	ips := map[int]*string{}
+	for _, inst := range instancias {
+		f.pedidas = append(f.pedidas, inst.Vmid)
+		if inst.Estado == "running" {
+			ip := fmt.Sprintf("192.168.1.%d", inst.Vmid)
+			ips[inst.Vmid] = &ip
+		}
+	}
+	return ips
+}
+
+// GET /api/instances devuelve la IP resuelta (o null) y solo resuelve las
+// instancias que el usuario puede ver.
+func TestListarInstancias_IncluyeIPsDeLasVisibles(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	mockPx := &mockProxmoxPort{instancias: []ports.InstanciaProxmoxDTO{
+		{Vmid: 100, Nombre: "vm-1", Tipo: "qemu", Nodo: "pve1", Estado: "running"},
+		{Vmid: 101, Nombre: "ct-1", Tipo: "lxc", Nodo: "pve1", Estado: "running"},
+		{Vmid: 102, Nombre: "vm-2", Tipo: "qemu", Nodo: "pve1", Estado: "stopped"},
+	}}
+	inventario := &inventarioFalso{}
+	mockRepo := &mockUserRepository{permisosVMIDs: []int{101, 102}}
+	handler := adaptersHttp.NewInstanceHandler(mockPx, mockRepo, seguimientoNulo{}, &mockTareaRepository{}, &mockAuditService{}, inventario)
+
+	router := gin.New()
+	router.GET("/api/instances", func(c *gin.Context) {
+		c.Set(string(middleware.ContextKeyRol), "OPERATOR")
+		c.Set(string(middleware.ContextKeyUserID), uuid.New().String())
+	}, handler.ListarInstancias)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/instances", nil))
+
+	var res []map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil || w.Code != 200 {
+		t.Fatalf("%d %v", w.Code, err)
+	}
+	ips := map[float64]any{}
+	for _, inst := range res {
+		ips[inst["id"].(float64)] = inst["ip"]
+	}
+	if ips[101] != "192.168.1.101" {
+		t.Errorf("La 101 (encendida) debe traer su IP: %v", ips[101])
+	}
+	if v, presente := ips[102]; !presente || v != nil {
+		t.Errorf("La 102 (apagada) debe traer ip: null: %v", v)
+	}
+	for _, vmid := range inventario.pedidas {
+		if vmid == 100 {
+			t.Error("No debe resolverse la IP de una instancia que el OPERATOR no puede ver")
+		}
 	}
 }

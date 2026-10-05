@@ -27,6 +27,10 @@ func (p *proxmoxTareas) ObtenerEstadoNodo(context.Context, string) (*ports.NodeS
 	return &ports.NodeStatusDTO{}, nil
 }
 
+func (p *proxmoxTareas) ObtenerInterfaces(context.Context, string, string, int) ([]ports.InterfazRed, error) {
+	return nil, nil
+}
+
 func (p *proxmoxTareas) EstadoTarea(context.Context, string) (*ports.EstadoTareaDTO, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()

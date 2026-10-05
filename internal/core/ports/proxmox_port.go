@@ -114,6 +114,29 @@ type ProxmoxPort interface {
 
 	// ObtenerEstadoNodo consulta GET /nodes/{node}/status (salud física del hipervisor).
 	ObtenerEstadoNodo(ctx context.Context, node string) (*NodeStatusDTO, error)
+
+	// ObtenerInterfaces devuelve las interfaces de red de una instancia:
+	//   - qemu: GET /nodes/{node}/qemu/{vmid}/agent/network-get-interfaces (QEMU Guest Agent);
+	//   - lxc:  GET /nodes/{node}/lxc/{vmid}/interfaces.
+	// Un contenedor apagado devuelve una lista vacía sin error (Proxmox responde
+	// {"data": null}). Una VM apagada o sin agente devuelve el error de Proxmox.
+	ObtenerInterfaces(ctx context.Context, node, tipo string, vmid int) ([]InterfazRed, error)
+}
+
+// InterfazRed es una interfaz de red de una instancia, normalizada: el formato
+// de qemu (prefix numérico, tipo ipv4/ipv6) y el de lxc (prefix string, tipo
+// inet/inet6) quedan iguales.
+type InterfazRed struct {
+	Nombre      string
+	MAC         string
+	Direcciones []DireccionIP
+}
+
+// DireccionIP es una dirección asignada a una interfaz.
+type DireccionIP struct {
+	IP      string
+	Prefijo int
+	Version int // 4 | 6
 }
 
 // NodeStatusDTO es el estado físico del nodo tal como lo informa Proxmox, sin

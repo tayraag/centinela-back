@@ -30,6 +30,7 @@ type InstanceHandler struct {
 	proxmox     ports.ProxmoxPort
 	userRepo    ports.UserRepository
 	seguimiento ports.SeguimientoTareas
+	inventario  ports.InventarioService // resuelve las IPs del listado
 	tareas      ports.TareaRepository
 	audit       ports.AuditService
 }
@@ -43,8 +44,10 @@ func NewInstanceHandler(
 	seguimiento ports.SeguimientoTareas,
 	tareas ports.TareaRepository,
 	audit ports.AuditService,
+	inventario ports.InventarioService,
 ) *InstanceHandler {
 	return &InstanceHandler{
+		inventario:  inventario,
 		proxmox:     proxmox,
 		userRepo:    userRepo,
 		seguimiento: seguimiento,
@@ -203,6 +206,10 @@ func (h *InstanceHandler) ListarInstancias(c *gin.Context) {
 		instancias = filtradas
 	}
 
+	// Resolver las IPs en paralelo, solo de las instancias visibles para el usuario.
+	// Nunca falla: la que no se pueda resolver (apagada, sin agente) queda en null.
+	ips := h.inventario.ResolverIPs(c.Request.Context(), instancias)
+
 	// Obtener tareas activas en un único query sobre la lista visible.
 	vmids := make([]int, 0, len(instancias))
 	for _, inst := range instancias {
@@ -245,6 +252,7 @@ func (h *InstanceHandler) ListarInstancias(c *gin.Context) {
 			Type:        tipo,
 			Node:        inst.Nodo,
 			Status:      inst.Estado,
+			Ip:          ips[inst.Vmid],
 			CpuUsage:    &cpu,
 			RamUsage:    &mem,
 			MaxRam:      &maxMem,
