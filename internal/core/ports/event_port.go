@@ -47,6 +47,13 @@ const (
 	TareaFailed    = "FAILED"
 )
 
+// Motivos de una tarea FAILED en el TASK_FINISHED (detalles.motivo). Una tarea
+// COMPLETED lleva motivo null.
+const (
+	MotivoProxmoxError = "PROXMOX_ERROR" // Proxmox terminó la tarea con un exitstatus distinto de OK
+	MotivoTimeout      = "TIMEOUT"       // Proxmox no la dio por terminada dentro del límite
+)
+
 // tiposEventoPermitidos reúne los valores válidos de EventoTipo para validar entradas.
 var tiposEventoPermitidos = []string{
 	EventoInstanciaEstado,

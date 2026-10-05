@@ -162,7 +162,7 @@ func mapearErrorProxmox(c *gin.Context, err error) {
 // Un ADMIN ve todo el cluster; un OPERATOR solo sus instancias asignadas.
 //
 // @Summary      Listar instancias
-// @Description  OPERATIVO. Lee en vivo el inventario de Proxmox VE (VMs y contenedores). Un ADMIN recibe el cluster completo; un OPERATOR recibe únicamente las instancias que tiene asignadas. Incluye telemetría (CPU, RAM), nivel de acceso y tarea activa. ip y activeTask pueden ser null.
+// @Description  OPERATIVO. Lee en vivo el inventario de Proxmox VE (VMs y contenedores). Un ADMIN recibe el cluster completo; un OPERATOR recibe únicamente las instancias que tiene asignadas. Incluye telemetría (CPU, RAM), nivel de acceso y tarea activa. ip puede ser null; activeTask es el objeto { tareaId, action, status } de la tarea RUNNING de la instancia, o null si no tiene ninguna.
 // @Tags         Instancias Proxmox
 // @Produce      json
 // @Security     BearerAuth
@@ -219,7 +219,7 @@ func (h *InstanceHandler) ListarInstancias(c *gin.Context) {
 	if err != nil {
 		// No crítico: loguear y continuar sin datos de tareas.
 		log.Printf("⚠️  [INSTANCES] error al buscar tareas activas: %v", err)
-		tareasActivas = map[int]string{}
+		tareasActivas = map[int]ports.ActiveTaskDTO{}
 	}
 
 	// Construir respuesta final con todos los campos.
@@ -230,9 +230,9 @@ func (h *InstanceHandler) ListarInstancias(c *gin.Context) {
 			tipo = "vm"
 		}
 
-		var activeTask *string
-		if tid, ok := tareasActivas[inst.Vmid]; ok {
-			activeTask = &tid
+		var activeTask *ports.ActiveTaskDTO
+		if tarea, ok := tareasActivas[inst.Vmid]; ok {
+			activeTask = &tarea
 		}
 
 		var nivel string
@@ -503,20 +503,20 @@ func (h *InstanceHandler) CambiarEstado(c *gin.Context) {
 // Rechaza la operación con 409 si la instancia está encendida.
 //
 // @Summary      Eliminar instancia
-// @Description  OPERATIVO. Elimina permanentemente una VM o contenedor de Proxmox. La instancia debe estar detenida (stopped) antes de invocar este endpoint; si está encendida se responde 409. Responde 204 No Content sin cuerpo: la eliminación es síncrona y NO devuelve upid ni tareaId, a diferencia de las acciones de energía.
+// @Description  OPERATIVO. Solo ADMIN. Elimina permanentemente una VM o contenedor de Proxmox. La instancia debe estar detenida (stopped); si no, responde 409. La operación es asíncrona, igual que las acciones de energía: responde 202 Accepted con el UPID de la tarea de borrado y el tareaId; el resultado llega en el evento TASK_FINISHED con accion DELETE.
 // @Tags         Instancias Proxmox
 // @Produce      json
 // @Security     BearerAuth
 // @Param        vmid path int true "VMID de la instancia"
-// @Success      204 "Instancia eliminada correctamente. Sin cuerpo de respuesta"
+// @Success      202 {object} AccionAceptadaResponse "Borrado aceptado: upid de la tarea en Proxmox y tareaId. tareaId se omite si no se pudo registrar la tarea"
 // @Failure      400 {object} ErrorResponse "INVALID_VMID — el vmid de la ruta no es un número entero"
 // @Failure      401 {object} ErrorResponse "MISSING_TOKEN | INVALID_TOKEN | TOKEN_REVOKED"
 // @Failure      403 {object} ErrorResponse "WRONG_TOKEN_TYPE | 2FA_REQUIRED | PASSWORD_CHANGE_REQUIRED | NO_ROLE | INVALID_ROLE | INSUFFICIENT_PERMISSIONS | INVALID_VMID | INSTANCE_PROTECTED — solo ADMIN puede eliminar instancias"
 // @Failure      404 {object} ErrorResponse "INSTANCE_NOT_FOUND — la instancia no existe en Proxmox"
-// @Failure      409 {object} ErrorResponse "INSTANCE_NOT_STOPPED — la instancia debe estar detenida"
+// @Failure      409 {object} ErrorResponse "INSTANCE_NOT_STOPPED — la instancia debe estar detenida | INSTANCE_BUSY — la instancia está ejecutando otra tarea"
 // @Failure      500 {object} ErrorResponse "INTERNAL_ERROR — error inesperado de Proxmox"
-// @Failure      502 {object} ErrorResponse "PROXMOX_UNAVAILABLE — Proxmox caído, sin red o token rechazado"
-// @Failure      504 {object} ErrorResponse "PROXMOX_TIMEOUT — Proxmox no respondió a tiempo"
+// @Failure      502 {object} ErrorResponse "PROXMOX_UNAVAILABLE — Proxmox caído, sin red o token rechazado; la orden NO llegó a aplicarse"
+// @Failure      504 {object} ErrorResponse "PROXMOX_TIMEOUT — Proxmox no respondió a tiempo; el borrado puede haberse aplicado"
 // @Router       /instances/{vmid} [delete]
 func (h *InstanceHandler) EliminarInstancia(c *gin.Context) {
 	vmid, ok := extraerVmid(c)
@@ -539,16 +539,17 @@ func (h *InstanceHandler) EliminarInstancia(c *gin.Context) {
 		return
 	}
 
-	if err := h.proxmox.EliminarInstancia(c.Request.Context(), vmid); err != nil {
+	upid, err := h.proxmox.EliminarInstancia(c.Request.Context(), vmid)
+	if err != nil {
 		h.registrarAuditVM(c, vmid, instancia.Nombre, ports.AccionEliminarVM, ports.ResultadoFalla, map[string]any{
-			"error": err.Error(), "resource_type": instancia.Tipo,
+			"action": "delete", "error": err.Error(), "resource_type": instancia.Tipo,
 		})
 		mapearErrorProxmox(c, err)
 		return
 	}
 
-	h.registrarAuditVM(c, vmid, instancia.Nombre, ports.AccionEliminarVM, ports.ResultadoExito, map[string]any{
-		"resource_type": instancia.Tipo,
+	h.registrarAuditVM(c, vmid, instancia.Nombre, "DELETE", "PENDING", map[string]any{
+		"upid": upid, "action": "delete", "resource_type": instancia.Tipo,
 	})
-	c.Status(http.StatusNoContent)
+	h.responderTarea(c, vmid, "delete", upid)
 }

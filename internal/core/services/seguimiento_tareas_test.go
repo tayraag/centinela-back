@@ -55,7 +55,7 @@ func (p *proxmoxTareas) DetenerInstancia(context.Context, int) (string, error) {
 func (p *proxmoxTareas) ReiniciarInstancia(context.Context, int) (string, error) { return "", nil }
 func (p *proxmoxTareas) Shutdown(context.Context, string, int, string) (string, error) { return "", nil }
 func (p *proxmoxTareas) Reboot(context.Context, string, int, string) (string, error) { return "", nil }
-func (p *proxmoxTareas) EliminarInstancia(context.Context, int) error { return nil }
+func (p *proxmoxTareas) EliminarInstancia(context.Context, int) (string, error) { return "", nil }
 
 type tareasEnMemoria struct {
 	mu     sync.Mutex
@@ -78,8 +78,8 @@ func (r *tareasEnMemoria) ActualizarEstado(_ context.Context, id uuid.UUID, esta
 	}
 	return errors.New("no existe")
 }
-func (r *tareasEnMemoria) BuscarTareasActivasPorVmids(ctx context.Context, vmids []int) (map[int]string, error) {
-	return map[int]string{}, nil
+func (r *tareasEnMemoria) BuscarTareasActivasPorVmids(ctx context.Context, vmids []int) (map[int]ports.ActiveTaskDTO, error) {
+	return map[int]ports.ActiveTaskDTO{}, nil
 }
 func (r *tareasEnMemoria) ListarEnCurso(context.Context) ([]domain.TareaAsincrona, error) {
 	r.mu.Lock()
@@ -146,8 +146,15 @@ func TestSeguimiento_TareaExitosa(t *testing.T) {
 	if ev.Mensaje != "La tarea de encendido finalizó correctamente" {
 		t.Errorf("Mensaje: %q", ev.Mensaje)
 	}
-	if ev.Detalles["tareaId"] != id.String() || ev.Detalles["estado"] != ports.TareaCompleted || ev.Detalles["accion"] != "start" {
+	// Contrato: siempre las seis claves; accion en mayúsculas; motivo y error null.
+	esperados := map[string]any{"tareaId": id.String(), "accion": "START", "estado": ports.TareaCompleted, "exitstatus": "OK", "motivo": nil, "error": nil}
+	if len(ev.Detalles) != len(esperados) {
 		t.Errorf("Detalles: %+v", ev.Detalles)
+	}
+	for clave, valor := range esperados {
+		if v, ok := ev.Detalles[clave]; !ok || v != valor {
+			t.Errorf("detalles.%s = %v (presente=%v), se esperaba %v", clave, v, ok, valor)
+		}
 	}
 	if _, ok := ev.Detalles["upid"]; ok {
 		t.Error("El UPID no debe viajar al front (en tareas_asincronas está oculto)")
@@ -162,8 +169,16 @@ func TestSeguimiento_TareaFallida(t *testing.T) {
 	if ev.Severidad != ports.SeveridadWarning || ev.RecursoTipo != ports.RecursoLXC || ev.Mensaje != "La tarea de apagado falló" {
 		t.Errorf("Evento inesperado: %+v", ev)
 	}
-	if ev.Detalles["estado"] != ports.TareaFailed || ev.Detalles["error"] != "CT 201 not running" {
+	if ev.Detalles["estado"] != ports.TareaFailed || ev.Detalles["accion"] != "STOP" || ev.Detalles["motivo"] != ports.MotivoProxmoxError ||
+		ev.Detalles["exitstatus"] != "CT 201 not running" || ev.Detalles["error"] != "CT 201 not running" {
 		t.Errorf("Detalles: %+v", ev.Detalles)
+	}
+}
+
+func TestSeguimiento_BorradoUsaAccionDelete(t *testing.T) {
+	_, _, ev := seguirTarea(t, &proxmoxTareas{exitStatus: "OK", tipo: "qemu"}, "delete")
+	if ev.Mensaje != "La tarea de eliminación finalizó correctamente" || ev.Detalles["accion"] != "DELETE" {
+		t.Errorf("Evento del borrado: %q %+v", ev.Mensaje, ev.Detalles)
 	}
 }
 

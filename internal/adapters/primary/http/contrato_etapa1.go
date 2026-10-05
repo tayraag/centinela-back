@@ -52,17 +52,27 @@ type AccionAceptadaResponse struct {
 
 // InstanciaInventarioResponse documenta cada elemento del inventario operativo.
 type InstanciaInventarioResponse struct {
-	ID          int     `json:"id" binding:"required" example:"110"`
-	Name        string  `json:"name" binding:"required" example:"api-produccion"`
-	Type        string  `json:"type" binding:"required" enums:"vm,lxc" example:"vm"`
-	Node        string  `json:"node" binding:"required" example:"pve-01"`
-	Status      string  `json:"status" binding:"required" example:"running"`
-	IP          *string `json:"ip" binding:"required" extensions:"x-nullable" example:"192.0.2.10"`
-	CPUUsage    float64 `json:"cpuUsage" binding:"required" minimum:"0" maximum:"1" example:"0.24"`
-	RAMUsage    int64   `json:"ramUsage" binding:"required" minimum:"0" example:"2147483648"`
-	MaxRAM      int64   `json:"maxRam" binding:"required" minimum:"0" example:"4294967296"`
-	NivelAcceso string  `json:"nivelAcceso" binding:"required" enums:"FULL_ACCESS,READ_ONLY" example:"FULL_ACCESS"`
-	ActiveTask  *string `json:"activeTask" binding:"required" extensions:"x-nullable" example:"3f2504e0-4f89-11d3-9a0c-0305e82c3301"`
+	ID          int                 `json:"id" binding:"required" example:"110"`
+	Name        string              `json:"name" binding:"required" example:"api-produccion"`
+	Type        string              `json:"type" binding:"required" enums:"vm,lxc" example:"vm"`
+	Node        string              `json:"node" binding:"required" example:"pve-01"`
+	Status      string              `json:"status" binding:"required" example:"running"`
+	IP          *string             `json:"ip" binding:"required" extensions:"x-nullable" example:"192.0.2.10"`
+	CPUUsage    float64             `json:"cpuUsage" binding:"required" minimum:"0" maximum:"1" example:"0.24"`
+	RAMUsage    int64               `json:"ramUsage" binding:"required" minimum:"0" example:"2147483648"`
+	MaxRAM      int64               `json:"maxRam" binding:"required" minimum:"0" example:"4294967296"`
+	NivelAcceso string              `json:"nivelAcceso" binding:"required" enums:"FULL_ACCESS,READ_ONLY" example:"FULL_ACCESS"`
+	ActiveTask  *ActiveTaskResponse `json:"activeTask" binding:"required" extensions:"x-nullable"`
+}
+
+// ActiveTaskResponse documenta la tarea en curso de una instancia del inventario.
+// activeTask vale null cuando la instancia no tiene ninguna tarea RUNNING.
+// tareaId es el mismo valor que devolvió el 202 de la acción y que llega en el
+// TASK_FINISHED; action es la acción en mayúsculas, igual que detalles.accion.
+type ActiveTaskResponse struct {
+	TareaID string `json:"tareaId" binding:"required" example:"3f2504e0-4f89-11d3-9a0c-0305e82c3301"`
+	Action  string `json:"action" binding:"required" enums:"START,STOP,SHUTDOWN,REBOOT,DELETE" example:"START"`
+	Status  string `json:"status" binding:"required" enums:"RUNNING" example:"RUNNING"`
 }
 
 // ==========================================
@@ -80,13 +90,16 @@ type InstanciaInventarioResponse struct {
 // El servidor lo serializa como `map[string]any`, así que su forma depende del
 // `tipo` del evento y ninguno de sus campos puede declararse obligatorio. Hoy
 // el único tipo que se publica es `TASK_FINISHED`; sus dos formas concretas
-// están en TaskSuccess y TaskFailed. `error` solo lo agrega el servidor cuando
-// la tarea no termina en `COMPLETED`.
+// están en TaskSuccess y TaskFailed. En `TASK_FINISHED` el servidor manda
+// siempre las seis claves: `exitstatus`, `motivo` y `error` valen null cuando
+// no aplican.
 type SSEDetallesEvento struct {
-	TareaID string  `json:"tareaId,omitempty" example:"3f2504e0-4f89-11d3-9a0c-0305e82c3301"`
-	Estado  string  `json:"estado,omitempty" enums:"RUNNING,COMPLETED,FAILED" example:"COMPLETED"`
-	Accion  string  `json:"accion,omitempty" example:"start"`
-	Error   *string `json:"error,omitempty" extensions:"x-nullable" example:"CT 201 not running"`
+	TareaID    string  `json:"tareaId,omitempty" example:"3f2504e0-4f89-11d3-9a0c-0305e82c3301"`
+	Accion     string  `json:"accion,omitempty" enums:"START,STOP,SHUTDOWN,REBOOT,DELETE" example:"START"`
+	Estado     string  `json:"estado,omitempty" enums:"RUNNING,COMPLETED,FAILED" example:"COMPLETED"`
+	ExitStatus *string `json:"exitstatus,omitempty" extensions:"x-nullable" example:"OK"`
+	Motivo     *string `json:"motivo,omitempty" enums:"PROXMOX_ERROR,TIMEOUT" extensions:"x-nullable"`
+	Error      *string `json:"error,omitempty" extensions:"x-nullable" example:"CT 201 not running"`
 }
 
 // SSEEventPayload es el JSON de cada línea `data:` del stream `GET /api/events`.
@@ -106,22 +119,31 @@ type SSEEventPayload struct {
 }
 
 // TaskSuccess es la forma concreta de `detalles` en un `TASK_FINISHED` que
-// terminó en `COMPLETED`: severidad `INFO` y sin campo `error`.
+// terminó en `COMPLETED`: severidad `INFO`, `exitstatus` "OK" y `motivo` y
+// `error` en null. Las seis claves viajan siempre.
 type TaskSuccess struct {
-	TareaID string `json:"tareaId" binding:"required" example:"3f2504e0-4f89-11d3-9a0c-0305e82c3301"`
-	Estado  string `json:"estado" binding:"required" enums:"COMPLETED" example:"COMPLETED"`
-	Accion  string `json:"accion" binding:"required" example:"start"`
+	TareaID    string  `json:"tareaId" binding:"required" example:"3f2504e0-4f89-11d3-9a0c-0305e82c3301"`
+	Accion     string  `json:"accion" binding:"required" enums:"START,STOP,SHUTDOWN,REBOOT,DELETE" example:"START"`
+	Estado     string  `json:"estado" binding:"required" enums:"COMPLETED" example:"COMPLETED"`
+	ExitStatus string  `json:"exitstatus" binding:"required" enums:"OK" example:"OK"`
+	Motivo     *string `json:"motivo" binding:"required" extensions:"x-nullable"`
+	Error      *string `json:"error" binding:"required" extensions:"x-nullable"`
 }
 
 // TaskFailed es la forma concreta de `detalles` en un `TASK_FINISHED` que
-// terminó en `FAILED`: severidad `WARNING` y `error` con el texto que devolvió
-// Proxmox. El servidor lo emite siempre en este caso, pero el contrato lo acepta
-// ausente o `null` para no obligar al cliente a distinguir los dos casos.
+// terminó en `FAILED`: severidad `WARNING` y las mismas seis claves.
+//
+//   - `motivo` PROXMOX_ERROR: Proxmox terminó la tarea con error; `exitstatus`
+//     y `error` traen su texto.
+//   - `motivo` TIMEOUT: Proxmox no la dio por terminada en 10 minutos;
+//     `exitstatus` es null y `error` lo explica.
 type TaskFailed struct {
-	TareaID string  `json:"tareaId" binding:"required" example:"3f2504e0-4f89-11d3-9a0c-0305e82c3301"`
-	Estado  string  `json:"estado" binding:"required" enums:"FAILED" example:"FAILED"`
-	Accion  string  `json:"accion" binding:"required" example:"stop"`
-	Error   *string `json:"error" extensions:"x-nullable" example:"CT 201 not running"`
+	TareaID    string  `json:"tareaId" binding:"required" example:"3f2504e0-4f89-11d3-9a0c-0305e82c3301"`
+	Accion     string  `json:"accion" binding:"required" enums:"START,STOP,SHUTDOWN,REBOOT,DELETE" example:"STOP"`
+	Estado     string  `json:"estado" binding:"required" enums:"FAILED" example:"FAILED"`
+	ExitStatus *string `json:"exitstatus" binding:"required" extensions:"x-nullable" example:"CT 201 not running"`
+	Motivo     string  `json:"motivo" binding:"required" enums:"PROXMOX_ERROR,TIMEOUT" example:"PROXMOX_ERROR"`
+	Error      *string `json:"error" binding:"required" extensions:"x-nullable" example:"CT 201 not running"`
 }
 
 // SSECierrePayload es el JSON del frame `event: cierre` con el que el backend
@@ -144,7 +166,7 @@ type SSETicketResponse struct {
 // concretas que un cliente puede recibir del stream `GET /api/events`:
 //
 //   - `taskSuccess`: el `detalles` de un `TASK_FINISHED` que terminó en `COMPLETED`.
-//   - `taskFailed`: el mismo evento terminado en `FAILED`, con `error`.
+//   - `taskFailed`: el mismo evento terminado en `FAILED`, con `motivo` y `error`.
 //   - `cierre`: el cuerpo del frame `event: cierre`.
 //
 // No es un cuerpo que se pueda recibir: es el índice que permite que swag
@@ -173,7 +195,7 @@ type SSETiposPayload struct {
 // servidor.
 //
 // @Summary      Formas concretas del payload del stream SSE (solo documentación)
-// @Description  Índice de los esquemas que el stream `GET /api/events` puede emitir: `http.TaskSuccess` (evento `TASK_FINISHED` con `estado` `COMPLETED`), `http.TaskFailed` (el mismo evento con `estado` `FAILED` y su campo `error`) y `http.SSECierrePayload` (el cuerpo del frame `event: cierre`). Este es el `detalles` de los eventos, no el sobre completo, que es `http.SSEEventPayload`. No es una ruta del servidor y no se puede invocar: el stream real y su framing se documentan en `GET /api/events`.
+// @Description  Índice de los esquemas que el stream `GET /api/events` puede emitir: `http.TaskSuccess` (evento `TASK_FINISHED` con `estado` `COMPLETED`), `http.TaskFailed` (el mismo evento con `estado` `FAILED`, `motivo` PROXMOX_ERROR o TIMEOUT y `error`) y `http.SSECierrePayload` (el cuerpo del frame `event: cierre`). Este es el `detalles` de los eventos, no el sobre completo, que es `http.SSEEventPayload`. No es una ruta del servidor y no se puede invocar: el stream real y su framing se documentan en `GET /api/events`.
 // @Tags         Eventos en tiempo real
 // @Produce      text/event-stream
 // @Success      200 {object} SSETiposPayload "índice de las formas concretas del stream"

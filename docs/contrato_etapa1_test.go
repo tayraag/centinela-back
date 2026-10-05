@@ -30,6 +30,10 @@ func TestContratoEtapa1(t *testing.T) {
 		t.Fatalf("GET /node/status debe declarar estado operativo: %q", descripcion)
 	}
 	verificarBearer(t, nodeStatus)
+	// D1: cualquier usuario autenticado, ADMIN u OPERATOR, puede leer el nodo.
+	if descripcion := cadena(t, nodeStatus, "description"); !strings.Contains(descripcion, "ADMIN y OPERATOR") {
+		t.Errorf("GET /node/status debe aclarar que lo leen ADMIN y OPERATOR: %q", descripcion)
+	}
 	verificarRespuesta(t, nodeStatus, "200", "http.EstadoNodeResponse")
 	verificarRespuesta(t, nodeStatus, "502", "http.ErrorResponse")
 	verificarRespuesta(t, nodeStatus, "504", "http.ErrorResponse")
@@ -79,6 +83,17 @@ func TestContratoEtapa1(t *testing.T) {
 			t.Errorf("%s debe declarar x-nullable: true", campo)
 		}
 	}
+
+	// activeTask es el objeto { tareaId, action, status } o null.
+	activeTask := propiedad(t, definitions, inventarioDef, "activeTask")
+	if refs, ok := activeTask["allOf"].([]any); !ok || len(refs) != 1 ||
+		refs[0].(map[string]any)["$ref"] != "#/definitions/http.ActiveTaskResponse" {
+		t.Errorf("activeTask debe referenciar http.ActiveTaskResponse: %#v", activeTask)
+	}
+	const activeTaskDef = "http.ActiveTaskResponse"
+	verificarObjetoRequerido(t, definitions, activeTaskDef, []string{"tareaId", "action", "status"})
+	verificarEnum(t, definitions, activeTaskDef, "action", "START", "STOP", "SHUTDOWN", "REBOOT", "DELETE")
+	verificarEnum(t, definitions, activeTaskDef, "status", ports.TareaRunning)
 
 	// ==========================================================
 	// T02 — Acciones aceptadas y catálogo completo de errores
@@ -170,6 +185,30 @@ func TestContratoEtapa1(t *testing.T) {
 		}
 	}
 
+	// La matriz de estados del ciclo de vida responde 409 INSTANCE_INVALID_STATE.
+	for _, ruta := range []string{"/instances/{vmid}/start", "/instances/{vmid}/stop", "/instances/{vmid}/status/{action}"} {
+		if r409 := descripcionRespuesta(t, paths, ruta, "post", "409"); !strings.Contains(r409, "INSTANCE_INVALID_STATE") {
+			t.Errorf("%s 409 debe documentar INSTANCE_INVALID_STATE: %q", ruta, r409)
+		}
+	}
+
+	// DELETE: solo ADMIN y asíncrono, con el mismo 202 { upid, tareaId }.
+	borrado := objeto(t, objeto(t, paths, "/instances/{vmid}"), "delete")
+	verificarBearer(t, borrado)
+	verificarRespuesta(t, borrado, "202", acceptedDef)
+	if _, existe := objeto(t, borrado, "responses")["204"]; existe {
+		t.Error("DELETE /instances/{vmid} ya no responde 204: es asíncrono y responde 202")
+	}
+	if descripcion := cadena(t, borrado, "description"); !strings.Contains(descripcion, "Solo ADMIN") {
+		t.Errorf("DELETE /instances/{vmid} debe aclarar que es solo ADMIN: %q", descripcion)
+	}
+	if r403 := descripcionRespuesta(t, paths, "/instances/{vmid}", "delete", "403"); !strings.Contains(r403, "INSUFFICIENT_PERMISSIONS") {
+		t.Errorf("DELETE 403 debe documentar INSUFFICIENT_PERMISSIONS: %q", r403)
+	}
+	if r409 := descripcionRespuesta(t, paths, "/instances/{vmid}", "delete", "409"); !strings.Contains(r409, "INSTANCE_NOT_STOPPED") {
+		t.Errorf("DELETE 409 debe documentar INSTANCE_NOT_STOPPED: %q", r409)
+	}
+
 	// Pause: contrato objetivo, todavía no registrado.
 	pause := objeto(t, objeto(t, paths, "/instances/{vmid}/pause"), "post")
 	if estado := cadena(t, pause, "x-implementation-status"); estado != "planned" {
@@ -242,7 +281,7 @@ func TestContratoEtapa1(t *testing.T) {
 	const detallesDef = "http.SSEDetallesEvento"
 	requeridosDetalles := requeridosDe(t, objeto(t, definitions, detallesDef))
 	propiedadesDetalles := objeto(t, objeto(t, definitions, detallesDef), "properties")
-	for _, campo := range []string{"tareaId", "estado", "accion", "error"} {
+	for _, campo := range []string{"tareaId", "accion", "estado", "exitstatus", "motivo", "error"} {
 		if _, ok := propiedadesDetalles[campo]; !ok {
 			t.Errorf("%s no define la propiedad %s", detallesDef, campo)
 		}
@@ -251,27 +290,37 @@ func TestContratoEtapa1(t *testing.T) {
 		}
 	}
 	verificarEnum(t, definitions, detallesDef, "estado", "RUNNING", "COMPLETED", "FAILED")
+	verificarEnum(t, definitions, detallesDef, "motivo", "PROXMOX_ERROR", "TIMEOUT")
 
-	// Las dos formas concretas de detalles en TASK_FINISHED.
+	// Las dos formas concretas de detalles en TASK_FINISHED. El servidor manda
+	// siempre las seis claves; las que no aplican van en null.
+	camposTarea := []string{"tareaId", "accion", "estado", "exitstatus", "motivo", "error"}
+	acciones := []string{"START", "STOP", "SHUTDOWN", "REBOOT", "DELETE"}
+
 	const successDef = "http.TaskSuccess"
-	verificarObjetoRequerido(t, definitions, successDef, []string{"tareaId", "estado", "accion"})
+	verificarObjetoRequerido(t, definitions, successDef, camposTarea)
+	verificarEnum(t, definitions, successDef, "accion", acciones...)
 	verificarEnum(t, definitions, successDef, "estado", "COMPLETED")
-	if _, existe := objeto(t, objeto(t, definitions, successDef), "properties")["error"]; existe {
-		t.Errorf("%s no debe definir error: el servidor solo lo agrega cuando la tarea falla", successDef)
+	verificarEnum(t, definitions, successDef, "exitstatus", "OK")
+	for _, campo := range []string{"motivo", "error"} {
+		if nullable, ok := propiedad(t, definitions, successDef, campo)["x-nullable"].(bool); !ok || !nullable {
+			t.Errorf("%s.%s debe declarar x-nullable: true (siempre null en una tarea exitosa)", successDef, campo)
+		}
 	}
 
 	const failedDef = "http.TaskFailed"
-	verificarObjetoRequerido(t, definitions, failedDef, []string{"tareaId", "estado", "accion"})
+	verificarObjetoRequerido(t, definitions, failedDef, camposTarea)
+	verificarEnum(t, definitions, failedDef, "accion", acciones...)
 	verificarEnum(t, definitions, failedDef, "estado", "FAILED")
-	errorFallido := propiedad(t, definitions, failedDef, "error")
-	if tipo := cadena(t, errorFallido, "type"); tipo != "string" {
-		t.Errorf("%s.error debe ser string, obtuvo %q", failedDef, tipo)
-	}
-	if nullable, ok := errorFallido["x-nullable"].(bool); !ok || !nullable {
-		t.Errorf("%s.error debe declarar x-nullable: true", failedDef)
-	}
-	if requeridosDe(t, objeto(t, definitions, failedDef))["error"] {
-		t.Errorf("%s.error no debe ser obligatorio: puede venir vacío", failedDef)
+	verificarEnum(t, definitions, failedDef, "motivo", ports.MotivoProxmoxError, ports.MotivoTimeout)
+	for _, campo := range []string{"exitstatus", "error"} {
+		prop := propiedad(t, definitions, failedDef, campo)
+		if tipo := cadena(t, prop, "type"); tipo != "string" {
+			t.Errorf("%s.%s debe ser string, obtuvo %q", failedDef, campo, tipo)
+		}
+		if nullable, ok := prop["x-nullable"].(bool); !ok || !nullable {
+			t.Errorf("%s.%s debe declarar x-nullable: true", failedDef, campo)
+		}
 	}
 
 	// El corte del backend viaja como evento `cierre` con su propio motivo.
@@ -372,9 +421,12 @@ func TestContratoEtapa1(t *testing.T) {
 	}
 	// Se arma igual que seguimiento_tareas.eventoTareaFinalizada.
 	eventoOk = eventoOk.ConRecurso(ports.RecursoVM, "110").ConDetalles(map[string]any{
-		"tareaId": "3f2504e0-4f89-11d3-9a0c-0305e82c3301",
-		"estado":  ports.TareaCompleted,
-		"accion":  "start",
+		"tareaId":    "3f2504e0-4f89-11d3-9a0c-0305e82c3301",
+		"accion":     "START",
+		"estado":     ports.TareaCompleted,
+		"exitstatus": "OK",
+		"motivo":     nil,
+		"error":      nil,
 	})
 
 	eventoFallo, err := ports.NewRealtimeEvent(ports.EventoTareaFinalizada, ports.SeveridadWarning, mensajeFallo)
@@ -382,10 +434,12 @@ func TestContratoEtapa1(t *testing.T) {
 		t.Fatalf("construir el evento de fallo: %v", err)
 	}
 	eventoFallo = eventoFallo.ConRecurso(ports.RecursoLXC, "201").ConDetalles(map[string]any{
-		"tareaId": "3f2504e0-4f89-11d3-9a0c-0305e82c3302",
-		"estado":  ports.TareaFailed,
-		"accion":  "stop",
-		"error":   "CT 201 not running",
+		"tareaId":    "3f2504e0-4f89-11d3-9a0c-0305e82c3302",
+		"accion":     "STOP",
+		"estado":     ports.TareaFailed,
+		"exitstatus": "CT 201 not running",
+		"motivo":     ports.MotivoProxmoxError,
+		"error":      "CT 201 not running",
 	})
 
 	compararClaves(t, serializar(eventoOk), payloadDef, definitions, "sobre de éxito")
@@ -409,6 +463,10 @@ func TestContratoEtapa1(t *testing.T) {
 		// T01 — lecturas.
 		"GET /api/node/status", "node:status:current", "node:status:last_known", "stale",
 		"planificada", "404 NOT_FOUND", "GET /api/instances", "operativa",
+		// D1 — el estado del nodo lo lee cualquier usuario autenticado.
+		"ADMIN u OPERATOR",
+		// activeTask es un objeto o null.
+		`"action": "START"`, `"status": "RUNNING"`,
 		"usagePercent", "instancesSummary", "fetchedAt", "nivelAcceso", "activeTask",
 		// T02 — acciones aceptadas.
 		"POST /api/instances/:vmid/start", "POST /api/instances/:vmid/stop",
@@ -418,7 +476,9 @@ func TestContratoEtapa1(t *testing.T) {
 		"INSTANCE_NOT_FOUND", "INSTANCE_BUSY", "INTERNAL_ERROR",
 		"PROXMOX_UNAVAILABLE", "PROXMOX_TIMEOUT",
 		// T02 — sobre real y diferencias con lo solicitado.
-		`{ "errorCode", "message" }`, "204",
+		`{ "errorCode", "message" }`, "INSTANCE_INVALID_STATE",
+		// Borrado asíncrono, solo ADMIN.
+		"DELETE /api/instances/:vmid", "INSTANCE_NOT_STOPPED",
 		// T03 — stream SSE, ticket y framing.
 		"GET /api/events", "POST /api/events/ticket", "http.SSEEventPayload",
 		"http.TaskSuccess", "http.TaskFailed", "http.SSEDetallesEvento",
@@ -426,6 +486,8 @@ func TestContratoEtapa1(t *testing.T) {
 		"EVENTS_TICKET_MISSING", "EVENTS_TICKET_INVALID", "EVENTS_UNAVAILABLE",
 		"TOKEN_REVOKED", "LOGOUT", "SESSIONS_REVOKED", "USER_INACTIVE",
 		"un solo uso", "30 s", "text/event-stream", "TASK_FINISHED",
+		// Payload completo del TASK_FINISHED.
+		"exitstatus", "motivo", "PROXMOX_ERROR", "TIMEOUT",
 	} {
 		if !strings.Contains(contrato, fragmento) {
 			t.Errorf("contrato-etapa1.md no contiene %q", fragmento)

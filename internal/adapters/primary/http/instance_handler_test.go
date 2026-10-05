@@ -93,8 +93,12 @@ func (m *mockProxmoxPort) Reboot(ctx context.Context, node string, vmid int, vmT
 	return "UPID:test:reboot", nil
 }
 
-func (m *mockProxmoxPort) EliminarInstancia(ctx context.Context, vmid int) error {
-	return m.errAccion
+func (m *mockProxmoxPort) EliminarInstancia(ctx context.Context, vmid int) (string, error) {
+	m.escrituras++
+	if m.errAccion != nil {
+		return "", m.errAccion
+	}
+	return "UPID:test:qmdestroy", nil
 }
 
 // inventarioNulo implementa ports.InventarioService sin resolver ninguna IP.
@@ -112,14 +116,19 @@ func (seguimientoNulo) Seguir(context.Context, uuid.UUID, int, string, string) (
 	return uuid.New(), nil
 }
 
-type mockTareaRepository struct{}
+type mockTareaRepository struct {
+	activas map[int]ports.ActiveTaskDTO
+}
 func (m *mockTareaRepository) Crear(context.Context, *domain.TareaAsincrona) error { return nil }
 func (m *mockTareaRepository) ListarEnCurso(context.Context) ([]domain.TareaAsincrona, error) {
 	return nil, nil
 }
 func (m *mockTareaRepository) ActualizarEstado(context.Context, uuid.UUID, string) error { return nil }
-func (m *mockTareaRepository) BuscarTareasActivasPorVmids(context.Context, []int) (map[int]string, error) {
-	return map[int]string{}, nil
+func (m *mockTareaRepository) BuscarTareasActivasPorVmids(context.Context, []int) (map[int]ports.ActiveTaskDTO, error) {
+	if m.activas == nil {
+		return map[int]ports.ActiveTaskDTO{}, nil
+	}
+	return m.activas, nil
 }
 
 type mockAuditService struct{}
@@ -543,6 +552,93 @@ func TestListarInstancias_IncluyeIPsDeLasVisibles(t *testing.T) {
 	for _, vmid := range inventario.pedidas {
 		if vmid == 100 {
 			t.Error("No debe resolverse la IP de una instancia que el OPERATOR no puede ver")
+		}
+	}
+}
+
+// GET /api/instances: activeTask es el objeto { tareaId, action, status } de la
+// tarea RUNNING de la instancia, o null si no tiene ninguna.
+func TestListarInstancias_ActiveTaskEsObjetoONull(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	mockPx := &mockProxmoxPort{instancias: []ports.InstanciaProxmoxDTO{
+		{Vmid: 110, Nombre: "vm-1", Tipo: "qemu", Nodo: "pve1", Estado: "stopped"},
+		{Vmid: 201, Nombre: "ct-1", Tipo: "lxc", Nodo: "pve1", Estado: "running"},
+	}}
+	tareas := &mockTareaRepository{activas: map[int]ports.ActiveTaskDTO{
+		110: {TareaID: "3f2504e0-4f89-11d3-9a0c-0305e82c3301", Action: "START", Status: "RUNNING"},
+	}}
+	handler := adaptersHttp.NewInstanceHandler(mockPx, &mockUserRepository{}, seguimientoNulo{}, tareas, &mockAuditService{}, inventarioNulo{})
+	router := gin.New()
+	router.GET("/api/instances", func(c *gin.Context) {
+		c.Set(string(middleware.ContextKeyRol), "ADMIN")
+		c.Set(string(middleware.ContextKeyUserID), uuid.New().String())
+	}, handler.ListarInstancias)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/instances", nil))
+
+	var res []map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil || w.Code != 200 {
+		t.Fatalf("%d %v", w.Code, err)
+	}
+	porID := map[float64]map[string]any{}
+	for _, inst := range res {
+		porID[inst["id"].(float64)] = inst
+	}
+	tarea, ok := porID[110]["activeTask"].(map[string]any)
+	if !ok || len(tarea) != 3 || tarea["tareaId"] != "3f2504e0-4f89-11d3-9a0c-0305e82c3301" || tarea["action"] != "START" || tarea["status"] != "RUNNING" {
+		t.Errorf("activeTask de la 110: %v", porID[110]["activeTask"])
+	}
+	if v, presente := porID[201]["activeTask"]; !presente || v != nil {
+		t.Errorf("La 201 sin tarea debe traer activeTask: null: %v (presente=%v)", v, presente)
+	}
+}
+
+func ejecutarBorrado(mock *mockProxmoxPort) (int, map[string]string) {
+	gin.SetMode(gin.TestMode)
+	handler := adaptersHttp.NewInstanceHandler(mock, &mockUserRepository{}, seguimientoNulo{}, &mockTareaRepository{}, &mockAuditService{}, inventarioNulo{})
+	router := gin.New()
+	router.DELETE("/api/instances/:vmid", func(c *gin.Context) {
+		c.Set(string(middleware.ContextKeyUserID), uuid.New().String())
+	}, handler.EliminarInstancia)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest(http.MethodDelete, "/api/instances/110", nil))
+	var cuerpo map[string]string
+	_ = json.Unmarshal(w.Body.Bytes(), &cuerpo)
+	return w.Code, cuerpo
+}
+
+// DELETE /api/instances/:vmid es asíncrono: 202 { upid, tareaId }, como las
+// acciones de energía.
+func TestEliminarInstancia_Es202ConUpidYTareaId(t *testing.T) {
+	mock := &mockProxmoxPort{estado: "stopped"}
+	status, cuerpo := ejecutarBorrado(mock)
+	if status != http.StatusAccepted || cuerpo["upid"] != "UPID:test:qmdestroy" || cuerpo["tareaId"] == "" || mock.escrituras != 1 {
+		t.Errorf("se esperaba 202 con upid y tareaId, vino %d %v", status, cuerpo)
+	}
+}
+
+func TestEliminarInstancia_EncendidaEs409SinEscribir(t *testing.T) {
+	mock := &mockProxmoxPort{estado: "running"}
+	status, cuerpo := ejecutarBorrado(mock)
+	if status != http.StatusConflict || cuerpo["errorCode"] != "INSTANCE_NOT_STOPPED" || mock.escrituras != 0 {
+		t.Errorf("se esperaba 409 INSTANCE_NOT_STOPPED sin escribir, vino %d %v (escrituras %d)", status, cuerpo, mock.escrituras)
+	}
+}
+
+func TestEliminarInstancia_ErroresDeProxmox(t *testing.T) {
+	casos := []struct {
+		err    error
+		status int
+		codigo string
+	}{
+		{fmt.Errorf("%w: can't lock file", ports.ErrInstanciaOcupada), http.StatusConflict, "INSTANCE_BUSY"},
+		{fmt.Errorf("%w: %w: context deadline exceeded", ports.ErrProxmoxNoDisponible, ports.ErrProxmoxTimeout), http.StatusGatewayTimeout, "PROXMOX_TIMEOUT"},
+		{fmt.Errorf("%w: connection refused", ports.ErrProxmoxNoDisponible), http.StatusBadGateway, "PROXMOX_UNAVAILABLE"},
+	}
+	for _, caso := range casos {
+		status, cuerpo := ejecutarBorrado(&mockProxmoxPort{estado: "stopped", errAccion: caso.err})
+		if status != caso.status || cuerpo["errorCode"] != caso.codigo {
+			t.Errorf("%v: se esperaba %d %s, vino %d %v", caso.err, caso.status, caso.codigo, status, cuerpo)
 		}
 	}
 }

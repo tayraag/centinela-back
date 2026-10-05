@@ -217,6 +217,10 @@ func TestPool_ReconciliadorRetomaTareasDeUnReinicio(t *testing.T) {
 	estados := map[string]bool{}
 	for _, ev := range eventos {
 		estados[ev.Detalles["estado"].(string)] = true
+		if ev.Detalles["tareaId"] == trabada.ID.String() &&
+			(ev.Detalles["motivo"] != ports.MotivoTimeout || ev.Detalles["exitstatus"] != nil || ev.Detalles["error"] == nil) {
+			t.Errorf("La trabada vence por tiempo: motivo TIMEOUT, exitstatus null y error con el texto: %+v", ev.Detalles)
+		}
 	}
 	if !estados[ports.TareaCompleted] || !estados[ports.TareaFailed] {
 		t.Errorf("Se esperaba un TASK_FINISHED de cada una: %v", estados)

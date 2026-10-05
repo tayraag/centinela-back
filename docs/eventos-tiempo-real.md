@@ -1,6 +1,6 @@
 # Canal de eventos en tiempo real (RF-11)
 
-El backend avisa al front, sin que la pantalla tenga que preguntar, cuando pasa algo: por ahora, **cuando termina una tarea** (encender o apagar una instancia). El canal es **SSE** (Server-Sent Events): una conexión HTTP que queda abierta y por la que el back va mandando eventos.
+El backend avisa al front, sin que la pantalla tenga que preguntar, cuando pasa algo: por ahora, **cuando termina una tarea** (encender, apagar, reiniciar o borrar una instancia). El canal es **SSE** (Server-Sent Events): una conexión HTTP que queda abierta y por la que el back va mandando eventos.
 
 El formato de cada evento está en [contrato-eventos.md](contrato-eventos.md).
 
@@ -29,7 +29,7 @@ El `EventSource` del navegador **no puede mandar el header `Authorization`**. Po
 : conectado
 
 id: 75d0322d-1d76-4dbf-ad0d-2571c458aa63
-data: {"id":"75d0322d-...","tipo":"TASK_FINISHED","severidad":"INFO","recursoTipo":"VM","recursoId":"110","mensaje":"La tarea de encendido finalizó correctamente","fechaHora":"2026-09-30T11:24:03-03:00","detalles":{"accion":"start","estado":"COMPLETED","tareaId":"01a0f2b3-..."}}
+data: {"id":"75d0322d-...","tipo":"TASK_FINISHED","severidad":"INFO","recursoTipo":"VM","recursoId":"110","mensaje":"La tarea de encendido finalizó correctamente","fechaHora":"2026-09-30T11:24:03-03:00","detalles":{"accion":"START","error":null,"estado":"COMPLETED","exitstatus":"OK","motivo":null,"tareaId":"01a0f2b3-..."}}
 
 : ping
 
@@ -83,17 +83,18 @@ Como se consulta en vivo, **si un admin le quita un permiso a un operador, deja 
 
 ## TASK_FINISHED: de dónde sale
 
-1. Una acción de energía (`POST /api/instances/:vmid/start`, `/stop` o `/status/{action}`) se dispara en Proxmox y responde `202 { "upid": "...", "tareaId": "..." }`.
-2. La tarea se registra en `tareas_asincronas` con estado `RUNNING` y entra al **pool de seguimiento**.
+1. Una acción de energía (`POST /api/instances/:vmid/start`, `/stop` o `/status/{action}`) o un borrado (`DELETE /api/instances/:vmid`, solo ADMIN) se dispara en Proxmox y responde `202 { "upid": "...", "tareaId": "..." }`.
+2. La tarea se registra en `tareas_asincronas` con estado `RUNNING` y entra al **pool de seguimiento**. Mientras está así, `GET /api/instances` la muestra en `activeTask: { tareaId, action, status: "RUNNING" }`.
 3. Los workers del pool le preguntan a Proxmox cómo va (`GET /nodes/{node}/tasks/{upid}/status`) cada 1 s.
-4. Cuando termina, se guarda `COMPLETED` o `FAILED`, se audita el resultado (mismo código de acción que el registro `PENDING`: `START`, `STOP`, `SHUTDOWN`, `REBOOT`, con `EXITO` o `FALLA`) y se publica `TASK_FINISHED` con el mismo `tareaId`, así el front puede asociarlo a la acción que disparó.
+4. Cuando termina, se guarda `COMPLETED` o `FAILED`, se audita el resultado (mismo código de acción que el registro `PENDING`: `START`, `STOP`, `SHUTDOWN`, `REBOOT`, `DELETE`, con `EXITO` o `FALLA`) y se publica `TASK_FINISHED` con el mismo `tareaId`, así el front puede asociarlo a la acción que disparó.
 
 | Resultado | `severidad` | `mensaje` | `detalles` |
 | --------- | ----------- | --------- | ---------- |
-| OK | `INFO` | `La tarea de encendido finalizó correctamente` | `tareaId`, `estado: COMPLETED`, `accion` |
-| Error | `WARNING` | `La tarea de apagado falló` | lo mismo, con `estado: FAILED` y `error` (el mensaje de Proxmox) |
+| OK | `INFO` | `La tarea de encendido finalizó correctamente` | `estado: COMPLETED`, `exitstatus: "OK"`, `motivo: null`, `error: null` |
+| Error de Proxmox | `WARNING` | `La tarea de apagado falló` | `estado: FAILED`, `motivo: PROXMOX_ERROR`, `exitstatus` y `error` con el mensaje de Proxmox |
+| Vencida | `WARNING` | `La tarea de encendido falló` | `estado: FAILED`, `motivo: TIMEOUT`, `exitstatus: null`, `error` explicando que venció |
 
-Si Proxmox no da por terminada la tarea en 10 minutos (desde que se creó), queda `FAILED`. El UPID **no** viaja al front.
+`detalles` lleva siempre las seis claves (`tareaId`, `accion` en mayúsculas, `estado`, `exitstatus`, `motivo`, `error`), con `null` en las que no aplican. Una tarea vence si Proxmox no la da por terminada en 10 minutos (desde que se creó). El UPID **no** viaja al front.
 
 ### El pool de seguimiento (`internal/core/services/seguimiento_tareas.go`)
 
@@ -105,7 +106,7 @@ Si Proxmox no da por terminada la tarea en 10 minutos (desde que se creó), qued
 ## Cómo funciona por dentro (para el back)
 
 ```
-start/stop ──► SeguimientoTareas ──► Publicar(TASK_FINISHED) ─┐
+acciones ────► SeguimientoTareas ──► Publicar(TASK_FINISHED) ─┐
 logout ──────► AuthService ─────────► aviso LOGOUT ───────────┤    Redis Pub/Sub
 revocar ─────► revocarSesiones ─────► aviso SESSIONS_REVOKED ─┤──► centinela:events ──► cada stream abierto
                                                               │                         (filtra y corta)

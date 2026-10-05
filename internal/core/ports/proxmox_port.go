@@ -68,12 +68,19 @@ type InstanciaListadaDTO struct {
 	Status string `json:"status"`
 
 	// Campos extendidos de telemetría (retrocompatibles: omitempty)
-	Ip          *string     `json:"ip"`          // dirección IP de la instancia (si está disponible)
-	CpuUsage    *float64    `json:"cpuUsage"`    // fracción [0,1]
-	RamUsage    *int64      `json:"ramUsage"`    // bytes usados
-	MaxRam      *int64      `json:"maxRam"`      // bytes máximos
-	NivelAcceso string      `json:"nivelAcceso"` // "FULL_ACCESS" | "READ_ONLY" (o "FULL_ACCESS" para ADMIN)
-	ActiveTask  interface{} `json:"activeTask"`  // tareaId en curso o null
+	Ip          *string        `json:"ip"`          // dirección IP de la instancia (si está disponible)
+	CpuUsage    *float64       `json:"cpuUsage"`    // fracción [0,1]
+	RamUsage    *int64         `json:"ramUsage"`    // bytes usados
+	MaxRam      *int64         `json:"maxRam"`      // bytes máximos
+	NivelAcceso string         `json:"nivelAcceso"` // "FULL_ACCESS" | "READ_ONLY" (o "FULL_ACCESS" para ADMIN)
+	ActiveTask  *ActiveTaskDTO `json:"activeTask"`  // tarea en curso o null
+}
+
+// ActiveTaskDTO es la tarea RUNNING de una instancia en el inventario.
+type ActiveTaskDTO struct {
+	TareaID string `json:"tareaId"`
+	Action  string `json:"action"` // START | STOP | SHUTDOWN | REBOOT | DELETE
+	Status  string `json:"status"` // RUNNING
 }
 
 // ProxmoxPort define el contrato hacia la API de Proxmox VE.
@@ -107,7 +114,8 @@ type ProxmoxPort interface {
 	// EliminarInstancia elimina permanentemente una VM o contenedor del cluster.
 	// La instancia DEBE estar detenida antes de llamar a este método; si está
 	// encendida Proxmox responde con error y se retorna ErrInstanciaOcupada.
-	EliminarInstancia(ctx context.Context, vmid int) error
+	// Devuelve el UPID de la tarea de borrado (qmdestroy / vzdestroy).
+	EliminarInstancia(ctx context.Context, vmid int) (upid string, err error)
 
 	// EstadoTarea consulta GET /nodes/{node}/tasks/{upid}/status.
 	EstadoTarea(ctx context.Context, upid string) (*EstadoTareaDTO, error)

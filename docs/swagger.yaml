@@ -11,6 +11,30 @@ definitions:
     required:
     - upid
     type: object
+  http.ActiveTaskResponse:
+    properties:
+      action:
+        enum:
+        - START
+        - STOP
+        - SHUTDOWN
+        - REBOOT
+        - DELETE
+        example: START
+        type: string
+      status:
+        enum:
+        - RUNNING
+        example: RUNNING
+        type: string
+      tareaId:
+        example: 3f2504e0-4f89-11d3-9a0c-0305e82c3301
+        type: string
+    required:
+    - action
+    - status
+    - tareaId
+    type: object
   http.ErrorResponse:
     properties:
       errorCode:
@@ -53,8 +77,8 @@ definitions:
   http.InstanciaInventarioResponse:
     properties:
       activeTask:
-        example: 3f2504e0-4f89-11d3-9a0c-0305e82c3301
-        type: string
+        allOf:
+        - $ref: '#/definitions/http.ActiveTaskResponse'
         x-nullable: true
       cpuUsage:
         example: 0.24
@@ -204,7 +228,13 @@ definitions:
   http.SSEDetallesEvento:
     properties:
       accion:
-        example: start
+        enum:
+        - START
+        - STOP
+        - SHUTDOWN
+        - REBOOT
+        - DELETE
+        example: START
         type: string
       error:
         example: CT 201 not running
@@ -217,6 +247,16 @@ definitions:
         - FAILED
         example: COMPLETED
         type: string
+      exitstatus:
+        example: OK
+        type: string
+        x-nullable: true
+      motivo:
+        enum:
+        - PROXMOX_ERROR
+        - TIMEOUT
+        type: string
+        x-nullable: true
       tareaId:
         example: 3f2504e0-4f89-11d3-9a0c-0305e82c3301
         type: string
@@ -293,7 +333,13 @@ definitions:
   http.TaskFailed:
     properties:
       accion:
-        example: stop
+        enum:
+        - START
+        - STOP
+        - SHUTDOWN
+        - REBOOT
+        - DELETE
+        example: STOP
         type: string
       error:
         example: CT 201 not running
@@ -304,30 +350,63 @@ definitions:
         - FAILED
         example: FAILED
         type: string
+      exitstatus:
+        example: CT 201 not running
+        type: string
+        x-nullable: true
+      motivo:
+        enum:
+        - PROXMOX_ERROR
+        - TIMEOUT
+        example: PROXMOX_ERROR
+        type: string
       tareaId:
         example: 3f2504e0-4f89-11d3-9a0c-0305e82c3301
         type: string
     required:
     - accion
+    - error
     - estado
+    - exitstatus
+    - motivo
     - tareaId
     type: object
   http.TaskSuccess:
     properties:
       accion:
-        example: start
+        enum:
+        - START
+        - STOP
+        - SHUTDOWN
+        - REBOOT
+        - DELETE
+        example: START
         type: string
+      error:
+        type: string
+        x-nullable: true
       estado:
         enum:
         - COMPLETED
         example: COMPLETED
         type: string
+      exitstatus:
+        enum:
+        - OK
+        example: OK
+        type: string
+      motivo:
+        type: string
+        x-nullable: true
       tareaId:
         example: 3f2504e0-4f89-11d3-9a0c-0305e82c3301
         type: string
     required:
     - accion
+    - error
     - estado
+    - exitstatus
+    - motivo
     - tareaId
     type: object
   http.asignarPermisosRequest:
@@ -1590,10 +1669,11 @@ paths:
     get:
       description: 'Índice de los esquemas que el stream `GET /api/events` puede emitir:
         `http.TaskSuccess` (evento `TASK_FINISHED` con `estado` `COMPLETED`), `http.TaskFailed`
-        (el mismo evento con `estado` `FAILED` y su campo `error`) y `http.SSECierrePayload`
-        (el cuerpo del frame `event: cierre`). Este es el `detalles` de los eventos,
-        no el sobre completo, que es `http.SSEEventPayload`. No es una ruta del servidor
-        y no se puede invocar: el stream real y su framing se documentan en `GET /api/events`.'
+        (el mismo evento con `estado` `FAILED`, `motivo` PROXMOX_ERROR o TIMEOUT y
+        `error`) y `http.SSECierrePayload` (el cuerpo del frame `event: cierre`).
+        Este es el `detalles` de los eventos, no el sobre completo, que es `http.SSEEventPayload`.
+        No es una ruta del servidor y no se puede invocar: el stream real y su framing
+        se documentan en `GET /api/events`.'
       produces:
       - text/event-stream
       responses:
@@ -1636,7 +1716,8 @@ paths:
       description: OPERATIVO. Lee en vivo el inventario de Proxmox VE (VMs y contenedores).
         Un ADMIN recibe el cluster completo; un OPERATOR recibe únicamente las instancias
         que tiene asignadas. Incluye telemetría (CPU, RAM), nivel de acceso y tarea
-        activa. ip y activeTask pueden ser null.
+        activa. ip puede ser null; activeTask es el objeto { tareaId, action, status
+        } de la tarea RUNNING de la instancia, o null si no tiene ninguna.
       produces:
       - application/json
       responses:
@@ -1670,11 +1751,11 @@ paths:
       - Instancias Proxmox
   /instances/{vmid}:
     delete:
-      description: 'OPERATIVO. Elimina permanentemente una VM o contenedor de Proxmox.
-        La instancia debe estar detenida (stopped) antes de invocar este endpoint;
-        si está encendida se responde 409. Responde 204 No Content sin cuerpo: la
-        eliminación es síncrona y NO devuelve upid ni tareaId, a diferencia de las
-        acciones de energía.'
+      description: 'OPERATIVO. Solo ADMIN. Elimina permanentemente una VM o contenedor
+        de Proxmox. La instancia debe estar detenida (stopped); si no, responde 409.
+        La operación es asíncrona, igual que las acciones de energía: responde 202
+        Accepted con el UPID de la tarea de borrado y el tareaId; el resultado llega
+        en el evento TASK_FINISHED con accion DELETE.'
       parameters:
       - description: VMID de la instancia
         in: path
@@ -1684,8 +1765,11 @@ paths:
       produces:
       - application/json
       responses:
-        "204":
-          description: Instancia eliminada correctamente. Sin cuerpo de respuesta
+        "202":
+          description: 'Borrado aceptado: upid de la tarea en Proxmox y tareaId. tareaId
+            se omite si no se pudo registrar la tarea'
+          schema:
+            $ref: '#/definitions/http.AccionAceptadaResponse'
         "400":
           description: INVALID_VMID — el vmid de la ruta no es un número entero
           schema:
@@ -1705,7 +1789,8 @@ paths:
           schema:
             $ref: '#/definitions/http.ErrorResponse'
         "409":
-          description: INSTANCE_NOT_STOPPED — la instancia debe estar detenida
+          description: INSTANCE_NOT_STOPPED — la instancia debe estar detenida | INSTANCE_BUSY
+            — la instancia está ejecutando otra tarea
           schema:
             $ref: '#/definitions/http.ErrorResponse'
         "500":
@@ -1713,11 +1798,13 @@ paths:
           schema:
             $ref: '#/definitions/http.ErrorResponse'
         "502":
-          description: PROXMOX_UNAVAILABLE — Proxmox caído, sin red o token rechazado
+          description: PROXMOX_UNAVAILABLE — Proxmox caído, sin red o token rechazado;
+            la orden NO llegó a aplicarse
           schema:
             $ref: '#/definitions/http.ErrorResponse'
         "504":
-          description: PROXMOX_TIMEOUT — Proxmox no respondió a tiempo
+          description: PROXMOX_TIMEOUT — Proxmox no respondió a tiempo; el borrado
+            puede haberse aplicado
           schema:
             $ref: '#/definitions/http.ErrorResponse'
       security:

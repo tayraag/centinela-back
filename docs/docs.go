@@ -1369,7 +1369,7 @@ const docTemplate = `{
         },
         "/events/contrato-sse": {
             "get": {
-                "description": "Índice de los esquemas que el stream ` + "`" + `GET /api/events` + "`" + ` puede emitir: ` + "`" + `http.TaskSuccess` + "`" + ` (evento ` + "`" + `TASK_FINISHED` + "`" + ` con ` + "`" + `estado` + "`" + ` ` + "`" + `COMPLETED` + "`" + `), ` + "`" + `http.TaskFailed` + "`" + ` (el mismo evento con ` + "`" + `estado` + "`" + ` ` + "`" + `FAILED` + "`" + ` y su campo ` + "`" + `error` + "`" + `) y ` + "`" + `http.SSECierrePayload` + "`" + ` (el cuerpo del frame ` + "`" + `event: cierre` + "`" + `). Este es el ` + "`" + `detalles` + "`" + ` de los eventos, no el sobre completo, que es ` + "`" + `http.SSEEventPayload` + "`" + `. No es una ruta del servidor y no se puede invocar: el stream real y su framing se documentan en ` + "`" + `GET /api/events` + "`" + `.",
+                "description": "Índice de los esquemas que el stream ` + "`" + `GET /api/events` + "`" + ` puede emitir: ` + "`" + `http.TaskSuccess` + "`" + ` (evento ` + "`" + `TASK_FINISHED` + "`" + ` con ` + "`" + `estado` + "`" + ` ` + "`" + `COMPLETED` + "`" + `), ` + "`" + `http.TaskFailed` + "`" + ` (el mismo evento con ` + "`" + `estado` + "`" + ` ` + "`" + `FAILED` + "`" + `, ` + "`" + `motivo` + "`" + ` PROXMOX_ERROR o TIMEOUT y ` + "`" + `error` + "`" + `) y ` + "`" + `http.SSECierrePayload` + "`" + ` (el cuerpo del frame ` + "`" + `event: cierre` + "`" + `). Este es el ` + "`" + `detalles` + "`" + ` de los eventos, no el sobre completo, que es ` + "`" + `http.SSEEventPayload` + "`" + `. No es una ruta del servidor y no se puede invocar: el stream real y su framing se documentan en ` + "`" + `GET /api/events` + "`" + `.",
                 "produces": [
                     "text/event-stream"
                 ],
@@ -1432,7 +1432,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "OPERATIVO. Lee en vivo el inventario de Proxmox VE (VMs y contenedores). Un ADMIN recibe el cluster completo; un OPERATOR recibe únicamente las instancias que tiene asignadas. Incluye telemetría (CPU, RAM), nivel de acceso y tarea activa. ip y activeTask pueden ser null.",
+                "description": "OPERATIVO. Lee en vivo el inventario de Proxmox VE (VMs y contenedores). Un ADMIN recibe el cluster completo; un OPERATOR recibe únicamente las instancias que tiene asignadas. Incluye telemetría (CPU, RAM), nivel de acceso y tarea activa. ip puede ser null; activeTask es el objeto { tareaId, action, status } de la tarea RUNNING de la instancia, o null si no tiene ninguna.",
                 "produces": [
                     "application/json"
                 ],
@@ -1558,7 +1558,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "OPERATIVO. Elimina permanentemente una VM o contenedor de Proxmox. La instancia debe estar detenida (stopped) antes de invocar este endpoint; si está encendida se responde 409. Responde 204 No Content sin cuerpo: la eliminación es síncrona y NO devuelve upid ni tareaId, a diferencia de las acciones de energía.",
+                "description": "OPERATIVO. Solo ADMIN. Elimina permanentemente una VM o contenedor de Proxmox. La instancia debe estar detenida (stopped); si no, responde 409. La operación es asíncrona, igual que las acciones de energía: responde 202 Accepted con el UPID de la tarea de borrado y el tareaId; el resultado llega en el evento TASK_FINISHED con accion DELETE.",
                 "produces": [
                     "application/json"
                 ],
@@ -1576,8 +1576,11 @@ const docTemplate = `{
                     }
                 ],
                 "responses": {
-                    "204": {
-                        "description": "Instancia eliminada correctamente. Sin cuerpo de respuesta"
+                    "202": {
+                        "description": "Borrado aceptado: upid de la tarea en Proxmox y tareaId. tareaId se omite si no se pudo registrar la tarea",
+                        "schema": {
+                            "$ref": "#/definitions/http.AccionAceptadaResponse"
+                        }
                     },
                     "400": {
                         "description": "INVALID_VMID — el vmid de la ruta no es un número entero",
@@ -1604,7 +1607,7 @@ const docTemplate = `{
                         }
                     },
                     "409": {
-                        "description": "INSTANCE_NOT_STOPPED — la instancia debe estar detenida",
+                        "description": "INSTANCE_NOT_STOPPED — la instancia debe estar detenida | INSTANCE_BUSY — la instancia está ejecutando otra tarea",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -1616,13 +1619,13 @@ const docTemplate = `{
                         }
                     },
                     "502": {
-                        "description": "PROXMOX_UNAVAILABLE — Proxmox caído, sin red o token rechazado",
+                        "description": "PROXMOX_UNAVAILABLE — Proxmox caído, sin red o token rechazado; la orden NO llegó a aplicarse",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
                     },
                     "504": {
-                        "description": "PROXMOX_TIMEOUT — Proxmox no respondió a tiempo",
+                        "description": "PROXMOX_TIMEOUT — Proxmox no respondió a tiempo; el borrado puede haberse aplicado",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -2079,6 +2082,38 @@ const docTemplate = `{
                 }
             }
         },
+        "http.ActiveTaskResponse": {
+            "type": "object",
+            "required": [
+                "action",
+                "status",
+                "tareaId"
+            ],
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": [
+                        "START",
+                        "STOP",
+                        "SHUTDOWN",
+                        "REBOOT",
+                        "DELETE"
+                    ],
+                    "example": "START"
+                },
+                "status": {
+                    "type": "string",
+                    "enum": [
+                        "RUNNING"
+                    ],
+                    "example": "RUNNING"
+                },
+                "tareaId": {
+                    "type": "string",
+                    "example": "3f2504e0-4f89-11d3-9a0c-0305e82c3301"
+                }
+            }
+        },
         "http.ErrorResponse": {
             "type": "object",
             "properties": {
@@ -2149,9 +2184,12 @@ const docTemplate = `{
             ],
             "properties": {
                 "activeTask": {
-                    "type": "string",
-                    "x-nullable": true,
-                    "example": "3f2504e0-4f89-11d3-9a0c-0305e82c3301"
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/http.ActiveTaskResponse"
+                        }
+                    ],
+                    "x-nullable": true
                 },
                 "cpuUsage": {
                     "type": "number",
@@ -2337,7 +2375,14 @@ const docTemplate = `{
             "properties": {
                 "accion": {
                     "type": "string",
-                    "example": "start"
+                    "enum": [
+                        "START",
+                        "STOP",
+                        "SHUTDOWN",
+                        "REBOOT",
+                        "DELETE"
+                    ],
+                    "example": "START"
                 },
                 "error": {
                     "type": "string",
@@ -2352,6 +2397,19 @@ const docTemplate = `{
                         "FAILED"
                     ],
                     "example": "COMPLETED"
+                },
+                "exitstatus": {
+                    "type": "string",
+                    "x-nullable": true,
+                    "example": "OK"
+                },
+                "motivo": {
+                    "type": "string",
+                    "enum": [
+                        "PROXMOX_ERROR",
+                        "TIMEOUT"
+                    ],
+                    "x-nullable": true
                 },
                 "tareaId": {
                     "type": "string",
@@ -2456,13 +2514,23 @@ const docTemplate = `{
             "type": "object",
             "required": [
                 "accion",
+                "error",
                 "estado",
+                "exitstatus",
+                "motivo",
                 "tareaId"
             ],
             "properties": {
                 "accion": {
                     "type": "string",
-                    "example": "stop"
+                    "enum": [
+                        "START",
+                        "STOP",
+                        "SHUTDOWN",
+                        "REBOOT",
+                        "DELETE"
+                    ],
+                    "example": "STOP"
                 },
                 "error": {
                     "type": "string",
@@ -2476,6 +2544,19 @@ const docTemplate = `{
                     ],
                     "example": "FAILED"
                 },
+                "exitstatus": {
+                    "type": "string",
+                    "x-nullable": true,
+                    "example": "CT 201 not running"
+                },
+                "motivo": {
+                    "type": "string",
+                    "enum": [
+                        "PROXMOX_ERROR",
+                        "TIMEOUT"
+                    ],
+                    "example": "PROXMOX_ERROR"
+                },
                 "tareaId": {
                     "type": "string",
                     "example": "3f2504e0-4f89-11d3-9a0c-0305e82c3301"
@@ -2486,13 +2567,27 @@ const docTemplate = `{
             "type": "object",
             "required": [
                 "accion",
+                "error",
                 "estado",
+                "exitstatus",
+                "motivo",
                 "tareaId"
             ],
             "properties": {
                 "accion": {
                     "type": "string",
-                    "example": "start"
+                    "enum": [
+                        "START",
+                        "STOP",
+                        "SHUTDOWN",
+                        "REBOOT",
+                        "DELETE"
+                    ],
+                    "example": "START"
+                },
+                "error": {
+                    "type": "string",
+                    "x-nullable": true
                 },
                 "estado": {
                     "type": "string",
@@ -2500,6 +2595,17 @@ const docTemplate = `{
                         "COMPLETED"
                     ],
                     "example": "COMPLETED"
+                },
+                "exitstatus": {
+                    "type": "string",
+                    "enum": [
+                        "OK"
+                    ],
+                    "example": "OK"
+                },
+                "motivo": {
+                    "type": "string",
+                    "x-nullable": true
                 },
                 "tareaId": {
                     "type": "string",

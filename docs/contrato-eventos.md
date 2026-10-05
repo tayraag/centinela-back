@@ -72,6 +72,18 @@ No es un campo propio del evento: viaja dentro de `detalles` en los eventos
 | TareaCompleted | COMPLETED | Completada   |
 | TareaFailed    | FAILED    | Fallida      |
 
+### Detalles de `TASK_FINISHED`
+
+`detalles` trae siempre las seis claves; las que no aplican van en `null`:
+`tareaId`, `accion` (`START`, `STOP`, `SHUTDOWN`, `REBOOT` o `DELETE`), `estado`
+(`COMPLETED` o `FAILED`), `exitstatus` (lo que informó Proxmox, o `null`),
+`motivo` y `error`. `motivo` solo tiene valor si `estado` es `FAILED`:
+
+| Constante Go       | Valor         | Significado                                              |
+|--------------------|---------------|----------------------------------------------------------|
+| MotivoProxmoxError | PROXMOX_ERROR | Proxmox terminó la tarea con error (`exitstatus` ≠ `OK`) |
+| MotivoTimeout      | TIMEOUT       | Proxmox no la dio por terminada en 10 minutos            |
+
 ## Ejemplos
 
 ### Evento de fin de tarea (`TASK_FINISHED`)
@@ -87,10 +99,19 @@ No es un campo propio del evento: viaja dentro de `detalles` en los eventos
   "fechaHora": "2026-09-21T14:30:05Z",
   "detalles": {
     "tareaId": "3f2504e0-4f89-11d3-9a0c-0305e82c3301",
+    "accion": "START",
     "estado": "COMPLETED",
-    "accion": "start"
+    "exitstatus": "OK",
+    "motivo": null,
+    "error": null
   }
 }
+```
+
+Si falla, `severidad` es `WARNING` y `detalles` queda, por ejemplo:
+
+```json
+{ "tareaId": "3f2504e0-4f89-11d3-9a0c-0305e82c3302", "accion": "STOP", "estado": "FAILED", "exitstatus": "CT 201 not running", "motivo": "PROXMOX_ERROR", "error": "CT 201 not running" }
 ```
 
 ### Evento de saturación (`RESOURCE_SATURATION`)
