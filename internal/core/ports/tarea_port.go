@@ -21,4 +21,8 @@ type TareaRepository interface {
 	// para las tareas en estado RUNNING de cualquiera de los vmids dados.
 	// Si un vmid no tiene tarea activa, no aparece en el mapa.
 	BuscarTareasActivasPorVmids(ctx context.Context, vmids []int) (map[int]string, error)
+
+	// ListarEnCurso devuelve todas las tareas en estado RUNNING, de la más vieja a
+	// la más nueva. Lo usa el reconciliador del seguimiento de tareas.
+	ListarEnCurso(ctx context.Context) ([]domain.TareaAsincrona, error)
 }

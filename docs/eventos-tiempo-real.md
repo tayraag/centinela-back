@@ -83,19 +83,24 @@ Como se consulta en vivo, **si un admin le quita un permiso a un operador, deja 
 
 ## TASK_FINISHED: de dónde sale
 
-1. `POST /api/instances/:vmid/start` o `/stop` dispara la acción en Proxmox y responde `202 { "upid": "...", "tareaId": "..." }`.
-2. La tarea se registra en `tareas_asincronas` con estado `RUNNING`.
-3. Un seguidor le pregunta a Proxmox cada 1 s cómo va (`GET /nodes/{node}/tasks/{upid}/status`).
-4. Cuando termina, guarda `COMPLETED` o `FAILED` y publica `TASK_FINISHED` con el mismo `tareaId`, así el front puede asociarlo a la acción que disparó.
+1. Una acción de energía (`POST /api/instances/:vmid/start`, `/stop` o `/status/{action}`) se dispara en Proxmox y responde `202 { "upid": "...", "tareaId": "..." }`.
+2. La tarea se registra en `tareas_asincronas` con estado `RUNNING` y entra al **pool de seguimiento**.
+3. Los workers del pool le preguntan a Proxmox cómo va (`GET /nodes/{node}/tasks/{upid}/status`) cada 1 s.
+4. Cuando termina, se guarda `COMPLETED` o `FAILED`, se audita el resultado (mismo código de acción que el registro `PENDING`: `START`, `STOP`, `SHUTDOWN`, `REBOOT`, con `EXITO` o `FALLA`) y se publica `TASK_FINISHED` con el mismo `tareaId`, así el front puede asociarlo a la acción que disparó.
 
 | Resultado | `severidad` | `mensaje` | `detalles` |
 | --------- | ----------- | --------- | ---------- |
 | OK | `INFO` | `La tarea de encendido finalizó correctamente` | `tareaId`, `estado: COMPLETED`, `accion` |
 | Error | `WARNING` | `La tarea de apagado falló` | lo mismo, con `estado: FAILED` y `error` (el mensaje de Proxmox) |
 
-Si Proxmox no da por terminada la tarea en 10 minutos, queda `FAILED`. El UPID **no** viaja al front.
+Si Proxmox no da por terminada la tarea en 10 minutos (desde que se creó), queda `FAILED`. El UPID **no** viaja al front.
 
-> Si la API se reinicia mientras una tarea está en curso, esa tarea queda en `RUNNING` y no se publica su evento: el seguimiento vive en memoria.
+### El pool de seguimiento (`internal/core/services/seguimiento_tareas.go`)
+
+- **Consultas acotadas:** solo `UPID_WORKERS` workers (default 8) le consultan a Proxmox, así que nunca hay más consultas simultáneas que eso, aunque haya decenas de tareas en curso. Cada worker consulta una tarea **una vez** y, si no terminó, la vuelve a encolar para dentro de 1 s: todas las tareas avanzan a la par.
+- **No bloquea el request:** si la cola (100 lugares) está llena, la tarea igual queda `RUNNING` en la base y la toma el reconciliador.
+- **Reconciliador:** cada 5 s (y al arrancar) encola las tareas `RUNNING` de la base que no se están siguiendo: las que no entraron por cola llena y las que quedaron de un reinicio de la API. Las que ya pasaron el límite de 10 minutos se cierran como `FAILED`.
+- **Apagado ordenado:** ante `SIGINT` (Ctrl+C) o `SIGTERM` (`systemctl stop`, deploy) la API deja de aceptar requests, cierra los streams SSE (el front reconecta con un ticket nuevo), termina los requests en curso y espera a que cada worker termine su consulta. Las tareas sin terminar quedan `RUNNING` y el reconciliador las retoma en el próximo arranque, así que su `TASK_FINISHED` se publica igual.
 
 ## Cómo funciona por dentro (para el back)
 

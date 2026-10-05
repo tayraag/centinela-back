@@ -77,6 +77,17 @@ func (r *tareasEnMemoria) ActualizarEstado(_ context.Context, id uuid.UUID, esta
 func (r *tareasEnMemoria) BuscarTareasActivasPorVmids(ctx context.Context, vmids []int) (map[int]string, error) {
 	return map[int]string{}, nil
 }
+func (r *tareasEnMemoria) ListarEnCurso(context.Context) ([]domain.TareaAsincrona, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var lista []domain.TareaAsincrona
+	for _, t := range r.tareas {
+		if t.Estado == ports.TareaRunning {
+			lista = append(lista, *t)
+		}
+	}
+	return lista, nil
+}
 func (r *tareasEnMemoria) estado(id uuid.UUID) string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -98,7 +109,10 @@ func seguirTarea(t *testing.T, px *proxmoxTareas, accion string) (uuid.UUID, *ta
 	t.Helper()
 	repo := &tareasEnMemoria{tareas: map[uuid.UUID]*domain.TareaAsincrona{}}
 	pub := &publicadorFalso{publicados: make(chan ports.RealtimeEvent, 1)}
-	seg := services.NewSeguimientoTareas(px, repo, pub, 10*time.Millisecond)
+	seg := services.NewSeguimientoTareas(px, repo, pub, &auditoriaGrabadora{}, services.ConfigSeguimiento{Intervalo: 10 * time.Millisecond})
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	seg.Iniciar(ctx)
 
 	id, err := seg.Seguir(context.Background(), uuid.New(), 110, accion, "UPID:proxmox:0001:0002:0003:qm"+accion+":110:centinela-api@pve!backend-token:")
 	if err != nil {

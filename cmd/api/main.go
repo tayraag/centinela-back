@@ -3,10 +3,12 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -145,8 +147,11 @@ func main() {
 	accountHandler := httpHandlers.NewAccountHandler(userService)
 	auditHandler := httpHandlers.NewAuditHandler(auditService)
 	eventosService := services.NewEventosService(kvStore, authRepo, instanceRepo, auditService)
-	seguimientoTareas := services.NewSeguimientoTareas(proxmoxClient, postgres.NewTareaRepository(db), eventosService, time.Second)
-	instanceHandler := httpHandlers.NewInstanceHandler(proxmoxClient, userRepo, seguimientoTareas, postgres.NewTareaRepository(db), auditService)
+	tareaRepo := postgres.NewTareaRepository(db)
+	seguimientoTareas := services.NewSeguimientoTareas(proxmoxClient, tareaRepo, eventosService, auditService,
+		services.ConfigSeguimiento{Workers: enteroDeEntorno("UPID_WORKERS", 8)})
+	seguimientoTareas.Iniciar(ctx)
+	instanceHandler := httpHandlers.NewInstanceHandler(proxmoxClient, userRepo, seguimientoTareas, tareaRepo, auditService)
 	eventsHandler := httpHandlers.NewEventsHandler(eventosService)
 	nodeHandler := httpHandlers.NewNodeHandler(services.NewNodoService(proxmoxClient, kvStore, valorODefecto(os.Getenv("PROXMOX_NODE"), "proxmox")))
 
@@ -299,10 +304,44 @@ func main() {
 	})
 
 	// 9. Encender el servidor en el puerto 8080
-	log.Println("🛡️ Servidor HTTP escuchando en el puerto 8080...")
-	if err := router.Run(":8080"); err != nil {
-		log.Fatalf("❌ Error al arrancar el servidor: %v", err)
+	srv := &http.Server{Addr: ":8080", Handler: router}
+	srv.RegisterOnShutdown(eventsHandler.CerrarStreams) // los streams SSE no terminan solos
+	go func() {
+		log.Println("🛡️ Servidor HTTP escuchando en el puerto 8080...")
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Fatalf("❌ Error al arrancar el servidor: %v", err)
+		}
+	}()
+
+	// 10. Apagado ordenado ante SIGINT (Ctrl+C) o SIGTERM (systemctl stop / deploy):
+	//     se dejan de aceptar requests, se cortan los streams SSE, se terminan los
+	//     requests en curso y se espera a que los workers terminen su consulta.
+	//     Las tareas sin terminar quedan RUNNING y el reconciliador las retoma al arrancar.
+	<-ctx.Done()
+	stop() // un segundo Ctrl+C mata el proceso al instante
+	log.Println("🛑 Señal de apagado recibida: cerrando la API...")
+	ctxApagado, cancelar := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancelar()
+	if err := srv.Shutdown(ctxApagado); err != nil {
+		log.Printf("⚠️  El servidor HTTP no cerró a tiempo: %v", err)
 	}
+	if err := seguimientoTareas.Esperar(ctxApagado); err != nil {
+		log.Printf("⚠️  El seguimiento de tareas no terminó a tiempo: %v", err)
+	}
+	log.Println("👋 API detenida")
+}
+
+// enteroDeEntorno lee una variable de entorno entera y positiva, con un default.
+func enteroDeEntorno(nombre string, defecto int) int {
+	v := os.Getenv(nombre)
+	if v == "" {
+		return defecto
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n <= 0 {
+		log.Fatalf("❌ %s inválida (%q): debe ser un entero mayor a 0", nombre, v)
+	}
+	return n
 }
 
 // conectarRedis inicializa el almacén clave-valor y Pub/Sub del backend

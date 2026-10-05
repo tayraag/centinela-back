@@ -74,3 +74,13 @@ func (r *TareaRepository) BuscarTareasActivasPorVmids(ctx context.Context, vmids
 	}
 	return resultado, nil
 }
+
+// ListarEnCurso devuelve las tareas RUNNING, de la más vieja a la más nueva.
+func (r *TareaRepository) ListarEnCurso(ctx context.Context) ([]domain.TareaAsincrona, error) {
+	var tareas []domain.TareaAsincrona
+	if err := r.db.WithContext(ctx).Where("estado = ?", ports.TareaRunning).
+		Order("fecha_creacion ASC").Find(&tareas).Error; err != nil {
+		return nil, fmt.Errorf("error al listar tareas en curso: %w", err)
+	}
+	return tareas, nil
+}

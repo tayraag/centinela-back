@@ -102,6 +102,9 @@ func (seguimientoNulo) Seguir(context.Context, uuid.UUID, int, string, string) (
 
 type mockTareaRepository struct{}
 func (m *mockTareaRepository) Crear(context.Context, *domain.TareaAsincrona) error { return nil }
+func (m *mockTareaRepository) ListarEnCurso(context.Context) ([]domain.TareaAsincrona, error) {
+	return nil, nil
+}
 func (m *mockTareaRepository) ActualizarEstado(context.Context, uuid.UUID, string) error { return nil }
 func (m *mockTareaRepository) BuscarTareasActivasPorVmids(context.Context, []int) (map[int]string, error) {
 	return map[int]string{}, nil

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"sync"
 	"time"
 
 	"el-centinela/internal/adapters/primary/http/middleware"
@@ -22,11 +23,22 @@ var latidoSSE = 25 * time.Second
 // EventsHandler expone el canal de eventos en tiempo real (RF-11) por SSE.
 type EventsHandler struct {
 	service ports.EventosService
+
+	apagado chan struct{} // se cierra al apagar la API: corta todos los streams
+	una     sync.Once
 }
 
 // NewEventsHandler crea el handler del canal de eventos.
 func NewEventsHandler(service ports.EventosService) *EventsHandler {
-	return &EventsHandler{service: service}
+	return &EventsHandler{service: service, apagado: make(chan struct{})}
+}
+
+// CerrarStreams corta todos los streams abiertos. Se llama al apagar la API: si
+// no, el apagado ordenado del servidor HTTP esperaría para siempre a conexiones
+// que no terminan. EventSource reconecta y, con el ticket consumido, el front
+// pide uno nuevo (ver docs/eventos-tiempo-real.md).
+func (h *EventsHandler) CerrarStreams() {
+	h.una.Do(func() { close(h.apagado) })
 }
 
 // ==========================================
@@ -128,6 +140,8 @@ func (h *EventsHandler) Stream(c *gin.Context) {
 			escribir(c, ": ping\n\n")
 		case <-c.Request.Context().Done():
 			return // el cliente cerró la conexión
+		case <-h.apagado:
+			return // la API se está apagando
 		}
 	}
 }
