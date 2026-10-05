@@ -2,6 +2,7 @@ package services_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sync"
 	"testing"
@@ -69,11 +70,16 @@ func (r *tareasEnMemoria) Crear(_ context.Context, t *domain.TareaAsincrona) err
 	r.tareas[t.ID] = &copia
 	return nil
 }
-func (r *tareasEnMemoria) ActualizarEstado(_ context.Context, id uuid.UUID, estado string) error {
+func (r *tareasEnMemoria) ActualizarEstado(_ context.Context, id uuid.UUID, estado string, metadatos map[string]any) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if t, ok := r.tareas[id]; ok {
 		t.Estado = estado
+		if metadatos != nil {
+			crudo, _ := json.Marshal(metadatos)
+			texto := string(crudo)
+			t.Metadatos = &texto
+		}
 		return nil
 	}
 	return errors.New("no existe")
@@ -91,6 +97,16 @@ func (r *tareasEnMemoria) ListarEnCurso(context.Context) ([]domain.TareaAsincron
 		}
 	}
 	return lista, nil
+}
+func (r *tareasEnMemoria) metadatos(id uuid.UUID) map[string]any {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.tareas[id].Metadatos == nil {
+		return nil
+	}
+	var m map[string]any
+	_ = json.Unmarshal([]byte(*r.tareas[id].Metadatos), &m)
+	return m
 }
 func (r *tareasEnMemoria) estado(id uuid.UUID) string {
 	r.mu.Lock()

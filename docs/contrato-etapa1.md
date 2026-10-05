@@ -410,7 +410,9 @@ aplican valen `null`, nunca se omiten:
 - `PROXMOX_ERROR`: Proxmox terminó la tarea con un `exitstatus` distinto de
   `OK`. `exitstatus` y `error` traen el texto de Proxmox.
 - `TIMEOUT`: Proxmox no dio por terminada la tarea en 10 minutos desde que se
-  creó. `exitstatus` es `null` y `error` lo explica.
+  creó, o el backend se reinició y, al arrancar, la tarea ya tenía más de 3
+  minutos y Proxmox no la había terminado. `exitstatus` es `null` y `error` lo
+  explica.
 
 Sus dos formas concretas son:
 
@@ -443,7 +445,7 @@ Sus dos formas concretas son:
 
 ```json
 { "tareaId": "3f2504e0-4f89-11d3-9a0c-0305e82c3302", "accion": "STOP", "estado": "FAILED", "exitstatus": "CT 201 not running", "motivo": "PROXMOX_ERROR", "error": "CT 201 not running" }
-{ "tareaId": "3f2504e0-4f89-11d3-9a0c-0305e82c3304", "accion": "START", "estado": "FAILED", "exitstatus": null, "motivo": "TIMEOUT", "error": "Proxmox no dio por terminada la tarea a tiempo" }
+{ "tareaId": "3f2504e0-4f89-11d3-9a0c-0305e82c3304", "accion": "START", "estado": "FAILED", "exitstatus": null, "motivo": "TIMEOUT", "error": "Excedido el límite máximo de ejecución de 3 minutos" }
 ```
 
 ### Entrada de solo documentación en Swagger

@@ -25,8 +25,9 @@ type proxmoxPool struct {
 	enVuelo     atomic.Int32
 	maxEnVuelo  atomic.Int32
 	consultas   atomic.Int32
-	bloqueo     chan struct{} // si no es nil, cada consulta espera a que se cierre
-	ctxCortados atomic.Int32  // consultas cuyo contexto llegó cancelado
+	bloqueo     chan struct{}  // si no es nil, cada consulta espera a que se cierre
+	ctxCortados atomic.Int32   // consultas cuyo contexto llegó cancelado
+	porUpid     map[string]int // consultas recibidas por cada UPID
 }
 
 func (p *proxmoxPool) EstadoTarea(ctx context.Context, upid string) (*ports.EstadoTareaDTO, error) {
@@ -48,6 +49,10 @@ func (p *proxmoxPool) EstadoTarea(ctx context.Context, upid string) (*ports.Esta
 	}
 	p.mu.Lock()
 	fin, ok := p.finTarea[upid]
+	if p.porUpid == nil {
+		p.porUpid = map[string]int{}
+	}
+	p.porUpid[upid]++
 	p.mu.Unlock()
 	if !ok {
 		return nil, ports.ErrProxmoxNoDisponible
@@ -270,5 +275,100 @@ func TestPool_AuditaElResultadoFinal(t *testing.T) {
 	reg := e.audit.buscar("SHUTDOWN")
 	if reg == nil || reg.Resultado != ports.ResultadoExito || reg.InstanciaID != "110" || reg.Detalles["tareaId"] != id.String() {
 		t.Errorf("Auditoría del final de la tarea: %+v", reg)
+	}
+}
+
+func (p *proxmoxPool) consultasDe(upid string) int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.porUpid[upid]
+}
+
+// RNF-04: al arrancar, las tareas RUNNING de hasta 3 minutos se reanudan; las
+// más viejas se consultan UNA sola vez y, si no terminaron, quedan FAILED con
+// motivo TIMEOUT. Todas terminan auditadas, con TASK_FINISHED y sin quedar RUNNING.
+func TestPool_RecuperacionAlArrancar(t *testing.T) {
+	px := &proxmoxPool{}
+	e := nuevoEntornoPool(t, services.ConfigSeguimiento{Intervalo: 20 * time.Millisecond, IntervaloReconciliar: 50 * time.Millisecond}, px)
+	nueva := func(accion string, edad time.Duration, finProxmox *time.Time) domain.TareaAsincrona {
+		tarea := domain.TareaAsincrona{
+			ID: uuid.New(), UsuarioID: uuid.New(), UpidProxmox: "UPID:proxmox:" + uuid.NewString() + ":qm" + accion + ":110:x:",
+			InstanciaID: "110", Accion: accion, Estado: ports.TareaRunning, FechaCreacion: time.Now().Add(-edad),
+		}
+		if finProxmox != nil {
+			px.tarea(tarea.UpidProxmox, *finProxmox)
+		}
+		_ = e.repo.Crear(context.Background(), &tarea)
+		return tarea
+	}
+	enCurso := time.Now().Add(300 * time.Millisecond) // termina mientras se la sigue
+	yaTermino := time.Now().Add(-time.Minute)         // terminó con la API apagada
+	nunca := time.Now().Add(time.Hour)                // sigue corriendo en Proxmox
+
+	reciente := nueva("start", 2*time.Minute, &enCurso)
+	viejaTerminada := nueva("stop", 5*time.Minute, &yaTermino)
+	viejaCorriendo := nueva("shutdown", 5*time.Minute, &nunca)
+	viejaSinRespuesta := nueva("reboot", 5*time.Minute, nil) // Proxmox no la conoce
+
+	e.iniciar(t)
+	eventos := e.esperarEventos(t, 4, 5*time.Second)
+	time.Sleep(200 * time.Millisecond) // el reconciliador no debe volver a tocarlas
+
+	porTarea := map[string]ports.RealtimeEvent{}
+	for _, ev := range eventos {
+		porTarea[ev.Detalles["tareaId"].(string)] = ev
+	}
+	if len(porTarea) != 4 {
+		t.Fatalf("Se esperaba un TASK_FINISHED por tarea, vinieron %d eventos para %d tareas", len(eventos), len(porTarea))
+	}
+
+	if e.repo.estado(reciente.ID) != ports.TareaCompleted || px.consultasDe(reciente.UpidProxmox) < 2 {
+		t.Errorf("La reciente debe reanudar el sondeo y completarse: %s, %d consultas", e.repo.estado(reciente.ID), px.consultasDe(reciente.UpidProxmox))
+	}
+	if e.repo.estado(viejaTerminada.ID) != ports.TareaCompleted || e.repo.metadatos(viejaTerminada.ID) != nil {
+		t.Errorf("La vieja que Proxmox ya terminó debe quedar COMPLETED sin metadatos: %s %v", e.repo.estado(viejaTerminada.ID), e.repo.metadatos(viejaTerminada.ID))
+	}
+	for _, tarea := range []domain.TareaAsincrona{viejaTerminada, viejaCorriendo, viejaSinRespuesta} {
+		if n := px.consultasDe(tarea.UpidProxmox); n != 1 {
+			t.Errorf("La tarea vieja %s debe consultarse una sola vez, se consultó %d", tarea.Accion, n)
+		}
+	}
+	const mensaje = "Excedido el límite máximo de ejecución de 3 minutos"
+	for _, tarea := range []domain.TareaAsincrona{viejaCorriendo, viejaSinRespuesta} {
+		if e.repo.estado(tarea.ID) != ports.TareaFailed {
+			t.Errorf("%s: debe quedar FAILED, quedó %s", tarea.Accion, e.repo.estado(tarea.ID))
+		}
+		if m := e.repo.metadatos(tarea.ID); m["motivo"] != "TIMEOUT" || m["error"] != mensaje || len(m) != 2 {
+			t.Errorf("%s: metadatos JSONB = %v", tarea.Accion, m)
+		}
+		d := porTarea[tarea.ID.String()].Detalles
+		if d["motivo"] != "TIMEOUT" || d["error"] != mensaje || d["exitstatus"] != nil {
+			t.Errorf("%s: TASK_FINISHED = %v", tarea.Accion, d)
+		}
+	}
+	for _, accion := range []string{"START", "STOP", "SHUTDOWN", "REBOOT"} {
+		if e.audit.buscar(accion) == nil {
+			t.Errorf("Falta la auditoría final de %s", accion)
+		}
+	}
+	if pendientes, _ := e.repo.ListarEnCurso(context.Background()); len(pendientes) != 0 {
+		t.Errorf("No debe quedar ninguna tarea RUNNING: %d", len(pendientes))
+	}
+}
+
+// Durante el seguimiento normal el límite sigue siendo de 10 minutos: una
+// tarea reanudada de 2 minutos no vence al pasar los 3.
+func TestPool_SeguimientoNormalNoUsaLaVentanaDe3Minutos(t *testing.T) {
+	px := &proxmoxPool{}
+	e := nuevoEntornoPool(t, services.ConfigSeguimiento{Intervalo: 20 * time.Millisecond, VentanaRecuperacion: 50 * time.Millisecond}, px)
+	upid := "UPID:proxmox:0:0:0:qmstart:110:x:"
+	px.tarea(upid, time.Now().Add(400*time.Millisecond))
+	tarea := domain.TareaAsincrona{ID: uuid.New(), UsuarioID: uuid.New(), UpidProxmox: upid, InstanciaID: "110",
+		Accion: "start", Estado: ports.TareaRunning, FechaCreacion: time.Now()}
+	_ = e.repo.Crear(context.Background(), &tarea)
+	e.iniciar(t)
+	e.esperarEventos(t, 1, 3*time.Second)
+	if e.repo.estado(tarea.ID) != ports.TareaCompleted {
+		t.Errorf("Superó la ventana de recuperación mientras se la seguía y no debía vencer: %s", e.repo.estado(tarea.ID))
 	}
 }

@@ -117,6 +117,10 @@ type TareaAsincrona struct {
 	Accion      string `gorm:"type:varchar(100)" json:"accion"`
 	Estado      string `gorm:"type:varchar(50);not null" json:"estado"` // RUNNING, COMPLETED, FAILED
 
+	// Metadatos del cierre de una tarea FAILED: {"motivo": "PROXMOX_ERROR" | "TIMEOUT", "error": "..."}.
+	// NULL mientras corre y en las COMPLETED.
+	Metadatos *string `gorm:"type:jsonb" json:"metadatos,omitempty"`
+
 	FechaCreacion time.Time `gorm:"default:now()" json:"fechaCreacion"`
 }
 

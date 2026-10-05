@@ -14,8 +14,9 @@ type TareaRepository interface {
 	// Crear inserta la tarea (estado RUNNING).
 	Crear(ctx context.Context, tarea *domain.TareaAsincrona) error
 
-	// ActualizarEstado guarda el estado final (COMPLETED | FAILED).
-	ActualizarEstado(ctx context.Context, id uuid.UUID, estado string) error
+	// ActualizarEstado guarda el estado final (COMPLETED | FAILED) y, si no es
+	// nil, los metadatos del cierre en la columna JSONB metadatos.
+	ActualizarEstado(ctx context.Context, id uuid.UUID, estado string, metadatos map[string]any) error
 
 	// BuscarTareasActivasPorVmids devuelve un mapa vmid → tarea en curso
 	// (tareaId, acción en mayúsculas y estado RUNNING) de cualquiera de los

@@ -94,14 +94,19 @@ Como se consulta en vivo, **si un admin le quita un permiso a un operador, deja 
 | Error de Proxmox | `WARNING` | `La tarea de apagado falló` | `estado: FAILED`, `motivo: PROXMOX_ERROR`, `exitstatus` y `error` con el mensaje de Proxmox |
 | Vencida | `WARNING` | `La tarea de encendido falló` | `estado: FAILED`, `motivo: TIMEOUT`, `exitstatus: null`, `error` explicando que venció |
 
-`detalles` lleva siempre las seis claves (`tareaId`, `accion` en mayúsculas, `estado`, `exitstatus`, `motivo`, `error`), con `null` en las que no aplican. Una tarea vence si Proxmox no la da por terminada en 10 minutos (desde que se creó). El UPID **no** viaja al front.
+`detalles` lleva siempre las seis claves (`tareaId`, `accion` en mayúsculas, `estado`, `exitstatus`, `motivo`, `error`), con `null` en las que no aplican. Una tarea vence si Proxmox no la da por terminada en 10 minutos (desde que se creó), o si al arrancar la API ya tenía más de 3 minutos y Proxmox no la había terminado (ver abajo). En los dos casos `error` dice `Excedido el límite máximo de ejecución de N minutos`. El UPID **no** viaja al front.
 
 ### El pool de seguimiento (`internal/core/services/seguimiento_tareas.go`)
 
 - **Consultas acotadas:** solo `UPID_WORKERS` workers (default 8) le consultan a Proxmox, así que nunca hay más consultas simultáneas que eso, aunque haya decenas de tareas en curso. Cada worker consulta una tarea **una vez** y, si no terminó, la vuelve a encolar para dentro de 1 s: todas las tareas avanzan a la par.
 - **No bloquea el request:** si la cola (100 lugares) está llena, la tarea igual queda `RUNNING` en la base y la toma el reconciliador.
-- **Reconciliador:** cada 5 s (y al arrancar) encola las tareas `RUNNING` de la base que no se están siguiendo: las que no entraron por cola llena y las que quedaron de un reinicio de la API. Las que ya pasaron el límite de 10 minutos se cierran como `FAILED`.
-- **Apagado ordenado:** ante `SIGINT` (Ctrl+C) o `SIGTERM` (`systemctl stop`, deploy) la API deja de aceptar requests, cierra los streams SSE (el front reconecta con un ticket nuevo), termina los requests en curso y espera a que cada worker termine su consulta. Las tareas sin terminar quedan `RUNNING` y el reconciliador las retoma en el próximo arranque, así que su `TASK_FINISHED` se publica igual.
+- **Recuperación al arrancar (RNF-04):** al levantar la API (después de conectar Postgres y Redis, antes de aceptar requests) se leen las tareas `RUNNING` que quedaron de una caída, un reinicio o un deploy:
+  - **Creadas hace 3 minutos o menos:** se reencolan y siguen el sondeo normal.
+  - **Más viejas:** se consultan a Proxmox **una sola vez**. Si ya terminaron mientras la API estaba apagada, se registra el resultado real (`COMPLETED`, o `FAILED` con `PROXMOX_ERROR`). Si siguen corriendo o Proxmox no responde, quedan `FAILED` con `motivo: TIMEOUT` y `error: "Excedido el límite máximo de ejecución de 3 minutos"`.
+  - En todos los casos se actualiza `tareas_asincronas`, se audita y se publica `TASK_FINISHED`: no queda ninguna colgada.
+- **Reconciliador:** cada 5 s encola las tareas `RUNNING` de la base que no se están siguiendo (por ejemplo, las que no entraron por cola llena). Las que ya pasaron el límite de 10 minutos se cierran como `FAILED`.
+- **Metadatos:** al cerrar una tarea `FAILED` se guarda `{ "motivo", "error" }` en la columna JSONB `tareas_asincronas.metadatos`; en las `COMPLETED` queda `NULL`.
+- **Apagado ordenado:** ante `SIGINT` (Ctrl+C) o `SIGTERM` (`systemctl stop`, deploy) la API deja de aceptar requests, cierra los streams SSE (el front reconecta con un ticket nuevo), termina los requests en curso y espera a que cada worker termine su consulta. Las tareas sin terminar quedan `RUNNING` y se recuperan en el próximo arranque, así que su `TASK_FINISHED` se publica igual. Lo mismo pasa si la API se cae sin apagado ordenado (`kill -9`, corte de luz).
 
 ## Cómo funciona por dentro (para el back)
 

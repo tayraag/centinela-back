@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -33,10 +34,18 @@ func (r *TareaRepository) Crear(ctx context.Context, tarea *domain.TareaAsincron
 	return nil
 }
 
-// ActualizarEstado guarda el estado final de la tarea.
-func (r *TareaRepository) ActualizarEstado(ctx context.Context, id uuid.UUID, estado string) error {
+// ActualizarEstado guarda el estado final de la tarea y sus metadatos (JSONB).
+func (r *TareaRepository) ActualizarEstado(ctx context.Context, id uuid.UUID, estado string, metadatos map[string]any) error {
+	cambios := map[string]any{"estado": estado}
+	if metadatos != nil {
+		crudo, err := json.Marshal(metadatos)
+		if err != nil {
+			return fmt.Errorf("error al serializar metadatos de la tarea: %w", err)
+		}
+		cambios["metadatos"] = string(crudo)
+	}
 	if err := r.db.WithContext(ctx).Model(&domain.TareaAsincrona{}).Where("id = ?", id).
-		Update("estado", estado).Error; err != nil {
+		Updates(cambios).Error; err != nil {
 		return fmt.Errorf("error al actualizar tarea: %w", err)
 	}
 	return nil

@@ -82,7 +82,7 @@ No es un campo propio del evento: viaja dentro de `detalles` en los eventos
 | Constante Go       | Valor         | Significado                                              |
 |--------------------|---------------|----------------------------------------------------------|
 | MotivoProxmoxError | PROXMOX_ERROR | Proxmox terminó la tarea con error (`exitstatus` ≠ `OK`) |
-| MotivoTimeout      | TIMEOUT       | Proxmox no la dio por terminada en 10 minutos            |
+| MotivoTimeout      | TIMEOUT       | No terminó en 10 min (3 al recuperarla tras un reinicio) |
 
 ## Ejemplos
 

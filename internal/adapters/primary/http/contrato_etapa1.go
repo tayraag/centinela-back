@@ -135,7 +135,8 @@ type TaskSuccess struct {
 //
 //   - `motivo` PROXMOX_ERROR: Proxmox terminó la tarea con error; `exitstatus`
 //     y `error` traen su texto.
-//   - `motivo` TIMEOUT: Proxmox no la dio por terminada en 10 minutos;
+//   - `motivo` TIMEOUT: Proxmox no la dio por terminada en 10 minutos (3 si
+//     se recuperó al reiniciar el backend);
 //     `exitstatus` es null y `error` lo explica.
 type TaskFailed struct {
 	TareaID    string  `json:"tareaId" binding:"required" example:"3f2504e0-4f89-11d3-9a0c-0305e82c3301"`
