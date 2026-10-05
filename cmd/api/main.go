@@ -148,6 +148,7 @@ func main() {
 	seguimientoTareas := services.NewSeguimientoTareas(proxmoxClient, postgres.NewTareaRepository(db), eventosService, time.Second)
 	instanceHandler := httpHandlers.NewInstanceHandler(proxmoxClient, userRepo, seguimientoTareas, postgres.NewTareaRepository(db), auditService)
 	eventsHandler := httpHandlers.NewEventsHandler(eventosService)
+	nodeHandler := httpHandlers.NewNodeHandler(services.NewNodoService(proxmoxClient, kvStore, valorODefecto(os.Getenv("PROXMOX_NODE"), "proxmox")))
 
 	// 6. Configurar el Router HTTP (Gin)
 	// Usamos gin.New() para tener control total sobre los middlewares.
@@ -257,6 +258,9 @@ func main() {
 		// (de un solo uso), así el JWT nunca viaja en la URL.
 		// ==========================================
 		api.POST("/events/ticket", middleware.RequireAuth(authService), eventsHandler.EmitirTicket)
+
+		// Estado consolidado del nodo (ADMIN y OPERATOR), con caché en Redis
+		api.GET("/node/status", middleware.RequireAuth(authService), nodeHandler.ObtenerEstado)
 		api.GET("/events", eventsHandler.Stream)
 
 		// ==========================================
@@ -320,4 +324,11 @@ func conectarRedis() ports.KeyValueStore {
 	}
 	log.Println("[INFO] Conexión con Redis establecida exitosamente.")
 	return store
+}
+
+func valorODefecto(v, defecto string) string {
+	if v == "" {
+		return defecto
+	}
+	return v
 }

@@ -382,3 +382,41 @@ func (c *Client) EstadoTarea(ctx context.Context, upid string) (*ports.EstadoTar
 	}
 	return &ports.EstadoTareaDTO{Terminada: parsed.Data.Status == "stopped", ExitStatus: parsed.Data.ExitStatus}, nil
 }
+
+type estadoNodoResponse struct {
+	Data struct {
+		CPU     float64 `json:"cpu"`
+		Uptime  int64   `json:"uptime"`
+		CPUInfo struct {
+			CPUs int `json:"cpus"`
+		} `json:"cpuinfo"`
+		Memory struct {
+			Total int64 `json:"total"`
+			Used  int64 `json:"used"`
+		} `json:"memory"`
+		RootFS struct {
+			Total int64 `json:"total"`
+			Used  int64 `json:"used"`
+		} `json:"rootfs"`
+	} `json:"data"`
+}
+
+// ObtenerEstadoNodo consulta GET /nodes/{node}/status: CPU, memoria, disco raíz
+// y uptime del hipervisor (ver captura RF-02 en "API proxmox respuestas/").
+func (c *Client) ObtenerEstadoNodo(ctx context.Context, node string) (*ports.NodeStatusDTO, error) {
+	raw, err := c.doRequest(ctx, http.MethodGet, fmt.Sprintf("/api2/json/nodes/%s/status", url.PathEscape(node)), nil)
+	if err != nil {
+		return nil, err
+	}
+	var parsed estadoNodoResponse
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return nil, fmt.Errorf("%w: respuesta de estado del nodo inválida: %v", ports.ErrProxmoxNoDisponible, err)
+	}
+	d := parsed.Data
+	return &ports.NodeStatusDTO{
+		CPU: d.CPU, CPUs: d.CPUInfo.CPUs,
+		MemTotal: d.Memory.Total, MemUsada: d.Memory.Used,
+		DiscoTotal: d.RootFS.Total, DiscoUsado: d.RootFS.Used,
+		UptimeSegs: d.Uptime,
+	}, nil
+}

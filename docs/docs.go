@@ -1757,7 +1757,7 @@ const docTemplate = `{
                         }
                     },
                     "403": {
-                        "description": "WRONG_TOKEN_TYPE | 2FA_REQUIRED | PASSWORD_CHANGE_REQUIRED | NO_ROLE | NO_USER | INVALID_USER_ID | INSTANCE_ACCESS_DENIED — el OPERATOR no tiene FULL_ACCESS sobre este vmid",
+                        "description": "WRONG_TOKEN_TYPE | 2FA_REQUIRED | PASSWORD_CHANGE_REQUIRED | NO_ROLE | NO_USER | INVALID_USER_ID | INSTANCE_ACCESS_DENIED — el OPERATOR no tiene FULL_ACCESS sobre este vmid | INSTANCE_PROTECTED — infraestructura de El Centinela",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -1769,7 +1769,7 @@ const docTemplate = `{
                         }
                     },
                     "409": {
-                        "description": "INSTANCE_BUSY — la instancia está ejecutando otra tarea; reintentar al recibir TASK_FINISHED",
+                        "description": "INSTANCE_INVALID_STATE — la instancia no está stopped | INSTANCE_BUSY — la instancia está ejecutando otra tarea; reintentar al recibir TASK_FINISHED",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -1858,7 +1858,7 @@ const docTemplate = `{
                         }
                     },
                     "409": {
-                        "description": "INSTANCE_BUSY — la instancia está ejecutando otra tarea; reintentar al recibir TASK_FINISHED",
+                        "description": "INSTANCE_INVALID_STATE — start exige stopped; stop, shutdown y reboot exigen running | INSTANCE_BUSY — la instancia está ejecutando otra tarea; reintentar al recibir TASK_FINISHED",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -1940,7 +1940,7 @@ const docTemplate = `{
                         }
                     },
                     "409": {
-                        "description": "INSTANCE_BUSY — la instancia está ejecutando otra tarea; reintentar al recibir TASK_FINISHED",
+                        "description": "INSTANCE_INVALID_STATE — la instancia no está running | INSTANCE_BUSY — la instancia está ejecutando otra tarea; reintentar al recibir TASK_FINISHED",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -1973,14 +1973,14 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "PLANIFICADO; NO OPERATIVO. Contrato objetivo para ADMIN y OPERATOR autenticados. La ruta no está registrada y actualmente responde 404 NOT_FOUND.",
+                "description": "OPERATIVO. Disponible para ADMIN y OPERATOR autenticados (no se filtra por permisos de instancia). La lectura se cachea en Redis 10 s (node:status:current): mientras está vigente se responde sin consultar Proxmox. Si Proxmox no responde se devuelve la última lectura conocida (node:status:last_known) con ` + "`" + `stale: true` + "`" + `; ` + "`" + `fetchedAt` + "`" + ` indica cuándo se obtuvo. Solo si no hay ninguna lectura previa responde 502 o 504. RAM y almacenamiento en GB (1024³ bytes) con 2 decimales; ` + "`" + `storage` + "`" + ` es el disco raíz del nodo; ` + "`" + `cores` + "`" + ` son los hilos lógicos sobre los que se calcula ` + "`" + `usagePercent` + "`" + `.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "Estado del nodo"
                 ],
-                "summary": "Consultar estado consolidado del nodo (planificado)",
+                "summary": "Consultar estado consolidado del nodo",
                 "responses": {
                     "200": {
                         "description": "OK",
@@ -1995,13 +1995,24 @@ const docTemplate = `{
                         }
                     },
                     "403": {
-                        "description": "WRONG_TOKEN_TYPE | 2FA_REQUIRED | PASSWORD_CHANGE_REQUIRED | INSUFFICIENT_PERMISSIONS",
+                        "description": "WRONG_TOKEN_TYPE | 2FA_REQUIRED | PASSWORD_CHANGE_REQUIRED",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "502": {
+                        "description": "PROXMOX_UNAVAILABLE — Proxmox caído, sin red o token rechazado, y sin lectura previa",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "504": {
+                        "description": "PROXMOX_TIMEOUT — Proxmox no respondió a tiempo y no hay lectura previa",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
                     }
-                },
-                "x-implementation-status": "planned"
+                }
             }
         },
         "/roles": {

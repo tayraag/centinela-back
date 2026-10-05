@@ -58,6 +58,10 @@ func (m *mockProxmoxPort) DetenerInstancia(ctx context.Context, vmid int) (strin
 	return "UPID:test:stop", nil
 }
 
+func (m *mockProxmoxPort) ObtenerEstadoNodo(context.Context, string) (*ports.NodeStatusDTO, error) {
+	return &ports.NodeStatusDTO{}, nil
+}
+
 func (m *mockProxmoxPort) EstadoTarea(ctx context.Context, upid string) (*ports.EstadoTareaDTO, error) {
 	return &ports.EstadoTareaDTO{Terminada: true, ExitStatus: "OK"}, nil
 }

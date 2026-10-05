@@ -111,6 +111,22 @@ type ProxmoxPort interface {
 
 	// EstadoTarea consulta GET /nodes/{node}/tasks/{upid}/status.
 	EstadoTarea(ctx context.Context, upid string) (*EstadoTareaDTO, error)
+
+	// ObtenerEstadoNodo consulta GET /nodes/{node}/status (salud física del hipervisor).
+	ObtenerEstadoNodo(ctx context.Context, node string) (*NodeStatusDTO, error)
+}
+
+// NodeStatusDTO es el estado físico del nodo tal como lo informa Proxmox, sin
+// normalizar (bytes y fracciones). La normalización a GB y porcentajes la hace
+// el servicio de estado del nodo.
+type NodeStatusDTO struct {
+	CPU        float64 // uso de CPU: fracción [0,1] sobre CPUs
+	CPUs       int     // hilos lógicos (cpuinfo.cpus): sobre estos se calcula CPU
+	MemTotal   int64   // bytes
+	MemUsada   int64   // bytes
+	DiscoTotal int64   // bytes del rootfs del nodo
+	DiscoUsado int64   // bytes del rootfs del nodo
+	UptimeSegs int64
 }
 
 // EstadoTareaDTO es el estado de una tarea asíncrona de Proxmox.

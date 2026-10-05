@@ -943,3 +943,21 @@ func TestRed_ResolverIPsDelInventario(t *testing.T) {
 		}
 	}
 }
+
+// El cliente del backend lee GET /nodes/{node}/status del simulador (valores de la captura).
+func TestContrato_ClienteDelBackend_EstadoNodo(t *testing.T) {
+	e := nuevoEntorno(t, "")
+	estado, err := e.cliente().ObtenerEstadoNodo(context.Background(), "proxmox")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if estado.CPUs != 12 || estado.MemTotal != 16423432192 || estado.DiscoTotal != 72722055168 || estado.UptimeSegs < 199252 {
+		t.Errorf("Estado del nodo inesperado: %+v", estado)
+	}
+	if estado.MemUsada <= 0 || estado.DiscoUsado <= 0 || estado.CPU <= 0 || estado.CPU >= 1 {
+		t.Errorf("Uso de memoria, disco y CPU debe ser coherente: %+v", estado)
+	}
+	if _, err := e.cliente().ObtenerEstadoNodo(context.Background(), "pve"); err == nil {
+		t.Error("Un nodo inexistente debe dar error")
+	}
+}

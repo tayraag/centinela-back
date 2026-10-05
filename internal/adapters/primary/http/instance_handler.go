@@ -170,19 +170,6 @@ func mapearErrorProxmox(c *gin.Context, err error) {
 // @Failure      504 {object} ErrorResponse "PROXMOX_TIMEOUT — Proxmox no respondió a tiempo; la acción puede haberse aplicado"
 // @Router       /instances [get]
 func (h *InstanceHandler) ListarInstancias(c *gin.Context) {
-	// Operación exclusivamente documental: la ruta NO está registrada todavía y hoy
-	// responde 404 NOT_FOUND. El contrato objetivo vive aquí para que Swagger lo publique.
-	// @Summary      Consultar estado consolidado del nodo (planificado)
-	// @Description  PLANIFICADO; NO OPERATIVO. Contrato objetivo para ADMIN y OPERATOR autenticados. La ruta no está registrada y actualmente responde 404 NOT_FOUND.
-	// @Tags         Estado del nodo
-	// @Produce      json
-	// @Security     BearerAuth
-	// @Success      200 {object} EstadoNodeResponse
-	// @Failure      401 {object} ErrorResponse "MISSING_TOKEN | INVALID_TOKEN | TOKEN_REVOKED"
-	// @Failure      403 {object} ErrorResponse "WRONG_TOKEN_TYPE | 2FA_REQUIRED | PASSWORD_CHANGE_REQUIRED | INSUFFICIENT_PERMISSIONS"
-	// @x-implementation-status "planned"
-	// @Router       /node/status [get]
-
 	instancias, err := h.proxmox.ListarInstancias(c.Request.Context())
 	if err != nil {
 		mapearErrorProxmox(c, err)

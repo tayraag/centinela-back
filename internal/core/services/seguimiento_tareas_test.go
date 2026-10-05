@@ -23,6 +23,10 @@ type proxmoxTareas struct {
 	tipo       string
 }
 
+func (p *proxmoxTareas) ObtenerEstadoNodo(context.Context, string) (*ports.NodeStatusDTO, error) {
+	return &ports.NodeStatusDTO{}, nil
+}
+
 func (p *proxmoxTareas) EstadoTarea(context.Context, string) (*ports.EstadoTareaDTO, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()

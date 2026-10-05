@@ -6,20 +6,17 @@ La lectura de inventario `GET /api/instances` está **operativa**. Devuelve las
 VM y los contenedores visibles para cualquier usuario autenticado con rol
 `ADMIN` u `OPERATOR`, incluida su telemetría actual.
 
-La lectura consolidada `GET /api/node/status` está **planificada**. La definición
-de este documento y Swagger fija el contrato objetivo, pero la ruta todavía no
-está registrada y hoy responde `404 NOT_FOUND`. El frontend no debe invocarla
-como una capacidad disponible hasta que una etapa posterior anuncie su
-implementación.
+La lectura consolidada `GET /api/node/status` también está **operativa**: lee la
+salud física del hipervisor y la cachea en Redis.
 
-Ambas operaciones usarán `Authorization: Bearer <accessToken>`. Un `ADMIN` puede
+Ambas operaciones usan `Authorization: Bearer <accessToken>`. Un `ADMIN` puede
 consultar todo el inventario; un `OPERATOR` recibe solo las instancias que tiene
 asignadas. El estado consolidado del nodo no agrega un filtro por instancia y
-estará disponible para ambos roles autenticados.
+está disponible para ambos roles autenticados.
 
-## Estado consolidado del nodo — planificado
+## Estado consolidado del nodo — operativo
 
-`GET /api/node/status` tendrá una respuesta `200 application/json` con:
+`GET /api/node/status` responde `200 application/json` con:
 
 - `cpu`: `usagePercent` entre 0 y 100 y `cores` como cantidad de núcleos.
 - `ram` y `storage`: `usedGb`, `totalGb` y `usagePercent` entre 0 y 100.
@@ -30,7 +27,23 @@ estará disponible para ambos roles autenticados.
   renovarse; `false` cuando la lectura está vigente.
 - `fetchedAt`: instante de obtención de la lectura en formato RFC3339.
 
-Todos los campos son obligatorios y no admiten `null`.
+Todos los campos son obligatorios y no admiten `null`. RAM y almacenamiento se
+expresan en GB de 1024³ bytes con 2 decimales; `storage` es el disco raíz del
+nodo. `cores` son los hilos lógicos del nodo, sobre los que Proxmox calcula
+`cpu.usagePercent`.
+
+**Caché y lecturas degradadas.** La lectura se guarda en Redis con dos claves:
+`node:status:current` (TTL de 10 s) y `node:status:last_known` (sin TTL).
+
+- Mientras `node:status:current` está vigente se responde sin consultar
+  Proxmox, con `stale: false`.
+- Al vencer se consulta Proxmox; si responde, se actualizan ambas claves y se
+  devuelve la lectura nueva con `stale: false`.
+- Si Proxmox no responde y existe `node:status:last_known`, se devuelve esa
+  lectura con `stale: true`; `fetchedAt` indica cuándo se obtuvo, para que el
+  frontend muestre su antigüedad.
+- Solo si Proxmox no responde y no hay ninguna lectura previa, se responde
+  `502 PROXMOX_UNAVAILABLE` o `504 PROXMOX_TIMEOUT`.
 
 ```json
 {

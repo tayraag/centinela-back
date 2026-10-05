@@ -21,15 +21,18 @@ func TestContratoEtapa1(t *testing.T) {
 	}
 
 	paths := objeto(t, swagger, "paths")
+	// GET /node/status pasó de planificado a operativo (adaptador de telemetría del nodo).
 	nodeStatus := objeto(t, objeto(t, paths, "/node/status"), "get")
-	if estado := cadena(t, nodeStatus, "x-implementation-status"); estado != "planned" {
-		t.Fatalf("GET /node/status debe marcarse planned, obtuvo %q", estado)
+	if _, planificado := nodeStatus["x-implementation-status"]; planificado {
+		t.Fatalf("GET /node/status ya está implementado: no debe marcarse x-implementation-status")
 	}
-	if descripcion := cadena(t, nodeStatus, "description"); !strings.Contains(descripcion, "NO OPERATIVO") {
-		t.Fatalf("GET /node/status no advierte su estado planificado: %q", descripcion)
+	if descripcion := cadena(t, nodeStatus, "description"); !strings.Contains(descripcion, "OPERATIVO") || strings.Contains(descripcion, "NO OPERATIVO") {
+		t.Fatalf("GET /node/status debe declarar estado operativo: %q", descripcion)
 	}
 	verificarBearer(t, nodeStatus)
 	verificarRespuesta(t, nodeStatus, "200", "http.EstadoNodeResponse")
+	verificarRespuesta(t, nodeStatus, "502", "http.ErrorResponse")
+	verificarRespuesta(t, nodeStatus, "504", "http.ErrorResponse")
 
 	definitions := objeto(t, swagger, "definitions")
 	verificarObjetoRequerido(t, definitions, "http.EstadoNodeResponse", []string{
@@ -158,14 +161,13 @@ func TestContratoEtapa1(t *testing.T) {
 		t.Errorf("504 debe advertir que la acción pudo aplicarse: %q", timeout)
 	}
 
-	// INSTANCE_PROTECTED solo existe donde RejectProtectedInstance está registrado: stop.
-	stop403 := descripcionRespuesta(t, paths, "/instances/{vmid}/stop", "post", "403")
-	if !strings.Contains(stop403, "INSTANCE_PROTECTED") {
-		t.Errorf("stop 403 debe documentar INSTANCE_PROTECTED: %q", stop403)
-	}
-	start403 := descripcionRespuesta(t, paths, "/instances/{vmid}/start", "post", "403")
-	if strings.Contains(start403, "INSTANCE_PROTECTED") {
-		t.Errorf("start no pasa por RejectProtectedInstance, no debe documentar INSTANCE_PROTECTED: %q", start403)
+	// INSTANCE_PROTECTED existe donde RejectProtectedInstance está registrado en
+	// cmd/api/main.go: start, stop y el endpoint genérico de estado (desde el
+	// commit 8591e90, "VMIDs protegidos en acciones de energía").
+	for _, ruta := range []string{"/instances/{vmid}/start", "/instances/{vmid}/stop", "/instances/{vmid}/status/{action}"} {
+		if r403 := descripcionRespuesta(t, paths, ruta, "post", "403"); !strings.Contains(r403, "INSTANCE_PROTECTED") {
+			t.Errorf("%s 403 debe documentar INSTANCE_PROTECTED: %q", ruta, r403)
+		}
 	}
 
 	// Pause: contrato objetivo, todavía no registrado.
@@ -405,7 +407,8 @@ func TestContratoEtapa1(t *testing.T) {
 	contrato := string(contenidoContrato)
 	for _, fragmento := range []string{
 		// T01 — lecturas.
-		"GET /api/node/status", "planificada", "404 NOT_FOUND", "GET /api/instances", "operativa",
+		"GET /api/node/status", "node:status:current", "node:status:last_known", "stale",
+		"planificada", "404 NOT_FOUND", "GET /api/instances", "operativa",
 		"usagePercent", "instancesSummary", "fetchedAt", "nivelAcceso", "activeTask",
 		// T02 — acciones aceptadas.
 		"POST /api/instances/:vmid/start", "POST /api/instances/:vmid/stop",
