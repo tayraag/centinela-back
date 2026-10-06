@@ -98,7 +98,7 @@ type Auditoria struct {
 	Accion          string `gorm:"type:varchar(100);not null;index:idx_auditoria_accion" json:"accion"`
 	InstanciaID     string `gorm:"type:varchar(100);index:idx_auditoria_instancia" json:"instanciaId"`
 	InstanciaNombre string `gorm:"type:varchar(255)" json:"instanciaNombre"`
-	Resultado       string `gorm:"type:varchar(50);not null;index:idx_auditoria_resultado" json:"resultado"` // EXITO o FALLA
+	Resultado       string `gorm:"type:varchar(50);not null;index:idx_auditoria_resultado" json:"resultado"` // EXITO, FALLA o PENDING
 
 	Detalles  *string   `gorm:"type:jsonb" json:"detalles"`                                       // JSON estructurado con metadata extra (puntero para permitir NULL en PostgreSQL)
 	FechaHora time.Time `gorm:"default:now();index:idx_auditoria_usuario_fecha" json:"fechaHora"` // Índice compuesto con usuario_id

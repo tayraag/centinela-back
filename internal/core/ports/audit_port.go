@@ -16,7 +16,7 @@ type FiltrosAuditoria struct {
 	UsuarioID   *uuid.UUID // Filtrar por usuario específico
 	Accion      string     // Ej: "LOGIN", "CREATE_USER", "START_VM"
 	InstanciaID string     // ID de la instancia Proxmox afectada
-	Resultado   string     // "EXITO" | "FALLA" | "" (todos)
+	Resultado   string     // "EXITO" | "FALLA" | "PENDING" | "" (todos)
 	Desde       *time.Time // Rango temporal: desde (inclusive)
 	Hasta       *time.Time // Rango temporal: hasta (inclusive)
 }
@@ -55,7 +55,7 @@ type RegistrarAuditoriaInput struct {
 	Accion          string         // Código de la acción: "LOGIN", "CREATE_USER", etc.
 	InstanciaID     string         // ID de la instancia afectada (vacío si no aplica)
 	InstanciaNombre string         // Nombre de la instancia afectada (vacío si no aplica)
-	Resultado       string         // "EXITO" | "FALLA"
+	Resultado       string         // "EXITO" | "FALLA" | "PENDING"
 	Detalles        map[string]any // Metadata adicional (se serializa a JSON)
 }
 
@@ -90,20 +90,22 @@ const (
 	AccionActualizarPerfil   = "ACTUALIZAR_PERFIL"
 )
 
-// Acciones sobre instancias (preparado para RF futuro de VMs)
+// Acciones sobre instancias (vocabulario canónico del contrato Etapa 1)
 const (
-	AccionIniciarVM   = "INICIAR_VM"
-	AccionDetenerVM   = "DETENER_VM"
-	AccionReiniciarVM = "REINICIAR_VM"
-	AccionEliminarVM  = "ELIMINAR_VM"
+	AccionIniciarVM   = "START"
+	AccionDetenerVM   = "STOP"
+	AccionReiniciarVM = "REBOOT"
+	AccionEliminarVM  = "DELETE"
+	AccionApagarVM    = "SHUTDOWN"
 	AccionSuspenderVM = "SUSPENDER_VM"
 	AccionResumeVM    = "REANUDAR_VM"
 )
 
 // Resultados de auditoría
 const (
-	ResultadoExito = "EXITO"
-	ResultadoFalla = "FALLA"
+	ResultadoExito     = "EXITO"
+	ResultadoFalla     = "FALLA"
+	ResultadoPendiente = "PENDING" // la orden se aceptó y la tarea sigue en curso
 )
 
 // ==========================================

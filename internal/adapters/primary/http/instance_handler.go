@@ -325,19 +325,20 @@ func (h *InstanceHandler) IniciarInstancia(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if _, ok := h.validarEstadoParaAccion(c, vmid, "start"); !ok {
+	instancia, ok := h.validarEstadoParaAccion(c, vmid, "start")
+	if !ok {
 		return
 	}
 	upid, err := h.proxmox.IniciarInstancia(c.Request.Context(), vmid)
 	if err != nil {
-		h.registrarAuditVM(c, vmid, "", ports.AccionIniciarVM, ports.ResultadoFalla, map[string]any{
+		h.registrarAuditVM(c, vmid, instancia.Nombre, ports.AccionIniciarVM, ports.ResultadoFalla, map[string]any{
 			"action": "start", "error": err.Error(),
 		})
 		mapearErrorProxmox(c, err)
 		return
 	}
-	h.registrarAuditVM(c, vmid, "", "START", "PENDING", map[string]any{
-		"upid": upid, "action": "start", "resource_type": "vm_or_lxc",
+	h.registrarAuditVM(c, vmid, instancia.Nombre, ports.AccionIniciarVM, ports.ResultadoPendiente, map[string]any{
+		"upid": upid, "action": "start", "resource_type": instancia.Tipo,
 	})
 	h.responderTarea(c, vmid, "start", upid)
 }
@@ -369,19 +370,20 @@ func (h *InstanceHandler) DetenerInstancia(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if _, ok := h.validarEstadoParaAccion(c, vmid, "stop"); !ok {
+	instancia, ok := h.validarEstadoParaAccion(c, vmid, "stop")
+	if !ok {
 		return
 	}
 	upid, err := h.proxmox.DetenerInstancia(c.Request.Context(), vmid)
 	if err != nil {
-		h.registrarAuditVM(c, vmid, "", ports.AccionDetenerVM, ports.ResultadoFalla, map[string]any{
+		h.registrarAuditVM(c, vmid, instancia.Nombre, ports.AccionDetenerVM, ports.ResultadoFalla, map[string]any{
 			"action": "stop", "error": err.Error(),
 		})
 		mapearErrorProxmox(c, err)
 		return
 	}
-	h.registrarAuditVM(c, vmid, "", "STOP", "PENDING", map[string]any{
-		"upid": upid, "action": "stop", "resource_type": "vm_or_lxc",
+	h.registrarAuditVM(c, vmid, instancia.Nombre, ports.AccionDetenerVM, ports.ResultadoPendiente, map[string]any{
+		"upid": upid, "action": "stop", "resource_type": instancia.Tipo,
 	})
 	h.responderTarea(c, vmid, "stop", upid)
 }
@@ -469,16 +471,16 @@ func (h *InstanceHandler) CambiarEstado(c *gin.Context) {
 	switch accion {
 	case "start":
 		upid, err = h.proxmox.IniciarInstancia(c.Request.Context(), vmid)
-		accionAudit = "START"
+		accionAudit = ports.AccionIniciarVM
 	case "stop":
 		upid, err = h.proxmox.DetenerInstancia(c.Request.Context(), vmid)
-		accionAudit = "STOP"
+		accionAudit = ports.AccionDetenerVM
 	case "shutdown":
 		upid, err = h.proxmox.Shutdown(c.Request.Context(), instancia.Nodo, vmid, instancia.Tipo)
-		accionAudit = "SHUTDOWN"
+		accionAudit = ports.AccionApagarVM
 	case "reboot":
 		upid, err = h.proxmox.Reboot(c.Request.Context(), instancia.Nodo, vmid, instancia.Tipo)
-		accionAudit = "REBOOT"
+		accionAudit = ports.AccionReiniciarVM
 	}
 
 	if err != nil {
@@ -488,7 +490,7 @@ func (h *InstanceHandler) CambiarEstado(c *gin.Context) {
 		mapearErrorProxmox(c, err)
 		return
 	}
-	h.registrarAuditVM(c, vmid, instancia.Nombre, accionAudit, "PENDING", map[string]any{
+	h.registrarAuditVM(c, vmid, instancia.Nombre, accionAudit, ports.ResultadoPendiente, map[string]any{
 		"upid": upid, "action": accion, "resource_type": instancia.Tipo,
 	})
 	h.responderTarea(c, vmid, accion, upid)
@@ -548,7 +550,7 @@ func (h *InstanceHandler) EliminarInstancia(c *gin.Context) {
 		return
 	}
 
-	h.registrarAuditVM(c, vmid, instancia.Nombre, "DELETE", "PENDING", map[string]any{
+	h.registrarAuditVM(c, vmid, instancia.Nombre, ports.AccionEliminarVM, ports.ResultadoPendiente, map[string]any{
 		"upid": upid, "action": "delete", "resource_type": instancia.Tipo,
 	})
 	h.responderTarea(c, vmid, "delete", upid)
