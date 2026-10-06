@@ -304,32 +304,40 @@ func main() {
 		httpHandlers.SendError(c, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "El método HTTP no está permitido para este recurso.")
 	})
 
-	// 9. Encender el servidor en el puerto 8080
-	srv := &http.Server{Addr: ":8080", Handler: router}
+	// 9. Encender el servidor en el puerto 8080 con timeouts explícitos
+	srv := &http.Server{
+		Addr:         ":8080",
+		Handler:      router,
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 15 * time.Second,
+		IdleTimeout:  60 * time.Second,
+	}
 	srv.RegisterOnShutdown(eventsHandler.CerrarStreams) // los streams SSE no terminan solos
+
 	go func() {
-		log.Println("🛡️ Servidor HTTP escuchando en el puerto 8080...")
+		log.Printf("[INFO] Servidor HTTP escuchando en %s", srv.Addr)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Fatalf("❌ Error al arrancar el servidor: %v", err)
+			log.Fatalf("[ERROR] Fallo crítico en servidor HTTP: %v", err)
 		}
 	}()
 
 	// 10. Apagado ordenado ante SIGINT (Ctrl+C) o SIGTERM (systemctl stop / deploy):
-	//     se dejan de aceptar requests, se cortan los streams SSE, se terminan los
-	//     requests en curso y se espera a que los workers terminen su consulta.
-	//     Las tareas sin terminar quedan RUNNING y el reconciliador las retoma al arrancar.
 	<-ctx.Done()
-	stop() // un segundo Ctrl+C mata el proceso al instante
-	log.Println("🛑 Señal de apagado recibida: cerrando la API...")
-	ctxApagado, cancelar := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancelar()
-	if err := srv.Shutdown(ctxApagado); err != nil {
-		log.Printf("⚠️  El servidor HTTP no cerró a tiempo: %v", err)
+	stop() // Detiene la escucha de nuevas señales
+	log.Println("[INFO] Señal de terminación recibida, iniciando apagado ordenado...")
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		log.Printf("[ERROR] Forzando cierre del servidor HTTP por timeout: %v", err)
+	} else {
+		log.Println("[INFO] Servidor HTTP apagado correctamente.")
 	}
-	if err := seguimientoTareas.Esperar(ctxApagado); err != nil {
+
+	if err := seguimientoTareas.Esperar(shutdownCtx); err != nil {
 		log.Printf("⚠️  El seguimiento de tareas no terminó a tiempo: %v", err)
 	}
-	log.Println("👋 API detenida")
 }
 
 // enteroDeEntorno lee una variable de entorno entera y positiva, con un default.

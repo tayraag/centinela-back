@@ -48,7 +48,7 @@ func (w *PurgaWorker) Iniciar(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			log.Println("🧹 Worker de purga de sesiones detenido.")
+			log.Println("[INFO] Worker de purga detenido.")
 			return
 		case <-ticker.C:
 			w.purgar()
