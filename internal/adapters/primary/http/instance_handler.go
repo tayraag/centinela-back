@@ -400,6 +400,33 @@ var accionesValidas = map[string]bool{
 	"reboot":   true,
 }
 
+// PausarInstancia documenta el contrato objetivo de la acción Pause. NO OPERATIVO:
+// la ruta NO está registrada en el router y hoy responde 404 NOT_FOUND. Se
+// documenta junto a las acciones reales para que el frontend no la confunda con
+// shutdown ni con reboot. Las anotaciones cuelgan de esta función (no del cuerpo
+// de CambiarEstado) porque swag solo genera operaciones desde declaraciones.
+//
+// @Summary      Pausar instancia (planificado)
+// @Description  PLANIFICADO; NO OPERATIVO. Contrato objetivo para pausar una VM o contenedor en Proxmox VE. La ruta no está registrada y actualmente responde 404 NOT_FOUND; pause tampoco es una acción válida en POST /instances/{vmid}/status/{action} (responde 400 INVALID_ACTION).
+// @Tags         Instancias Proxmox
+// @Produce      json
+// @Security     BearerAuth
+// @Param        vmid path int true "VMID de la instancia"
+// @Success      202 {object} AccionAceptadaResponse "Acción aceptada: upid de la tarea en Proxmox y tareaId"
+// @Failure      400 {object} ErrorResponse "INVALID_VMID"
+// @Failure      401 {object} ErrorResponse "MISSING_TOKEN | INVALID_TOKEN | TOKEN_REVOKED"
+// @Failure      403 {object} ErrorResponse "WRONG_TOKEN_TYPE | 2FA_REQUIRED | PASSWORD_CHANGE_REQUIRED | NO_ROLE | NO_USER | INVALID_USER_ID | INSTANCE_ACCESS_DENIED | INSTANCE_PROTECTED"
+// @Failure      404 {object} ErrorResponse "INSTANCE_NOT_FOUND"
+// @Failure      409 {object} ErrorResponse "INSTANCE_BUSY"
+// @Failure      500 {object} ErrorResponse "INTERNAL_ERROR"
+// @Failure      502 {object} ErrorResponse "PROXMOX_UNAVAILABLE"
+// @Failure      504 {object} ErrorResponse "PROXMOX_TIMEOUT"
+// @x-implementation-status "planned"
+// @Router       /instances/{vmid}/pause [post]
+func (h *InstanceHandler) PausarInstancia(c *gin.Context) {
+	SendError(c, http.StatusNotFound, "NOT_FOUND", "La acción pause no está implementada.")
+}
+
 // CambiarEstado ejecuta una acción de ciclo de vida (start/stop/shutdown/reboot) sobre
 // una instancia. Complementa los endpoints /start y /stop (que se mantienen
 // por retrocompatibilidad) y agrega soporte para reboot y shutdown.
@@ -422,27 +449,6 @@ var accionesValidas = map[string]bool{
 // @Failure      504 {object} ErrorResponse "PROXMOX_TIMEOUT — Proxmox no respondió a tiempo; la acción puede haberse aplicado"
 // @Router       /instances/{vmid}/status/{action} [post]
 func (h *InstanceHandler) CambiarEstado(c *gin.Context) {
-	// Contrato objetivo de la acción Pause. NO OPERATIVO: la ruta NO está registrada
-	// en el router y hoy responde 404 NOT_FOUND. Se documenta junto a las acciones
-	// reales para que el frontend no la confunda con shutdown ni con reboot.
-	// @Summary      Pausar instancia (planificado)
-	// @Description  PLANIFICADO; NO OPERATIVO. Contrato objetivo para pausar una VM o contenedor en Proxmox VE. La ruta no está registrada y actualmente responde 404 NOT_FOUND; pause tampoco es una acción válida en POST /instances/{vmid}/status/{action} (responde 400 INVALID_ACTION).
-	// @Tags         Instancias Proxmox
-	// @Produce      json
-	// @Security     BearerAuth
-	// @Param        vmid path int true "VMID de la instancia"
-	// @Success      202 {object} AccionAceptadaResponse "Acción aceptada: upid de la tarea en Proxmox y tareaId"
-	// @Failure      400 {object} ErrorResponse "INVALID_VMID"
-	// @Failure      401 {object} ErrorResponse "MISSING_TOKEN | INVALID_TOKEN | TOKEN_REVOKED"
-	// @Failure      403 {object} ErrorResponse "WRONG_TOKEN_TYPE | 2FA_REQUIRED | PASSWORD_CHANGE_REQUIRED | NO_ROLE | NO_USER | INVALID_USER_ID | INSTANCE_ACCESS_DENIED | INSTANCE_PROTECTED"
-	// @Failure      404 {object} ErrorResponse "INSTANCE_NOT_FOUND"
-	// @Failure      409 {object} ErrorResponse "INSTANCE_BUSY"
-	// @Failure      500 {object} ErrorResponse "INTERNAL_ERROR"
-	// @Failure      502 {object} ErrorResponse "PROXMOX_UNAVAILABLE"
-	// @Failure      504 {object} ErrorResponse "PROXMOX_TIMEOUT"
-	// @x-implementation-status "planned"
-	// @Router       /instances/{vmid}/pause [post]
-
 	vmid, ok := extraerVmid(c)
 	if !ok {
 		return
