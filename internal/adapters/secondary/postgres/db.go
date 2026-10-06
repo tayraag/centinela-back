@@ -270,6 +270,39 @@ func migrarAuditoriaParticionada(db *gorm.DB) error {
 		}
 	}
 	log.Println("📊 Índices locales de auditoria garantizados")
+
+	// 4. Migración de Datos y Limpieza Controlada
+	var legacyExiste int
+	db.Raw(`
+		SELECT count(*)
+		FROM pg_class c
+		JOIN pg_namespace n ON n.oid = c.relnamespace
+		WHERE c.relname = 'auditoria_legacy'
+		  AND n.nspname = current_schema()
+	`).Scan(&legacyExiste)
+
+	if legacyExiste > 0 {
+		log.Println("🔄 Traspasando historial desde auditoria_legacy hacia la nueva tabla particionada auditoria...")
+		if err := db.Exec(`
+			INSERT INTO auditoria (id, fecha_hora, usuario_id, accion, instancia_id, instancia_nombre, resultado, detalles)
+			SELECT id, fecha_hora, usuario_id, accion, instancia_id, instancia_nombre, resultado, detalles
+			FROM auditoria_legacy
+			ON CONFLICT DO NOTHING
+		`).Error; err != nil {
+			return fmt.Errorf("error al volcar datos desde auditoria_legacy: %w", err)
+		}
+
+		log.Println("⚙️  Ajustando secuencias autoincrementales (si aplican)...")
+		// Ejecutamos el ajuste de secuencias solicitado ignorando errores de tipo,
+		// ya que si 'id' es UUID no existirá una secuencia asociada.
+		_ = db.Exec(`SELECT setval(pg_get_serial_sequence('auditoria', 'id'), (SELECT COALESCE(MAX(id::text)::bigint, 1) FROM auditoria WHERE id::text ~ '^[0-9]+$'))`)
+
+		log.Println("🗑️  Traspaso exitoso. Eliminando tabla transitoria auditoria_legacy...")
+		if err := db.Exec(`DROP TABLE IF EXISTS auditoria_legacy CASCADE`).Error; err != nil {
+			return fmt.Errorf("error al eliminar auditoria_legacy: %w", err)
+		}
+	}
+
 	return nil
 }
 
