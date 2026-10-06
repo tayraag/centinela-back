@@ -105,7 +105,7 @@ func (m *mockProxmoxPort) Reboot(ctx context.Context, node string, vmid int, vmT
 	return "UPID:test:reboot", nil
 }
 
-func (m *mockProxmoxPort) EliminarInstancia(ctx context.Context, vmid int) (string, error) {
+func (m *mockProxmoxPort) EliminarInstancia(ctx context.Context, node string, vmid int, vmType string) (string, error) {
 	m.escrituras++
 	if m.errAccion != nil {
 		return "", m.errAccion
@@ -124,7 +124,7 @@ func (inventarioNulo) ResolverIPs(context.Context, []ports.InstanciaProxmoxDTO) 
 // seguimientoNulo implementa ports.SeguimientoTareas sin hacer nada.
 type seguimientoNulo struct{}
 
-func (seguimientoNulo) Seguir(context.Context, uuid.UUID, int, string, string) (uuid.UUID, error) {
+func (seguimientoNulo) Seguir(context.Context, uuid.UUID, int, string, string, ...map[string]any) (uuid.UUID, error) {
 	return uuid.New(), nil
 }
 

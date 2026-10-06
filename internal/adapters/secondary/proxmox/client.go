@@ -324,12 +324,19 @@ func (c *Client) Reboot(ctx context.Context, node string, vmid int, vmType strin
 // La instancia debe estar detenida: si está encendida Proxmox responde 500 con
 // un mensaje de bloqueo y se retorna ErrInstanciaOcupada. Devuelve el UPID de
 // la tarea de borrado, que se sigue como cualquier otra acción.
-func (c *Client) EliminarInstancia(ctx context.Context, vmid int) (string, error) {
-	entry, err := c.buscarInstancia(ctx, vmid)
-	if err != nil {
-		return "", err
+func (c *Client) EliminarInstancia(ctx context.Context, node string, vmid int, vmType string) (string, error) {
+	tipoProxmox := vmType
+	if tipoProxmox == ports.TipoInstanciaQemu {
+		tipoProxmox = "qemu"
+	} else if tipoProxmox == ports.TipoInstanciaLXC {
+		tipoProxmox = "lxc"
+	} else if tipoProxmox == "VM" {
+		tipoProxmox = "qemu"
+	} else if tipoProxmox == "LXC" {
+		tipoProxmox = "lxc"
 	}
-	path := fmt.Sprintf("/api2/json/nodes/%s/%s/%d", entry.Node, entry.Type, vmid)
+	
+	path := fmt.Sprintf("/api2/json/nodes/%s/%s/%d", url.PathEscape(node), tipoProxmox, vmid)
 	raw, err := c.doRequest(ctx, http.MethodDelete, path, nil)
 	if err != nil {
 		return "", err

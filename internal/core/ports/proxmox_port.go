@@ -115,7 +115,7 @@ type ProxmoxPort interface {
 	// La instancia DEBE estar detenida antes de llamar a este método; si está
 	// encendida Proxmox responde con error y se retorna ErrInstanciaOcupada.
 	// Devuelve el UPID de la tarea de borrado (qmdestroy / vzdestroy).
-	EliminarInstancia(ctx context.Context, vmid int) (upid string, err error)
+	EliminarInstancia(ctx context.Context, node string, vmid int, vmType string) (upid string, err error)
 
 	// EstadoTarea consulta GET /nodes/{node}/tasks/{upid}/status.
 	EstadoTarea(ctx context.Context, upid string) (*EstadoTareaDTO, error)

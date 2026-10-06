@@ -76,9 +76,9 @@ func (h *InstanceHandler) registrarAuditVM(c *gin.Context, vmid int, instanciaNo
 // responderTarea registra la tarea para seguirla y responde 202 con el UPID y
 // el tareaId (el mismo que llega en el evento TASK_FINISHED). Si no se puede
 // registrar, la acción ya se disparó en Proxmox igual: se responde sin tareaId.
-func (h *InstanceHandler) responderTarea(c *gin.Context, vmid int, accion, upid string) {
+func (h *InstanceHandler) responderTarea(c *gin.Context, vmid int, accion, upid string, metadatos ...map[string]any) {
 	respuesta := gin.H{"upid": upid}
-	tareaID, err := h.seguimiento.Seguir(c.Request.Context(), extraerUserID(c), vmid, accion, upid)
+	tareaID, err := h.seguimiento.Seguir(c.Request.Context(), extraerUserID(c), vmid, accion, upid, metadatos...)
 	if err != nil {
 		log.Printf("[TAREAS] no se pudo registrar la tarea %s de %d: %v", accion, vmid, err)
 	} else {
@@ -515,7 +515,7 @@ func (h *InstanceHandler) CambiarEstado(c *gin.Context) {
 // @Failure      401 {object} ErrorResponse "MISSING_TOKEN | INVALID_TOKEN | TOKEN_REVOKED"
 // @Failure      403 {object} ErrorResponse "WRONG_TOKEN_TYPE | 2FA_REQUIRED | PASSWORD_CHANGE_REQUIRED | NO_ROLE | INVALID_ROLE | INSUFFICIENT_PERMISSIONS | INVALID_VMID | INSTANCE_PROTECTED — solo ADMIN puede eliminar instancias"
 // @Failure      404 {object} ErrorResponse "INSTANCE_NOT_FOUND — la instancia no existe en Proxmox"
-// @Failure      409 {object} ErrorResponse "INSTANCE_NOT_STOPPED — la instancia debe estar detenida | INSTANCE_BUSY — la instancia está ejecutando otra tarea"
+// @Failure      409 {object} ErrorResponse "INSTANCE_INVALID_STATE — la instancia debe estar detenida | INSTANCE_BUSY — la instancia está ejecutando otra tarea"
 // @Failure      500 {object} ErrorResponse "INTERNAL_ERROR — error inesperado de Proxmox"
 // @Failure      502 {object} ErrorResponse "PROXMOX_UNAVAILABLE — Proxmox caído, sin red o token rechazado; la orden NO llegó a aplicarse"
 // @Failure      504 {object} ErrorResponse "PROXMOX_TIMEOUT — Proxmox no respondió a tiempo; el borrado puede haberse aplicado"
@@ -536,12 +536,12 @@ func (h *InstanceHandler) EliminarInstancia(c *gin.Context) {
 	// Proxmox rechazará el DELETE si la instancia está encendida; prevenimos
 	// con un 409 explícito para dar un mensaje de error claro al frontend.
 	if instancia.Estado != "stopped" {
-		SendError(c, http.StatusConflict, "INSTANCE_NOT_STOPPED",
+		SendError(c, http.StatusConflict, "INSTANCE_INVALID_STATE",
 			"La instancia debe estar detenida antes de poder eliminarla.")
 		return
 	}
 
-	upid, err := h.proxmox.EliminarInstancia(c.Request.Context(), vmid)
+	upid, err := h.proxmox.EliminarInstancia(c.Request.Context(), instancia.Nodo, vmid, instancia.Tipo)
 	if err != nil {
 		h.registrarAuditVM(c, vmid, instancia.Nombre, ports.AccionEliminarVM, ports.ResultadoFalla, map[string]any{
 			"action": "delete", "error": err.Error(), "resource_type": instancia.Tipo,
@@ -553,5 +553,5 @@ func (h *InstanceHandler) EliminarInstancia(c *gin.Context) {
 	h.registrarAuditVM(c, vmid, instancia.Nombre, ports.AccionEliminarVM, ports.ResultadoPendiente, map[string]any{
 		"upid": upid, "action": "delete", "resource_type": instancia.Tipo,
 	})
-	h.responderTarea(c, vmid, "delete", upid)
+	h.responderTarea(c, vmid, "delete", upid, map[string]any{"resource_type": instancia.Tipo})
 }
