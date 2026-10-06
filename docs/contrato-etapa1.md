@@ -179,7 +179,7 @@ contenedor. Solo lo puede invocar un `ADMIN`: un `OPERATOR` recibe
 la infraestructura (`403 INSTANCE_PROTECTED`).
 
 La instancia tiene que estar detenida: si no está `stopped` responde
-`409 INSTANCE_NOT_STOPPED` sin tocar Proxmox. Si está detenida, Proxmox crea la
+`409 INSTANCE_INVALID_STATE` sin tocar Proxmox. Si está detenida, Proxmox crea la
 tarea de borrado y el servidor responde `202` con el mismo
 `AccionAceptadaResponse` que las acciones de energía:
 
@@ -236,8 +236,7 @@ Estos son los pares error/status que las acciones de energía pueden devolver
   `INVALID_USER_ID`.
 - `400` en `status/{action}` agrega `INVALID_ACTION`.
 - `403` en el borrado agrega `INSUFFICIENT_PERMISSIONS` e `INVALID_ROLE`.
-- `409` en el borrado es `INSTANCE_NOT_STOPPED` (o `INSTANCE_BUSY`), no
-  `INSTANCE_INVALID_STATE`.
+- `409` en el borrado usa la misma constante `INSTANCE_INVALID_STATE` (o `INSTANCE_BUSY`) que las acciones de energía.
 
 `INSTANCE_PROTECTED` aparece en todas las rutas que pasan por
 `RejectProtectedInstance`: `start`, `stop`, `status/{action}` y el borrado.

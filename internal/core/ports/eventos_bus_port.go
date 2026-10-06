@@ -70,5 +70,5 @@ type EventosService interface {
 type SeguimientoTareas interface {
 	// Seguir registra la tarea en tareas_asincronas y empieza a seguirla en
 	// segundo plano. Devuelve el ID de la tarea (el "tareaId" del evento).
-	Seguir(ctx context.Context, usuarioID uuid.UUID, vmid int, accion, upid string) (uuid.UUID, error)
+	Seguir(ctx context.Context, usuarioID uuid.UUID, vmid int, accion, upid string, metadatos ...map[string]any) (uuid.UUID, error)
 }

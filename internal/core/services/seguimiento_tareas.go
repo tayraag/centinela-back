@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"strconv"
@@ -205,7 +206,7 @@ func (p *PoolSeguimiento) Esperar(ctx context.Context) error {
 
 // Seguir registra la tarea en tareas_asincronas (RUNNING) y la encola sin
 // bloquear. Si la cola está llena, la deja para el reconciliador.
-func (p *PoolSeguimiento) Seguir(ctx context.Context, usuarioID uuid.UUID, vmid int, accion, upid string) (uuid.UUID, error) {
+func (p *PoolSeguimiento) Seguir(ctx context.Context, usuarioID uuid.UUID, vmid int, accion, upid string, metadatos ...map[string]any) (uuid.UUID, error) {
 	id, err := uuid.NewV7()
 	if err != nil {
 		return uuid.Nil, err
@@ -214,6 +215,13 @@ func (p *PoolSeguimiento) Seguir(ctx context.Context, usuarioID uuid.UUID, vmid 
 		ID: id, UsuarioID: usuarioID, UpidProxmox: upid,
 		InstanciaID: strconv.Itoa(vmid), Accion: accion, Estado: ports.TareaRunning,
 		FechaCreacion: p.ahora(),
+	}
+
+	if len(metadatos) > 0 && metadatos[0] != nil {
+		if crudo, err := json.Marshal(metadatos[0]); err == nil {
+			str := string(crudo)
+			tarea.Metadatos = &str
+		}
 	}
 	if err := p.tareas.Crear(ctx, &tarea); err != nil {
 		return uuid.Nil, err
@@ -340,6 +348,18 @@ func (p *PoolSeguimiento) verificarUnaVez(t *TareaSeguimiento) {
 func (p *PoolSeguimiento) resolverRecurso(ctx context.Context, t *TareaSeguimiento) {
 	if t.recursoTipo != "" {
 		return
+	}
+	if t.Tarea.Metadatos != nil {
+		var meta map[string]any
+		if err := json.Unmarshal([]byte(*t.Tarea.Metadatos), &meta); err == nil {
+			if rt, ok := meta["resource_type"].(string); ok {
+				t.recursoTipo = ports.RecursoVM
+				if rt == ports.TipoInstanciaLXC {
+					t.recursoTipo = ports.RecursoLXC
+				}
+				return
+			}
+		}
 	}
 	t.recursoTipo = ports.RecursoVM
 	if inst, err := p.proxmox.ObtenerInstancia(ctx, t.Vmid); err == nil && inst.Tipo == ports.TipoInstanciaLXC {

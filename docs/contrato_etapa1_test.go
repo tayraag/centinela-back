@@ -205,8 +205,8 @@ func TestContratoEtapa1(t *testing.T) {
 	if r403 := descripcionRespuesta(t, paths, "/instances/{vmid}", "delete", "403"); !strings.Contains(r403, "INSUFFICIENT_PERMISSIONS") {
 		t.Errorf("DELETE 403 debe documentar INSUFFICIENT_PERMISSIONS: %q", r403)
 	}
-	if r409 := descripcionRespuesta(t, paths, "/instances/{vmid}", "delete", "409"); !strings.Contains(r409, "INSTANCE_NOT_STOPPED") {
-		t.Errorf("DELETE 409 debe documentar INSTANCE_NOT_STOPPED: %q", r409)
+	if r409 := descripcionRespuesta(t, paths, "/instances/{vmid}", "delete", "409"); !strings.Contains(r409, "INSTANCE_INVALID_STATE") {
+		t.Errorf("DELETE 409 debe documentar INSTANCE_INVALID_STATE: %q", r409)
 	}
 
 	// Pause: contrato objetivo, todavía no registrado.
@@ -478,7 +478,7 @@ func TestContratoEtapa1(t *testing.T) {
 		// T02 — sobre real y diferencias con lo solicitado.
 		`{ "errorCode", "message" }`, "INSTANCE_INVALID_STATE",
 		// Borrado asíncrono, solo ADMIN.
-		"DELETE /api/instances/:vmid", "INSTANCE_NOT_STOPPED",
+		"DELETE /api/instances/:vmid", "INSTANCE_INVALID_STATE",
 		// T03 — stream SSE, ticket y framing.
 		"GET /api/events", "POST /api/events/ticket", "http.SSEEventPayload",
 		"http.TaskSuccess", "http.TaskFailed", "http.SSEDetallesEvento",
