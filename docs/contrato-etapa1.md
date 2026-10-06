@@ -16,11 +16,12 @@ está disponible para ambos roles autenticados.
 
 ## Estado consolidado del nodo — operativo
 
-**Acceso (D1):** lo puede leer cualquier usuario autenticado, ADMIN u OPERATOR.
-Solo exige `Authorization: Bearer <accessToken>`: no pasa por el chequeo de
-permisos por instancia, porque describe el hipervisor y no una VM concreta. Un
-OPERATOR ve los totales de `instancesSummary` de todo el nodo, no solo los de
-sus instancias asignadas.
+**Control de acceso (D1):** Endpoint accesible para cualquier usuario autenticado (`Authorization: Bearer <accessToken>`), habilitado tanto para el rol ADMIN como para el rol OPERATOR. No requiere permisos específicos sobre instancias.
+
+Lo puede leer cualquier usuario autenticado, ADMIN u OPERATOR. No pasa por el
+chequeo de permisos por instancia porque describe el hipervisor y no una VM
+concreta. Un OPERATOR ve los totales de `instancesSummary` de todo el nodo, no
+solo los de sus instancias asignadas.
 
 `GET /api/node/status` responde `200 application/json` con:
 
