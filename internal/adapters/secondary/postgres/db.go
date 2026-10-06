@@ -145,7 +145,7 @@ func migrarSesionesAUnaFilaPorSesion(db *gorm.DB) error {
 func crearIndicesParciales(db *gorm.DB) error {
 	err := db.Exec(`
 		CREATE INDEX IF NOT EXISTS idx_sesiones_activas_vigentes
-		ON sesiones_activas (usuario_id, fecha_expiracion)
+		ON sesiones_activas (jti_access, usuario_id)
 		WHERE activa = true;
 	`).Error
 	if err != nil {

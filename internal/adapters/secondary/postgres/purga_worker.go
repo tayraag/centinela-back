@@ -36,7 +36,7 @@ func NuevoPurgaWorker(db *gorm.DB, intervalo time.Duration) *PurgaWorker {
 // Se detiene limpiamente cuando el contexto ctx es cancelado.
 // Llamar con `go worker.Iniciar(ctx)` desde main.
 func (w *PurgaWorker) Iniciar(ctx context.Context) {
-	ticker := time.NewTicker(w.intervalo)
+	ticker := time.NewTicker(1 * time.Hour)
 	defer ticker.Stop()
 
 	log.Printf("🧹 Worker de purga de sesiones iniciado (intervalo: %s)", w.intervalo)
