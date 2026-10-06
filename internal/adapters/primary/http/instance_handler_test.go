@@ -18,6 +18,13 @@ import (
 	"github.com/google/uuid"
 )
 
+// Metadatos distintivos que informa ObtenerInstancia: si la auditoría graba un
+// nombre vacío o un resource_type fijo, las aserciones de los tests fallan.
+const (
+	nombreInstanciaMock = "vm-auditoria-110"
+	tipoInstanciaMock   = "lxc"
+)
+
 // mockProxmoxPort implementa ports.ProxmoxPort para pruebas
 type mockProxmoxPort struct {
 	instancias []ports.InstanciaProxmoxDTO
@@ -32,7 +39,12 @@ func (m *mockProxmoxPort) ObtenerInstancia(ctx context.Context, vmid int) (*port
 	if m.errDetalle != nil {
 		return nil, m.errDetalle
 	}
-	return &ports.InstanciaProxmoxDTO{Vmid: vmid, Estado: m.estado}, nil
+	return &ports.InstanciaProxmoxDTO{
+		Vmid:   vmid,
+		Nombre: nombreInstanciaMock,
+		Tipo:   tipoInstanciaMock,
+		Estado: m.estado,
+	}, nil
 }
 
 func (m *mockProxmoxPort) ListarInstancias(ctx context.Context) ([]ports.InstanciaProxmoxDTO, error) {
@@ -133,8 +145,22 @@ func (m *mockTareaRepository) BuscarTareasActivasPorVmids(context.Context, []int
 	return m.activas, nil
 }
 
-type mockAuditService struct{}
-func (m *mockAuditService) Registrar(context.Context, ports.RegistrarAuditoriaInput) {}
+type mockAuditService struct {
+	registros []ports.RegistrarAuditoriaInput
+}
+
+func (m *mockAuditService) Registrar(_ context.Context, input ports.RegistrarAuditoriaInput) {
+	m.registros = append(m.registros, input)
+}
+
+// ultimo devuelve el último registro de auditoría capturado.
+func (m *mockAuditService) ultimo() (ports.RegistrarAuditoriaInput, bool) {
+	if len(m.registros) == 0 {
+		return ports.RegistrarAuditoriaInput{}, false
+	}
+	return m.registros[len(m.registros)-1], true
+}
+
 func (m *mockAuditService) ListarAuditoria(context.Context, uuid.UUID, ports.FiltrosAuditoria, ports.OpcionesAuditoria) (*ports.PaginaAuditoria, error) { return nil, nil }
 func (m *mockAuditService) ExportarCSV(context.Context, uuid.UUID, ports.FiltrosAuditoria) ([]byte, error) { return nil, nil }
 func (m *mockAuditService) ExportarJSON(context.Context, uuid.UUID, ports.FiltrosAuditoria) ([]byte, error) { return nil, nil }
@@ -642,5 +668,109 @@ func TestEliminarInstancia_ErroresDeProxmox(t *testing.T) {
 		if status != caso.status || cuerpo["errorCode"] != caso.codigo {
 			t.Errorf("%v: se esperaba %d %s, vino %d %v", caso.err, caso.status, caso.codigo, status, cuerpo)
 		}
+	}
+}
+
+// ejecutarCicloDeVidaConAuditoria ejecuta una acción sobre el router de ciclo de
+// vida y devuelve el código HTTP junto con el mock que captura la auditoría.
+func ejecutarCicloDeVidaConAuditoria(mock *mockProxmoxPort, metodo, ruta string) (int, *mockAuditService) {
+	gin.SetMode(gin.TestMode)
+	audit := &mockAuditService{}
+	handler := adaptersHttp.NewInstanceHandler(mock, &mockUserRepository{}, seguimientoNulo{}, &mockTareaRepository{}, audit, inventarioNulo{})
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set(string(middleware.ContextKeyUserID), uuid.New().String())
+	})
+	router.POST("/api/instances/:vmid/start", handler.IniciarInstancia)
+	router.POST("/api/instances/:vmid/stop", handler.DetenerInstancia)
+	router.POST("/api/instances/:vmid/status/:action", handler.CambiarEstado)
+	router.DELETE("/api/instances/:vmid", handler.EliminarInstancia)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest(metodo, ruta, nil))
+	return w.Code, audit
+}
+
+// La auditoría de cada endpoint de ciclo de vida debe grabar el vocabulario
+// canónico (contrato Etapa 1) y conservar el nombre y el tipo reales de la
+// instancia, sin importar si el endpoint es alias o genérico.
+func TestAuditoriaDeCicloDeVida_UsaVocabularioCanonicoYMetadatos(t *testing.T) {
+	casos := []struct {
+		nombre    string
+		metodo    string
+		ruta      string
+		estado    string
+		accion    string
+		resultado string
+	}{
+		{"alias start", http.MethodPost, "/api/instances/110/start", "stopped", "START", "PENDING"},
+		{"alias stop", http.MethodPost, "/api/instances/110/stop", "running", "STOP", "PENDING"},
+		{"genérico start", http.MethodPost, "/api/instances/110/status/start", "stopped", "START", "PENDING"},
+		{"genérico stop", http.MethodPost, "/api/instances/110/status/stop", "running", "STOP", "PENDING"},
+		{"genérico shutdown", http.MethodPost, "/api/instances/110/status/shutdown", "running", "SHUTDOWN", "PENDING"},
+		{"genérico reboot", http.MethodPost, "/api/instances/110/status/reboot", "running", "REBOOT", "PENDING"},
+		{"delete", http.MethodDelete, "/api/instances/110", "stopped", "DELETE", "PENDING"},
+	}
+	for _, caso := range casos {
+		t.Run(caso.nombre, func(t *testing.T) {
+			status, audit := ejecutarCicloDeVidaConAuditoria(&mockProxmoxPort{estado: caso.estado}, caso.metodo, caso.ruta)
+			if status != http.StatusAccepted {
+				t.Fatalf("se esperaba 202, vino %d", status)
+			}
+			reg, ok := audit.ultimo()
+			if !ok {
+				t.Fatal("el endpoint no registró ninguna auditoría")
+			}
+			if reg.Accion != caso.accion {
+				t.Errorf("Accion: se esperaba %q, vino %q", caso.accion, reg.Accion)
+			}
+			if reg.Resultado != caso.resultado {
+				t.Errorf("Resultado: se esperaba %q, vino %q", caso.resultado, reg.Resultado)
+			}
+			if reg.InstanciaNombre != nombreInstanciaMock {
+				t.Errorf("InstanciaNombre: se esperaba %q, vino %q", nombreInstanciaMock, reg.InstanciaNombre)
+			}
+			if reg.InstanciaID != "110" {
+				t.Errorf("InstanciaID: se esperaba %q, vino %q", "110", reg.InstanciaID)
+			}
+			if reg.Detalles["resource_type"] != tipoInstanciaMock {
+				t.Errorf("resource_type: se esperaba %q, vino %v", tipoInstanciaMock, reg.Detalles["resource_type"])
+			}
+		})
+	}
+}
+
+// El fallo de los alias /start y /stop también audita el nombre real de la
+// instancia y el código de acción canónico.
+func TestAuditoriaDeAlias_FalloUsaAccionCanonicaYNombreReal(t *testing.T) {
+	casos := []struct {
+		nombre string
+		ruta   string
+		estado string
+		accion string
+	}{
+		{"alias start", "/api/instances/110/start", "stopped", "START"},
+		{"alias stop", "/api/instances/110/stop", "running", "STOP"},
+	}
+	for _, caso := range casos {
+		t.Run(caso.nombre, func(t *testing.T) {
+			mock := &mockProxmoxPort{estado: caso.estado, errAccion: fmt.Errorf("%w: fallo simulado", ports.ErrProxmoxNoDisponible)}
+			status, audit := ejecutarCicloDeVidaConAuditoria(mock, http.MethodPost, caso.ruta)
+			if status != http.StatusBadGateway {
+				t.Fatalf("se esperaba 502, vino %d", status)
+			}
+			reg, ok := audit.ultimo()
+			if !ok {
+				t.Fatal("el endpoint no registró ninguna auditoría de fallo")
+			}
+			if reg.Accion != caso.accion {
+				t.Errorf("Accion: se esperaba %q, vino %q", caso.accion, reg.Accion)
+			}
+			if reg.Resultado != ports.ResultadoFalla {
+				t.Errorf("Resultado: se esperaba %q, vino %q", ports.ResultadoFalla, reg.Resultado)
+			}
+			if reg.InstanciaNombre != nombreInstanciaMock {
+				t.Errorf("InstanciaNombre: se esperaba %q, vino %q", nombreInstanciaMock, reg.InstanciaNombre)
+			}
+		})
 	}
 }
