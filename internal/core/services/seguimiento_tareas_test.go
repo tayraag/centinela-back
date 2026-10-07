@@ -191,6 +191,23 @@ func TestSeguimiento_TareaFallida(t *testing.T) {
 	}
 }
 
+// Proxmox marca "WARNINGS: N" cuando la tarea terminó bien pero con
+// advertencias (p. ej. el aviso de nesting de systemd): no es un fallo.
+func TestSeguimiento_AvisoDeProxmoxNoEsFalla(t *testing.T) {
+	id, repo, ev := seguirTarea(t, &proxmoxTareas{exitStatus: "WARNINGS: 1", tipo: "lxc"}, "start")
+
+	if repo.estado(id) != ports.TareaCompleted {
+		t.Errorf("Estado final = %s, se esperaba COMPLETED", repo.estado(id))
+	}
+	if ev.Severidad != ports.SeveridadInfo || ev.RecursoTipo != ports.RecursoLXC || ev.Mensaje != "La tarea de encendido finalizó correctamente" {
+		t.Errorf("Evento inesperado: %+v", ev)
+	}
+	if ev.Detalles["estado"] != ports.TareaCompleted || ev.Detalles["exitstatus"] != "WARNINGS: 1" ||
+		ev.Detalles["motivo"] != nil || ev.Detalles["error"] != nil {
+		t.Errorf("Detalles: %+v", ev.Detalles)
+	}
+}
+
 func TestSeguimiento_BorradoUsaAccionDelete(t *testing.T) {
 	_, _, ev := seguirTarea(t, &proxmoxTareas{exitStatus: "OK", tipo: "qemu"}, "delete")
 	if ev.Mensaje != "La tarea de eliminación finalizó correctamente" || ev.Detalles["accion"] != "DELETE" {
