@@ -39,7 +39,8 @@ func mensajeTimeout(limite time.Duration) string {
 }
 
 // resultadoTarea es el desenlace de una tarea:
-//   - COMPLETED: exitStatus "OK", sin motivo ni error.
+//   - COMPLETED: exitStatus "OK" (o "WARNINGS: N" cuando Proxmox la dio por
+//     buena con advertencias), sin motivo ni error.
 //   - FAILED por Proxmox: motivo PROXMOX_ERROR; exitStatus y error, el texto de Proxmox.
 //   - FAILED por tiempo: motivo TIMEOUT, sin exitStatus (Proxmox no la cerró).
 type resultadoTarea struct {
@@ -51,6 +52,28 @@ type resultadoTarea struct {
 
 func completada() resultadoTarea {
 	return resultadoTarea{estado: ports.TareaCompleted, exitStatus: "OK"}
+}
+
+// completadaConAdvertencias cierra una tarea que Proxmox dio por buena pero con
+// advertencias (exitstatus "WARNINGS: N"). El texto se conserva tal cual; no es
+// un fallo ni lleva motivo/error.
+func completadaConAdvertencias(exitStatus string) resultadoTarea {
+	return resultadoTarea{estado: ports.TareaCompleted, exitStatus: exitStatus}
+}
+
+// clasificarExitStatus traduce el exitstatus de Proxmox al desenlace de la tarea:
+//   - "OK": completada sin observaciones.
+//   - "WARNINGS: N": completada con advertencias (p. ej. "WARN: Systemd 257
+//     detected. You may need to enable nesting."); Proxmox la considera exitosa.
+//   - cualquier otro valor: el texto del error que reportó Proxmox.
+func clasificarExitStatus(exitStatus string) resultadoTarea {
+	if exitStatus == "OK" {
+		return completada()
+	}
+	if strings.HasPrefix(exitStatus, "WARNINGS") {
+		return completadaConAdvertencias(exitStatus)
+	}
+	return falloProxmox(exitStatus)
 }
 
 func falloProxmox(exitStatus string) resultadoTarea {
@@ -331,10 +354,8 @@ func (p *PoolSeguimiento) verificarUnaVez(t *TareaSeguimiento) {
 
 	resultado, err := p.proxmox.EstadoTarea(ctx, t.Tarea.UpidProxmox)
 	switch {
-	case err == nil && resultado.Terminada && resultado.ExitStatus == "OK":
-		p.finalizar(t, completada())
 	case err == nil && resultado.Terminada:
-		p.finalizar(t, falloProxmox(resultado.ExitStatus))
+		p.finalizar(t, clasificarExitStatus(resultado.ExitStatus))
 	default:
 		if err != nil {
 			log.Printf("[TAREAS] la tarea %s superó %s y Proxmox no respondió: %v", t.Tarea.ID, p.cfg.VentanaRecuperacion, err)
@@ -377,11 +398,8 @@ func (p *PoolSeguimiento) consultar(t *TareaSeguimiento) {
 
 	resultado, err := p.proxmox.EstadoTarea(ctx, t.Tarea.UpidProxmox)
 	switch {
-	case err == nil && resultado.Terminada && resultado.ExitStatus == "OK":
-		p.finalizar(t, completada())
-		return
 	case err == nil && resultado.Terminada:
-		p.finalizar(t, falloProxmox(resultado.ExitStatus))
+		p.finalizar(t, clasificarExitStatus(resultado.ExitStatus))
 		return
 	case err != nil:
 		log.Printf("[TAREAS] no se pudo consultar la tarea %s (se reintenta): %v", t.Tarea.ID, err)
