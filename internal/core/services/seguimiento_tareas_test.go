@@ -53,7 +53,6 @@ func (p *proxmoxTareas) ListarInstancias(context.Context) ([]ports.InstanciaProx
 }
 func (p *proxmoxTareas) IniciarInstancia(context.Context, int) (string, error) { return "", nil }
 func (p *proxmoxTareas) DetenerInstancia(context.Context, int) (string, error) { return "", nil }
-func (p *proxmoxTareas) ReiniciarInstancia(context.Context, int) (string, error) { return "", nil }
 func (p *proxmoxTareas) Shutdown(context.Context, string, int, string) (string, error) { return "", nil }
 func (p *proxmoxTareas) Reboot(context.Context, string, int, string) (string, error) { return "", nil }
 func (p *proxmoxTareas) EliminarInstancia(context.Context, string, int, string) (string, error) { return "", nil }
@@ -194,7 +193,7 @@ func TestSeguimiento_TareaFallida(t *testing.T) {
 // Proxmox marca "WARNINGS: N" cuando la tarea terminó bien pero con
 // advertencias (p. ej. el aviso de nesting de systemd): no es un fallo.
 func TestSeguimiento_AvisoDeProxmoxNoEsFalla(t *testing.T) {
-	id, repo, ev := seguirTarea(t, &proxmoxTareas{exitStatus: "WARNINGS: 1", tipo: "lxc"}, "start")
+	id, repo, ev := seguirTarea(t, &proxmoxTareas{vueltas: 1, exitStatus: "WARNINGS: 1", tipo: "lxc"}, "start")
 
 	if repo.estado(id) != ports.TareaCompleted {
 		t.Errorf("Estado final = %s, se esperaba COMPLETED", repo.estado(id))

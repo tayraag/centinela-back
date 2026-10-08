@@ -32,10 +32,12 @@ type mockProxmoxPort struct {
 	errAccion  error // error de IniciarInstancia / DetenerInstancia
 	errDetalle error // error de ObtenerInstancia
 	estado     string // estado que informa ObtenerInstancia
+	lecturas   int    // órdenes de lectura recibidas (ObtenerInstancia)
 	escrituras int    // órdenes de escritura recibidas (start/stop/shutdown/reboot)
 }
 
 func (m *mockProxmoxPort) ObtenerInstancia(ctx context.Context, vmid int) (*ports.InstanciaProxmoxDTO, error) {
+	m.lecturas++
 	if m.errDetalle != nil {
 		return nil, m.errDetalle
 	}
@@ -80,13 +82,6 @@ func (m *mockProxmoxPort) ObtenerInterfaces(context.Context, string, string, int
 
 func (m *mockProxmoxPort) EstadoTarea(ctx context.Context, upid string) (*ports.EstadoTareaDTO, error) {
 	return &ports.EstadoTareaDTO{Terminada: true, ExitStatus: "OK"}, nil
-}
-
-func (m *mockProxmoxPort) ReiniciarInstancia(ctx context.Context, vmid int) (string, error) {
-	if m.errAccion != nil {
-		return "", m.errAccion
-	}
-	return "UPID:test:reboot", nil
 }
 
 func (m *mockProxmoxPort) Shutdown(ctx context.Context, node string, vmid int, vmType string) (string, error) {
@@ -459,9 +454,9 @@ func estadoParaRuta(ruta string) string {
 	return "running"
 }
 
-func ejecutarAccion(mock *mockProxmoxPort, ruta string) (int, map[string]string) {
+func ejecutarAccionConTareas(mock *mockProxmoxPort, tareasRepo ports.TareaRepository, ruta string) (int, map[string]string) {
 	gin.SetMode(gin.TestMode)
-	handler := adaptersHttp.NewInstanceHandler(mock, &mockUserRepository{}, seguimientoNulo{}, &mockTareaRepository{}, &mockAuditService{}, inventarioNulo{})
+	handler := adaptersHttp.NewInstanceHandler(mock, &mockUserRepository{}, seguimientoNulo{}, tareasRepo, &mockAuditService{}, inventarioNulo{})
 	router := gin.New()
 	router.POST("/api/instances/:vmid/start", handler.IniciarInstancia)
 	router.POST("/api/instances/:vmid/stop", handler.DetenerInstancia)
@@ -472,6 +467,89 @@ func ejecutarAccion(mock *mockProxmoxPort, ruta string) (int, map[string]string)
 	var cuerpo map[string]string
 	_ = json.Unmarshal(w.Body.Bytes(), &cuerpo)
 	return w.Code, cuerpo
+}
+
+func ejecutarAccion(mock *mockProxmoxPort, ruta string) (int, map[string]string) {
+	return ejecutarAccionConTareas(mock, &mockTareaRepository{}, ruta)
+}
+
+// Tarea en curso (RUNNING) => 409 INSTANCE_BUSY inmediatamente, sin evaluar compatibilidad de estado ni llamar a Proxmox.
+func TestAccionesDeCicloDeVida_ConTareaEnCursoEs409InstanceBusySinConsultarProxmox(t *testing.T) {
+	rutas := []string{
+		"/api/instances/110/start",
+		"/api/instances/110/stop",
+		"/api/instances/110/status/start",
+		"/api/instances/110/status/stop",
+		"/api/instances/110/status/shutdown",
+		"/api/instances/110/status/reboot",
+	}
+
+	for _, ruta := range rutas {
+		// Probamos con estado stopped y running
+		for _, estado := range []string{"stopped", "running"} {
+			mock := &mockProxmoxPort{estado: estado}
+			tareasMock := &mockTareaRepository{
+				activas: map[int]ports.ActiveTaskDTO{
+					110: {TareaID: uuid.New().String(), Action: "START", Status: "RUNNING"},
+				},
+			}
+
+			status, cuerpo := ejecutarAccionConTareas(mock, tareasMock, ruta)
+			if status != http.StatusConflict || cuerpo["errorCode"] != "INSTANCE_BUSY" ||
+				cuerpo["message"] != "La instancia se encuentra ejecutando otra tarea. Aguarde a que finalice." {
+				t.Errorf("%s (estado %s): se esperaba 409 INSTANCE_BUSY, vino %d %v", ruta, estado, status, cuerpo)
+			}
+			if mock.lecturas != 0 {
+				t.Errorf("%s (estado %s): no debía consultar Proxmox y leyó %d veces", ruta, estado, mock.lecturas)
+			}
+			if mock.escrituras != 0 {
+				t.Errorf("%s (estado %s): no debía escribir en Proxmox y escribió %d veces", ruta, estado, mock.escrituras)
+			}
+		}
+	}
+}
+
+// Secuencia: start seguido de stop (u otra mutación concurrente) responde 409 INSTANCE_BUSY.
+func TestSecuencia_StartSeguidoDeStopResponde409InstanceBusy(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	mock := &mockProxmoxPort{estado: "stopped"}
+	tareasMock := &mockTareaRepository{
+		activas: make(map[int]ports.ActiveTaskDTO),
+	}
+
+	handler := adaptersHttp.NewInstanceHandler(mock, &mockUserRepository{}, seguimientoNulo{}, tareasMock, &mockAuditService{}, inventarioNulo{})
+	router := gin.New()
+	router.POST("/api/instances/:vmid/start", handler.IniciarInstancia)
+	router.POST("/api/instances/:vmid/stop", handler.DetenerInstancia)
+
+	// 1. Start en máquina stopped -> 202 Accepted
+	w1 := httptest.NewRecorder()
+	req1, _ := http.NewRequest(http.MethodPost, "/api/instances/110/start", nil)
+	router.ServeHTTP(w1, req1)
+	if w1.Code != http.StatusAccepted {
+		t.Fatalf("start: se esperaba 202, vino %d %s", w1.Code, w1.Body.String())
+	}
+
+	// La base de datos registra la tarea en estado RUNNING
+	tareasMock.activas[110] = ports.ActiveTaskDTO{
+		TareaID: uuid.New().String(),
+		Action:  "START",
+		Status:  "RUNNING",
+	}
+
+	// 2. Stop inmediato -> 409 INSTANCE_BUSY
+	w2 := httptest.NewRecorder()
+	req2, _ := http.NewRequest(http.MethodPost, "/api/instances/110/stop", nil)
+	router.ServeHTTP(w2, req2)
+	if w2.Code != http.StatusConflict {
+		t.Fatalf("stop con tarea activa: se esperaba 409, vino %d %s", w2.Code, w2.Body.String())
+	}
+	var cuerpo map[string]string
+	_ = json.Unmarshal(w2.Body.Bytes(), &cuerpo)
+	if cuerpo["errorCode"] != "INSTANCE_BUSY" ||
+		cuerpo["message"] != "La instancia se encuentra ejecutando otra tarea. Aguarde a que finalice." {
+		t.Errorf("stop con tarea activa: respuesta incorrecta: %v", cuerpo)
+	}
 }
 
 // Matriz de estados: acción incompatible => 409 y NINGUNA orden de escritura a Proxmox.
@@ -621,9 +699,9 @@ func TestListarInstancias_ActiveTaskEsObjetoONull(t *testing.T) {
 	}
 }
 
-func ejecutarBorrado(mock *mockProxmoxPort) (int, map[string]string) {
+func ejecutarBorradoConTareas(mock *mockProxmoxPort, tareasRepo ports.TareaRepository) (int, map[string]string) {
 	gin.SetMode(gin.TestMode)
-	handler := adaptersHttp.NewInstanceHandler(mock, &mockUserRepository{}, seguimientoNulo{}, &mockTareaRepository{}, &mockAuditService{}, inventarioNulo{})
+	handler := adaptersHttp.NewInstanceHandler(mock, &mockUserRepository{}, seguimientoNulo{}, tareasRepo, &mockAuditService{}, inventarioNulo{})
 	router := gin.New()
 	router.DELETE("/api/instances/:vmid", func(c *gin.Context) {
 		c.Set(string(middleware.ContextKeyUserID), uuid.New().String())
@@ -633,6 +711,33 @@ func ejecutarBorrado(mock *mockProxmoxPort) (int, map[string]string) {
 	var cuerpo map[string]string
 	_ = json.Unmarshal(w.Body.Bytes(), &cuerpo)
 	return w.Code, cuerpo
+}
+
+func ejecutarBorrado(mock *mockProxmoxPort) (int, map[string]string) {
+	return ejecutarBorradoConTareas(mock, &mockTareaRepository{})
+}
+
+// DELETE sobre máquina con tarea en curso => 409 INSTANCE_BUSY inmediatamente sin tocar Proxmox.
+func TestEliminarInstancia_ConTareaEnCursoEs409InstanceBusySinConsultarProxmox(t *testing.T) {
+	for _, estado := range []string{"stopped", "running"} {
+		mock := &mockProxmoxPort{estado: estado}
+		tareasMock := &mockTareaRepository{
+			activas: map[int]ports.ActiveTaskDTO{
+				110: {TareaID: uuid.New().String(), Action: "STOP", Status: "RUNNING"},
+			},
+		}
+		status, cuerpo := ejecutarBorradoConTareas(mock, tareasMock)
+		if status != http.StatusConflict || cuerpo["errorCode"] != "INSTANCE_BUSY" ||
+			cuerpo["message"] != "La instancia se encuentra ejecutando otra tarea. Aguarde a que finalice." {
+			t.Errorf("DELETE con tarea activa (estado %s): se esperaba 409 INSTANCE_BUSY, vino %d %v", estado, status, cuerpo)
+		}
+		if mock.lecturas != 0 {
+			t.Errorf("DELETE: no debía consultar Proxmox y leyó %d veces", mock.lecturas)
+		}
+		if mock.escrituras != 0 {
+			t.Errorf("DELETE: no debía escribir en Proxmox y escribió %d veces", mock.escrituras)
+		}
+	}
 }
 
 // DELETE /api/instances/:vmid es asíncrono: 202 { upid, tareaId }, como las

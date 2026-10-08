@@ -289,10 +289,6 @@ func (c *Client) DetenerInstancia(ctx context.Context, vmid int) (string, error)
 	return c.cambiarEstado(ctx, vmid, "stop")
 }
 
-func (c *Client) ReiniciarInstancia(ctx context.Context, vmid int) (string, error) {
-	return c.cambiarEstado(ctx, vmid, "reboot")
-}
-
 func (c *Client) Shutdown(ctx context.Context, node string, vmid int, vmType string) (string, error) {
 	path := fmt.Sprintf("/api2/json/nodes/%s/%s/%d/status/shutdown", node, vmType, vmid)
 	raw, err := c.doRequest(ctx, http.MethodPost, path, nil)
@@ -321,9 +317,9 @@ func (c *Client) Reboot(ctx context.Context, node string, vmid int, vmType strin
 
 // EliminarInstancia elimina de forma permanente una VM o contenedor de Proxmox.
 // Proxmox usa DELETE /nodes/{node}/{tipo}/{vmid}.
-// La instancia debe estar detenida: si está encendida Proxmox responde 500 con
-// un mensaje de bloqueo y se retorna ErrInstanciaOcupada. Devuelve el UPID de
-// la tarea de borrado, que se sigue como cualquier otra acción.
+// El control de que la instancia esté apagada se resuelve previamente en el handler HTTP
+// (respondiendo 409 INSTANCE_INVALID_STATE si sigue encendida o INSTANCE_BUSY si hay tareas activas).
+// Devuelve el UPID de la tarea de borrado, que se sigue como cualquier otra acción.
 func (c *Client) EliminarInstancia(ctx context.Context, node string, vmid int, vmType string) (string, error) {
 	tipoProxmox := vmType
 	if tipoProxmox == ports.TipoInstanciaQemu {
