@@ -219,3 +219,39 @@ func TestNodo_PedidosSimultaneosCompartenUnaConsulta(t *testing.T) {
 		t.Errorf("20 pedidos simultáneos con la caché vacía deben hacer 1 sola consulta a Proxmox, hubo %d", n)
 	}
 }
+
+func TestNodo_ArranqueEnFrioNoBloqueaRecuperacionInmediata(t *testing.T) {
+	e := nuevoEntornoNodo()
+	ctx := context.Background()
+
+	// Proxmox falla en la primera petición (arranque en frío, no hay caché)
+	e.px.fallar(ports.ErrProxmoxNoDisponible)
+	_, _, err := e.svc.ObtenerEstado(ctx)
+	if err == nil {
+		t.Fatal("Se esperaba error por arranque en frío")
+	}
+
+	// Proxmox se recupera inmediatamente
+	e.px.fallar(nil)
+
+	// Avanzamos solo 1 segundo (estamos dentro de la ventana de pausaTrasFallaNodo de 5s)
+	e.avanzar(time.Second)
+
+	// Al solicitar el estado, como NO hay caché previa, el circuit breaker
+	// DEBE permitir la llamada a Proxmox (half-open inmediato) en lugar de devolver
+	// 502 ciegamente.
+	estado, stale, err := e.svc.ObtenerEstado(ctx)
+	if err != nil {
+		t.Fatalf("No debió bloquearse la petición por cooldown; err: %v", err)
+	}
+	if stale {
+		t.Errorf("No debe devolver stale, sino datos frescos de la recuperación")
+	}
+	if estado == nil {
+		t.Fatal("El estado no debería ser nil")
+	}
+
+	if e.px.llamadas.Load() != 2 {
+		t.Errorf("Se esperaba que intente llamar a Proxmox (2 llamadas en total), hizo %d", e.px.llamadas.Load())
+	}
+}

@@ -52,17 +52,23 @@ func NewNodoServiceConReloj(proxmox ports.ProxmoxPort, kv ports.KeyValueStore, n
 
 // ObtenerEstado:
 //  1. node:status:current vigente → se devuelve (stale = false), sin tocar Proxmox.
-//  2. Vencida → se consulta Proxmox; si responde, se actualizan ambas claves.
-//  3. Proxmox falla → se devuelve node:status:last_known con stale = true.
-//  4. Proxmox falla y no hay lectura previa → error (502 / 504).
+//  2. Verificar respaldo previo en caché (node:status:last_known).
+//  3. Si hay respaldo y hubo falla reciente → devolver respaldo stale (stale = true).
+//  4. Consultar a Proxmox; si responde, actualizar caché y limpiar fallas.
+//  5. Si falla Proxmox, devolver respaldo stale si existe, o el error.
 func (s *nodoService) ObtenerEstado(ctx context.Context) (*ports.EstadoNodo, bool, error) {
 	if estado, ok := s.leer(ctx, claveNodoActual); ok {
 		return estado, false, nil
 	}
 
-	// Si Proxmox acaba de fallar, no esperar otro timeout: ir directo al respaldo.
-	if err := s.fallaReciente(); err != nil {
-		return s.respaldo(ctx, err)
+	// Verificar si hay caché previa antes de aplicar heurística de falla
+	estadoRespaldo, hayRespaldo := s.leer(ctx, claveNodoUltimo)
+
+	// Si hay respaldo, y Proxmox acaba de fallar (cooldown activo), devolvemos stale
+	if hayRespaldo {
+		if err := s.fallaReciente(); err != nil {
+			return estadoRespaldo, true, nil
+		}
 	}
 
 	resultado, err, _ := s.vuelo.Do(claveVuelo, func() (any, error) {
@@ -74,7 +80,10 @@ func (s *nodoService) ObtenerEstado(ctx context.Context) (*ports.EstadoNodo, boo
 	})
 	if err != nil {
 		s.registrarFalla(err)
-		return s.respaldo(ctx, err)
+		if hayRespaldo {
+			return estadoRespaldo, true, nil
+		}
+		return nil, false, err
 	}
 	return resultado.(*ports.EstadoNodo), false, nil
 }
@@ -104,14 +113,6 @@ func (s *nodoService) refrescar(ctx context.Context) (*ports.EstadoNodo, error) 
 	s.ultimaFalla, s.errFalla = time.Time{}, nil
 	s.mu.Unlock()
 	return estado, nil
-}
-
-// respaldo devuelve la última lectura conocida (stale = true) o, si no hay, el error.
-func (s *nodoService) respaldo(ctx context.Context, errProxmox error) (*ports.EstadoNodo, bool, error) {
-	if estado, ok := s.leer(ctx, claveNodoUltimo); ok {
-		return estado, true, nil
-	}
-	return nil, false, errProxmox
 }
 
 func (s *nodoService) leer(ctx context.Context, clave string) (*ports.EstadoNodo, bool) {
