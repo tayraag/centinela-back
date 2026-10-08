@@ -12,6 +12,7 @@ import (
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
+	"time"
 )
 
 // InitDB abre la conexión a PostgreSQL y crea las tablas automáticamente
@@ -59,6 +60,11 @@ func InitDB() (*gorm.DB, error) {
 
 	// Crear tabla auditoria particionada e índices locales (idempotente)
 	if err := migrarAuditoriaParticionada(db); err != nil {
+		return nil, err
+	}
+
+	// Asegurar la existencia proactiva de las particiones actuales y futuras
+	if err := asegurarParticionesFuturas(db); err != nil {
 		return nil, err
 	}
 
@@ -283,26 +289,79 @@ func migrarAuditoriaParticionada(db *gorm.DB) error {
 
 	if legacyExiste > 0 {
 		log.Println("🔄 Traspasando historial desde auditoria_legacy hacia la nueva tabla particionada auditoria...")
-		if err := db.Exec(`
+		
+		tx := db.Begin()
+		defer func() {
+			if r := recover(); r != nil {
+				tx.Rollback()
+			}
+		}()
+
+		if err := tx.Exec(`
 			INSERT INTO auditoria (id, fecha_hora, usuario_id, accion, instancia_id, instancia_nombre, resultado, detalles)
 			SELECT id, fecha_hora, usuario_id, accion, instancia_id, instancia_nombre, resultado, detalles
 			FROM auditoria_legacy
 			ON CONFLICT DO NOTHING
 		`).Error; err != nil {
+			tx.Rollback()
 			return fmt.Errorf("error al volcar datos desde auditoria_legacy: %w", err)
 		}
 
-		log.Println("⚙️  Ajustando secuencias autoincrementales (si aplican)...")
-		// Ejecutamos el ajuste de secuencias solicitado ignorando errores de tipo,
-		// ya que si 'id' es UUID no existirá una secuencia asociada.
-		_ = db.Exec(`SELECT setval(pg_get_serial_sequence('auditoria', 'id'), (SELECT COALESCE(MAX(id::text)::bigint, 1) FROM auditoria WHERE id::text ~ '^[0-9]+$'))`)
-
 		log.Println("🗑️  Traspaso exitoso. Eliminando tabla transitoria auditoria_legacy...")
-		if err := db.Exec(`DROP TABLE IF EXISTS auditoria_legacy CASCADE`).Error; err != nil {
+		if err := tx.Exec(`DROP TABLE IF EXISTS auditoria_legacy CASCADE`).Error; err != nil {
+			tx.Rollback()
 			return fmt.Errorf("error al eliminar auditoria_legacy: %w", err)
+		}
+
+		if err := tx.Commit().Error; err != nil {
+			return fmt.Errorf("error al confirmar migración de auditoria_legacy: %w", err)
 		}
 	}
 
+	return nil
+}
+
+// asegurarParticionesFuturas aprovisiona automáticamente las particiones del
+// trimestre en curso y del siguiente, evitando que los registros caigan en la default.
+func asegurarParticionesFuturas(db *gorm.DB) error {
+	ahora := time.Now()
+	qActual := int((ahora.Month() - 1) / 3 + 1)
+	yActual := ahora.Year()
+
+	qSiguiente := qActual + 1
+	ySiguiente := yActual
+	if qSiguiente > 4 {
+		qSiguiente = 1
+		ySiguiente++
+	}
+
+	trimestres := []struct {
+		year int
+		q    int
+	}{
+		{yActual, qActual},
+		{ySiguiente, qSiguiente},
+	}
+
+	for _, t := range trimestres {
+		mesInicio := time.Month((t.q - 1) * 3 + 1)
+		fechaInicio := time.Date(t.year, mesInicio, 1, 0, 0, 0, 0, time.UTC)
+		fechaFin := fechaInicio.AddDate(0, 3, 0)
+
+		nombreParticion := fmt.Sprintf("auditoria_%d_q%d", t.year, t.q)
+		sql := fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s
+			PARTITION OF auditoria
+			FOR VALUES FROM ('%s') TO ('%s')`,
+			nombreParticion,
+			fechaInicio.Format("2006-01-02"),
+			fechaFin.Format("2006-01-02"))
+
+		if err := db.Exec(sql).Error; err != nil {
+			return fmt.Errorf("error al asegurar partición futura %s: %w", nombreParticion, err)
+		}
+	}
+	
+	log.Println("📅 Particiones trimestrales dinámicas aseguradas (actual y próximo)")
 	return nil
 }
 

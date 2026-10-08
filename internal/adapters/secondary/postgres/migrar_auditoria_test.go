@@ -139,3 +139,96 @@ func TestMigrarAuditoriaParticionada_TraspasoLegacy(t *testing.T) {
 		t.Errorf("La tabla auditoria_legacy no fue eliminada tras la migración")
 	}
 }
+
+func TestMigrarAuditoriaParticionada_RollbackEnFallo(t *testing.T) {
+	db := conectarDBTest(t)
+
+	var usuario domain.Usuario
+	if err := db.First(&usuario).Error; err != nil {
+		t.Fatalf("Se requiere al menos un usuario: %v", err)
+	}
+
+	tx := db.Begin()
+	defer tx.Rollback()
+
+	tx.Exec("DROP TABLE IF EXISTS auditoria CASCADE")
+	tx.Exec("DROP TABLE IF EXISTS auditoria_legacy CASCADE")
+
+	// Crear tabla plana legacy
+	err := tx.Exec(`
+		CREATE TABLE auditoria (
+			id               UUID         NOT NULL DEFAULT uuid_generate_v7() PRIMARY KEY,
+			usuario_id       UUID         REFERENCES usuarios(id) ON UPDATE CASCADE ON DELETE RESTRICT,
+			accion           VARCHAR(100) NOT NULL,
+			instancia_id     VARCHAR(100),
+			instancia_nombre VARCHAR(255),
+			resultado        VARCHAR(50)  NOT NULL,
+			detalles         JSONB,
+			fecha_hora       TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+		)
+	`).Error
+	if err != nil {
+		t.Fatalf("Fallo al crear tabla plana: %v", err)
+	}
+
+	for i := 0; i < 5; i++ {
+		fecha := time.Now().AddDate(0, 0, -i*10)
+		id := uuid.New()
+		err := tx.Exec(`
+			INSERT INTO auditoria (id, fecha_hora, usuario_id, accion, instancia_id, resultado)
+			VALUES (?, ?, ?, ?, ?, ?)
+		`, id, fecha, usuario.ID, fmt.Sprintf("LEGACY_ACTION_%d", i), "101", "EXITO").Error
+		if err != nil {
+			t.Fatalf("Fallo al insertar registro legacy: %v", err)
+		}
+	}
+
+	// Provocar que la migración falle creando la tabla destino con una restricción estricta
+	// MigrarAuditoriaParticionada hace RENAME de auditoria a auditoria_legacy, y luego intenta crear
+	// 'auditoria' de nuevo, PERO IF NOT EXISTS.
+	// Entonces, si creamos 'auditoria_legacy' manualmente y luego 'auditoria' con restricción estricta,
+	// fallará en el INSERT.
+	
+	// Renombrar manualmente a legacy
+	tx.Exec(`ALTER TABLE auditoria RENAME TO auditoria_legacy`)
+
+	// Crear auditoria destino con longitud de accion muy corta (VARCHAR(5))
+	// Para forzar que el volcado desde legacy falle
+	tx.Exec(`
+		CREATE TABLE auditoria (
+			id               UUID         NOT NULL DEFAULT uuid_generate_v7(),
+			usuario_id       UUID         REFERENCES usuarios(id) ON UPDATE CASCADE ON DELETE RESTRICT,
+			accion           VARCHAR(5)   NOT NULL,
+			instancia_id     VARCHAR(100),
+			instancia_nombre VARCHAR(255),
+			resultado        VARCHAR(50)  NOT NULL,
+			detalles         JSONB,
+			fecha_hora       TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+			PRIMARY KEY (id, fecha_hora)
+		) PARTITION BY RANGE (fecha_hora);
+	`)
+
+	// Act: Ejecutar la migración (debe fallar y hacer rollback)
+	err = migrarAuditoriaParticionada(tx)
+	if err == nil {
+		t.Fatalf("Se esperaba un error por volcado fallido, pero no ocurrió")
+	}
+
+	// Assert: La tabla legacy debe seguir existiendo y con datos
+	var legacyExiste int
+	tx.Raw(`
+		SELECT count(*) FROM pg_class c
+		JOIN pg_namespace n ON n.oid = c.relnamespace
+		WHERE c.relname = 'auditoria_legacy' AND n.nspname = current_schema()
+	`).Scan(&legacyExiste)
+
+	if legacyExiste == 0 {
+		t.Errorf("La tabla auditoria_legacy fue eliminada a pesar de fallar la migración")
+	}
+
+	var count int64
+	tx.Table("auditoria_legacy").Count(&count)
+	if count != 5 {
+		t.Errorf("Se esperaban 5 registros en auditoria_legacy tras el rollback, se encontraron %d", count)
+	}
+}
