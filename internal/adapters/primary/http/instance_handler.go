@@ -108,10 +108,34 @@ var estadosRequeridosPorAccion = map[string]string{
 	"reboot":   "running",
 }
 
-// validarEstadoParaAccion consulta el estado actual (lectura) y aborta con 409
-// INSTANCE_INVALID_STATE si es incompatible con la acción, sin emitir ninguna
-// orden de escritura a Proxmox. Devuelve la instancia consultada.
+// tieneTareaActiva consulta si el vmid posee alguna tarea en curso (RUNNING)
+// registrada en tareas_asincronas.
+func (h *InstanceHandler) tieneTareaActiva(c *gin.Context, vmid int) bool {
+	if h.tareas == nil {
+		return false
+	}
+	activas, err := h.tareas.BuscarTareasActivasPorVmids(c.Request.Context(), []int{vmid})
+	if err != nil {
+		log.Printf("⚠️  [INSTANCES] error al consultar tareas activas para vmid %d: %v", vmid, err)
+		return false
+	}
+	_, activa := activas[vmid]
+	return activa
+}
+
+// validarEstadoParaAccion verifica primero si la instancia posee alguna tarea
+// activa (RUNNING) en tareas_asincronas para responder 409 INSTANCE_BUSY
+// inmediatamente, sin consultar Proxmox. Si no hay tareas activas, consulta el
+// estado actual en Proxmox (lectura) y aborta con 409 INSTANCE_INVALID_STATE
+// si es incompatible con la acción, sin emitir ninguna orden de escritura a Proxmox.
+// Devuelve la instancia consultada.
 func (h *InstanceHandler) validarEstadoParaAccion(c *gin.Context, vmid int, accion string) (*ports.InstanciaProxmoxDTO, bool) {
+	if h.tieneTareaActiva(c, vmid) {
+		SendError(c, http.StatusConflict, "INSTANCE_BUSY",
+			"La instancia se encuentra ejecutando otra tarea. Aguarde a que finalice.")
+		return nil, false
+	}
+
 	instancia, err := h.proxmox.ObtenerInstancia(c.Request.Context(), vmid)
 	if err != nil {
 		mapearErrorProxmox(c, err)
@@ -529,6 +553,12 @@ func (h *InstanceHandler) CambiarEstado(c *gin.Context) {
 func (h *InstanceHandler) EliminarInstancia(c *gin.Context) {
 	vmid, ok := extraerVmid(c)
 	if !ok {
+		return
+	}
+
+	if h.tieneTareaActiva(c, vmid) {
+		SendError(c, http.StatusConflict, "INSTANCE_BUSY",
+			"La instancia se encuentra ejecutando otra tarea. Aguarde a que finalice.")
 		return
 	}
 

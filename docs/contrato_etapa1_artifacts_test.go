@@ -226,6 +226,9 @@ func leerSpecDeDocsGo(t *testing.T) map[string]any {
 	desde += len(inicio)
 	hasta := strings.Index(contenido[desde:], "`\n")
 	if hasta < 0 {
+		hasta = strings.Index(contenido[desde:], "`\r\n")
+	}
+	if hasta < 0 {
 		t.Fatal("docs.go no cierra docTemplate")
 	}
 	plantilla := contenido[desde : desde+hasta]

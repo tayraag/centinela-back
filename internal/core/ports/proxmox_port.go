@@ -102,9 +102,6 @@ type ProxmoxPort interface {
 	// DetenerInstancia apaga (forzado) una VM o contenedor. Devuelve el UPID.
 	DetenerInstancia(ctx context.Context, vmid int) (upid string, err error)
 
-	// ReiniciarInstancia reinicia (reboot) una VM o contenedor. Devuelve el UPID.
-	ReiniciarInstancia(ctx context.Context, vmid int) (upid string, err error)
-
 	// Shutdown realiza un apagado ordenado de la VM o contenedor. Devuelve el UPID.
 	Shutdown(ctx context.Context, node string, vmid int, vmType string) (string, error)
 
