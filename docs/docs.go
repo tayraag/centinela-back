@@ -1432,7 +1432,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "OPERATIVO. Lee en vivo el inventario de Proxmox VE (VMs y contenedores). Un ADMIN recibe el cluster completo; un OPERATOR recibe únicamente las instancias que tiene asignadas. Incluye telemetría (CPU, RAM), nivel de acceso y tarea activa. ip puede ser null; activeTask es el objeto { tareaId, action, status } de la tarea RUNNING de la instancia, o null si no tiene ninguna.",
+                "description": "OPERATIVO. Lee en vivo el inventario de Proxmox VE (VMs y contenedores). Un ADMIN recibe el cluster completo; un OPERATOR recibe únicamente las instancias que tiene asignadas. Incluye telemetría (CPU en porcentaje 0-100, RAM en bytes y MaxRam en bytes), nivel de acceso y tarea activa. Si la instancia está apagada (stopped), cpuUsage y ramUsage serán estrictamente null. ip puede ser null; activeTask es el objeto { tareaId, action, status } de la tarea RUNNING de la instancia, o null si no tiene ninguna.",
                 "produces": [
                     "application/json"
                 ],
@@ -1976,7 +1976,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "OPERATIVO. Disponible para ADMIN y OPERATOR autenticados (no se filtra por permisos de instancia). La lectura se cachea en Redis 10 s (node:status:current): mientras está vigente se responde sin consultar Proxmox. Si Proxmox no responde se devuelve la última lectura conocida (node:status:last_known) con ` + "`" + `stale: true` + "`" + `; ` + "`" + `fetchedAt` + "`" + ` indica cuándo se obtuvo. Solo si no hay ninguna lectura previa responde 502 o 504. RAM y almacenamiento en GB (1024³ bytes) con 2 decimales; ` + "`" + `storage` + "`" + ` es el disco raíz del nodo; ` + "`" + `cores` + "`" + ` son los hilos lógicos sobre los que se calcula ` + "`" + `usagePercent` + "`" + `.",
+                "description": "OPERATIVO. Disponible para ADMIN y OPERATOR autenticados (no se filtra por permisos de instancia). La lectura se cachea en Redis 10 s (node:status:current): mientras está vigente se responde sin consultar Proxmox. Incluye también instancesSummary, que agrupa el recuento de VMs y contenedores LXC según su estado (running, stopped, paused). Si Proxmox no responde se devuelve la última lectura conocida (node:status:last_known) con ` + "`" + `stale: true` + "`" + `; ` + "`" + `fetchedAt` + "`" + ` indica cuándo se obtuvo. Solo si no hay ninguna lectura previa responde 502 o 504. RAM y almacenamiento en GB (1024³ bytes) con 2 decimales; ` + "`" + `storage` + "`" + ` es el disco raíz del nodo; ` + "`" + `cores` + "`" + ` son los hilos lógicos sobre los que se calcula ` + "`" + `usagePercent` + "`" + `.",
                 "produces": [
                     "application/json"
                 ],

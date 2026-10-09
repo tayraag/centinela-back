@@ -617,6 +617,46 @@ Este endpoint se encarga de alimentar las listas o paneles laterales del Dashboa
 }
 ```
 
+#### 6.1 Estado del nodo (GET /api/node/status)
+
+Endpoint que alimenta las tarjetas principales del dashboard. Devuelve la salud física del servidor Proxmox (telemetría real) y un resumen consolidado con el conteo exacto de las instancias virtuales por tipo (VM / LXC) y estado. Todo está cacheado en Redis por 10 segundos para garantizar una respuesta casi instantánea (< 50ms).
+
+```json
+{
+  "cpu": {
+    "usagePercent": 14.5,
+    "cores": 8
+  },
+  "ram": {
+    "usedGb": 12.4,
+    "totalGb": 32.0,
+    "usagePercent": 38.75
+  },
+  "storage": {
+    "usedGb": 120.5,
+    "totalGb": 500.0,
+    "usagePercent": 24.1
+  },
+  "uptimeSeconds": 184520,
+  "instancesSummary": {
+    "vms": {
+      "running": 3,
+      "stopped": 1,
+      "paused": 0,
+      "total": 4
+    },
+    "lxc": {
+      "running": 2,
+      "stopped": 0,
+      "paused": 0,
+      "total": 2
+    }
+  },
+  "stale": false,
+  "fetchedAt": "2026-10-06T15:00:00Z"
+}
+```
+
 #### 6.x Eventos en Tiempo Real (SSE)
 
 **POST /api/events/ticket**
@@ -683,8 +723,8 @@ Con respecto a los query params en la url DE EJEMPLO de arriba:
       "type": "lxc",
       "status": "stopped",
       "node": "pve1",
-      "cpuUsage": 0.0,
-      "ramUsage": 0,
+      "cpuUsage": null,
+      "ramUsage": null,
       "maxRam": 4294967296,
       "nivelAcceso": "READ_ONLY",
       "activeTask": "UPID:pve1:0001:start..."

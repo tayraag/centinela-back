@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -186,7 +187,7 @@ func mapearErrorProxmox(c *gin.Context, err error) {
 // Un ADMIN ve todo el cluster; un OPERATOR solo sus instancias asignadas.
 //
 // @Summary      Listar instancias
-// @Description  OPERATIVO. Lee en vivo el inventario de Proxmox VE (VMs y contenedores). Un ADMIN recibe el cluster completo; un OPERATOR recibe únicamente las instancias que tiene asignadas. Incluye telemetría (CPU, RAM), nivel de acceso y tarea activa. ip puede ser null; activeTask es el objeto { tareaId, action, status } de la tarea RUNNING de la instancia, o null si no tiene ninguna.
+// @Description  OPERATIVO. Lee en vivo el inventario de Proxmox VE (VMs y contenedores). Un ADMIN recibe el cluster completo; un OPERATOR recibe únicamente las instancias que tiene asignadas. Incluye telemetría (CPU en porcentaje 0-100, RAM en bytes y MaxRam en bytes), nivel de acceso y tarea activa. Si la instancia está apagada (stopped), cpuUsage y ramUsage serán estrictamente null. ip puede ser null; activeTask es el objeto { tareaId, action, status } de la tarea RUNNING de la instancia, o null si no tiene ninguna.
 // @Tags         Instancias Proxmox
 // @Produce      json
 // @Security     BearerAuth
@@ -266,9 +267,22 @@ func (h *InstanceHandler) ListarInstancias(c *gin.Context) {
 			nivel = nivelPorVmid[inst.Vmid]
 		}
 
-		cpu := inst.Cpu
-		mem := inst.Mem
-		maxMem := inst.MaxMem
+		var cpuUsage *float64
+		var ramUsage, maxRam *int64
+		
+		if inst.Estado == "running" {
+			cpu := math.Round(inst.Cpu*10000) / 100 // CPU en porcentaje con 2 decimales
+			cpuUsage = &cpu
+			mem := inst.Mem
+			ramUsage = &mem
+		}
+		
+		// maxRam siempre debe enviarse independientemente del estado, 
+		// salvo que Proxmox devuelva 0 (en cuyo caso dejamos el puntero nil).
+		if inst.MaxMem > 0 {
+			max := inst.MaxMem
+			maxRam = &max
+		}
 
 		resultado = append(resultado, ports.InstanciaListadaDTO{
 			ID:          inst.Vmid,
@@ -277,9 +291,9 @@ func (h *InstanceHandler) ListarInstancias(c *gin.Context) {
 			Node:        inst.Nodo,
 			Status:      inst.Estado,
 			Ip:          ips[inst.Vmid],
-			CpuUsage:    &cpu,
-			RamUsage:    &mem,
-			MaxRam:      &maxMem,
+			CpuUsage:    cpuUsage,
+			RamUsage:    ramUsage,
+			MaxRam:      maxRam,
 			NivelAcceso: nivel,
 			ActiveTask:  activeTask,
 		})
