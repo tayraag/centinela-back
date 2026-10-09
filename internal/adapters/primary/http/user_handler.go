@@ -55,7 +55,7 @@ func (h *UserHandler) ObtenerRoles(c *gin.Context) {
 // ListarUsuarios devuelve el listado de usuarios con estadísticas y filtros opcionales.
 //
 // @Summary      Listar usuarios de la organización
-// @Description  Devuelve todos los usuarios de la organización del admin autenticado, con un resumen (`summary`) de totales por rol. Soporta filtros opcionales: `?rol=ADMIN|OPERATOR`, `?activo=true|false`, `?buscar=texto` (nombre o email).
+// @Description  Devuelve los usuarios de la organización del admin autenticado, con un resumen (`summary`) de totales por rol. No incluye a los usuarios eliminados (DELETE); sí a los suspendidos (`activo=false`). Soporta filtros opcionales: `?rol=ADMIN|OPERATOR`, `?activo=true|false`, `?buscar=texto` (nombre o email).
 // @Tags         Usuarios (Admin)
 // @Produce      json
 // @Security     BearerAuth
@@ -170,7 +170,7 @@ func (h *UserHandler) ObtenerUsuario(c *gin.Context) {
 // ActualizarUsuario actualiza parcialmente los datos de un usuario.
 //
 // @Summary      Actualizar usuario
-// @Description  Actualiza parcialmente los datos de un usuario. Solo se modifican los campos presentes en el body (semántica PATCH). Campos posibles: `nombreCompleto`, `emailUsuario`, `rol`, `activo`.
+// @Description  Actualiza parcialmente los datos de un usuario. Solo se modifican los campos presentes en el body (semántica PATCH). Campos posibles: `nombreCompleto`, `emailUsuario`, `rol`, `activo`. `activo=false` suspende la cuenta (reversible: el correo sigue reservado). Un usuario eliminado (DELETE) ya no admite cambios: responde 409.
 // @Tags         Usuarios (Admin)
 // @Accept       json
 // @Produce      json
@@ -214,10 +214,10 @@ func (h *UserHandler) ActualizarUsuario(c *gin.Context) {
 // DELETE /api/users/:id
 // ==========================================
 
-// EliminarUsuario realiza un soft-delete del usuario y cierra todas sus sesiones.
+// EliminarUsuario realiza la eliminación lógica del usuario y cierra todas sus sesiones.
 //
-// @Summary      Eliminar usuario (soft-delete)
-// @Description  Marca al usuario como inactivo (`activo=false`) sin borrarlo físicamente, e invalida todas sus sesiones activas. Un admin no puede eliminarse a sí mismo.
+// @Summary      Eliminar usuario (eliminación lógica)
+// @Description  Elimina al usuario de forma irreversible sin borrar su fila (se conserva por la auditoría): registra `eliminadoEn`, lo deja con `activo=false` e invalida todas sus sesiones. A diferencia de la suspensión (PUT con `activo=false`), libera el correo: se puede crear una cuenta nueva con el mismo email (el nombre de usuario sigue siendo único para siempre). Desaparece del listado, pero su detalle y su actividad siguen disponibles. Un admin no puede eliminarse a sí mismo; eliminar a un usuario ya eliminado responde 404.
 // @Tags         Usuarios (Admin)
 // @Produce      json
 // @Security     BearerAuth

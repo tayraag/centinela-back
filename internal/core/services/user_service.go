@@ -2,8 +2,10 @@ package services
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
+	"time"
 
 	"el-centinela/internal/core/domain"
 	"el-centinela/internal/core/ports"
@@ -134,8 +136,8 @@ func (s *userServiceImpl) CrearUsuario(ctx context.Context, orgID uuid.UUID, act
 
 // ActualizarUsuario actualiza parcialmente los datos de un usuario.
 func (s *userServiceImpl) ActualizarUsuario(ctx context.Context, id, orgID uuid.UUID, actorID uuid.UUID, input ports.ActualizarUsuarioInput) (*ports.UsuarioResumenDTO, error) {
-	// Verificar que el usuario existe en la organización
-	usuario, err := s.userRepo.BuscarUsuarioPorIDEnOrg(ctx, id, orgID)
+	// Verificar que el usuario existe en la organización y no fue eliminado
+	usuario, err := s.buscarModificable(ctx, id, orgID)
 	if err != nil {
 		return nil, err
 	}
@@ -195,15 +197,17 @@ func (s *userServiceImpl) ActualizarUsuario(ctx context.Context, id, orgID uuid.
 	return &dto, nil
 }
 
-// EliminarUsuario realiza un soft-delete del usuario y cierra todas sus sesiones.
+// EliminarUsuario realiza la eliminación lógica del usuario y cierra todas sus
+// sesiones. A diferencia de la suspensión (PUT con activo = false), es
+// irreversible y libera el correo: la fila queda solo por la auditoría.
 func (s *userServiceImpl) EliminarUsuario(ctx context.Context, id, orgID uuid.UUID, actorID uuid.UUID) error {
-	// Verificar que existe en la organización
-	if _, err := s.userRepo.BuscarUsuarioPorIDEnOrg(ctx, id, orgID); err != nil {
+	// Verificar que existe en la organización y que no fue eliminado antes
+	if _, err := s.buscarModificable(ctx, id, orgID); err != nil {
 		return err
 	}
 
-	// Soft-delete: marcar como inactivo
-	if err := s.userRepo.ActualizarUsuario(ctx, id, map[string]any{"activo": false}); err != nil {
+	// Eliminación lógica: eliminado_en y, por el invariante, activo = false
+	if err := s.userRepo.ActualizarUsuario(ctx, id, map[string]any{"activo": false, "eliminado_en": time.Now()}); err != nil {
 		return err
 	}
 
@@ -212,7 +216,7 @@ func (s *userServiceImpl) EliminarUsuario(ctx context.Context, id, orgID uuid.UU
 		log.Printf("[USERS] advertencia: error al invalidar sesiones al eliminar usuario %s: %v", id, err)
 	}
 
-	log.Printf("[USERS] usuario eliminado (soft-delete) | id=%s", id)
+	log.Printf("[USERS] usuario eliminado (eliminación lógica) | id=%s", id)
 	s.auditSvc.Registrar(ctx, ports.RegistrarAuditoriaInput{
 		UsuarioID: actorID,
 		Accion:    ports.AccionEliminarUsuario,
@@ -232,8 +236,8 @@ func (s *userServiceImpl) ObtenerPermisos(ctx context.Context, usuarioID, orgID 
 
 // AsignarPermisos reemplaza todos los permisos de instancia de un usuario operador.
 func (s *userServiceImpl) AsignarPermisos(ctx context.Context, usuarioID, orgID uuid.UUID, actorID uuid.UUID, permisos []ports.PermisoInstanciaInput) error {
-	// Verificar que el usuario existe en la organización
-	if _, err := s.userRepo.BuscarUsuarioPorIDEnOrg(ctx, usuarioID, orgID); err != nil {
+	// Verificar que el usuario existe en la organización y no fue eliminado
+	if _, err := s.buscarModificable(ctx, usuarioID, orgID); err != nil {
 		return err
 	}
 
@@ -253,7 +257,7 @@ func (s *userServiceImpl) AsignarPermisos(ctx context.Context, usuarioID, orgID 
 
 // ResetearContrasena genera una nueva contraseña temporal y la aplica al usuario.
 func (s *userServiceImpl) ResetearContrasena(ctx context.Context, usuarioID, orgID uuid.UUID, actorID uuid.UUID) (string, error) {
-	usuario, err := s.userRepo.BuscarUsuarioPorIDEnOrg(ctx, usuarioID, orgID)
+	usuario, err := s.buscarModificable(ctx, usuarioID, orgID)
 	if err != nil {
 		return "", err
 	}
@@ -299,7 +303,7 @@ func (s *userServiceImpl) ResetearContrasena(ctx context.Context, usuarioID, org
 
 // ResetearTotp invalida el 2FA del usuario, forzando revinculación en el próximo login.
 func (s *userServiceImpl) ResetearTotp(ctx context.Context, usuarioID, orgID uuid.UUID, actorID uuid.UUID) error {
-	if _, err := s.userRepo.BuscarUsuarioPorIDEnOrg(ctx, usuarioID, orgID); err != nil {
+	if _, err := s.buscarModificable(ctx, usuarioID, orgID); err != nil {
 		return err
 	}
 
@@ -453,6 +457,23 @@ func (s *userServiceImpl) CambiarContrasena(ctx context.Context, usuarioID uuid.
 // ==========================================
 
 // construirDetalleDTO arma el UsuarioDetalleDTO incluyendo los permisos de instancia.
+// ErrUsuarioEliminado indica que el usuario fue eliminado (DELETE): su fila se
+// conserva por la auditoría, pero ya no admite cambios.
+var ErrUsuarioEliminado = errors.New("usuario no encontrado: fue eliminado")
+
+// buscarModificable busca el usuario para una operación que lo modifica. Los
+// eliminados se siguen pudiendo consultar (detalle y actividad), pero no modificar.
+func (s *userServiceImpl) buscarModificable(ctx context.Context, id, orgID uuid.UUID) (*domain.Usuario, error) {
+	usuario, err := s.userRepo.BuscarUsuarioPorIDEnOrg(ctx, id, orgID)
+	if err != nil {
+		return nil, err
+	}
+	if usuario.EliminadoEn != nil {
+		return nil, ErrUsuarioEliminado
+	}
+	return usuario, nil
+}
+
 func (s *userServiceImpl) construirDetalleDTO(ctx context.Context, usuario *domain.Usuario) (*ports.UsuarioDetalleDTO, error) {
 	permisosInput, err := s.userRepo.ListarPermisosConNivel(ctx, usuario.ID)
 	if err != nil {
@@ -483,6 +504,7 @@ func (s *userServiceImpl) construirDetalleDTO(ctx context.Context, usuario *doma
 		FechaUltimoAcceso:         usuario.FechaUltimoAcceso,
 		InstanciasPermitidas:      vmids,
 		Permisos:                  permisosDTO,
+		EliminadoEn:               usuario.EliminadoEn,
 	}, nil
 }
 

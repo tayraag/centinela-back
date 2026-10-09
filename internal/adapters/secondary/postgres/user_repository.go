@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"el-centinela/internal/core/domain"
 	"el-centinela/internal/core/ports"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"gorm.io/gorm"
 )
 
@@ -33,7 +35,7 @@ func (r *UserRepository) ListarUsuarios(ctx context.Context, orgID uuid.UUID, fi
 	if err := r.db.WithContext(ctx).
 		Model(&domain.Usuario{}).
 		Select("rol, COUNT(*) as total").
-		Where("organizacion_id = ?", orgID).
+		Where("organizacion_id = ? AND eliminado_en IS NULL", orgID).
 		Group("rol").
 		Scan(&conteos).Error; err != nil {
 		return nil, fmt.Errorf("error al calcular estadísticas de usuarios: %w", err)
@@ -51,8 +53,10 @@ func (r *UserRepository) ListarUsuarios(ctx context.Context, orgID uuid.UUID, fi
 	}
 
 	// --- Construir query de listado con filtros ---
+	// Los usuarios eliminados (eliminado_en) no se listan: sus filas se conservan
+	// solo por la auditoría. Los suspendidos (activo = false) sí.
 	query := r.db.WithContext(ctx).
-		Where("organizacion_id = ?", orgID).
+		Where("organizacion_id = ? AND eliminado_en IS NULL", orgID).
 		Order("fecha_creacion DESC")
 
 	if filtros.Rol != "" {
@@ -84,6 +88,8 @@ func (r *UserRepository) ListarUsuarios(ctx context.Context, orgID uuid.UUID, fi
 }
 
 // BuscarUsuarioPorIDEnOrg busca un usuario verificando que pertenezca a la organización.
+// Encuentra también a los eliminados (para su detalle y su actividad histórica):
+// el servicio impide modificarlos.
 func (r *UserRepository) BuscarUsuarioPorIDEnOrg(ctx context.Context, id, orgID uuid.UUID) (*domain.Usuario, error) {
 	var usuario domain.Usuario
 	result := r.db.WithContext(ctx).
@@ -99,12 +105,14 @@ func (r *UserRepository) BuscarUsuarioPorIDEnOrg(ctx context.Context, id, orgID 
 	return &usuario, nil
 }
 
-// ExisteEmailEnOrg verifica si el email ya está registrado en la organización.
+// ExisteEmailEnOrg verifica si el email ya está registrado en la organización
+// por un usuario no eliminado (activo o suspendido), sin distinguir mayúsculas
+// ni espacios: el mismo criterio que el índice uq_usuarios_email_activo_lower.
 // excluirID permite excluir al propio usuario en operaciones de actualización.
 func (r *UserRepository) ExisteEmailEnOrg(ctx context.Context, email string, orgID uuid.UUID, excluirID *uuid.UUID) (bool, error) {
 	query := r.db.WithContext(ctx).
 		Model(&domain.Usuario{}).
-		Where("email_usuario = ? AND organizacion_id = ?", email, orgID)
+		Where("lower(btrim(email_usuario)) = lower(btrim(?)) AND eliminado_en IS NULL AND organizacion_id = ?", email, orgID)
 	if excluirID != nil {
 		query = query.Where("id != ?", *excluirID)
 	}
@@ -130,9 +138,14 @@ func (r *UserRepository) ExisteUsernameEnOrg(ctx context.Context, username strin
 	return count > 0, nil
 }
 
-// CrearUsuario persiste un nuevo usuario en la base de datos.
+// CrearUsuario persiste un nuevo usuario en la base de datos. Si el correo o el
+// nombre de usuario chocan con un índice único (por ejemplo, dos altas
+// simultáneas con el mismo correo) devuelve el mismo error que la verificación previa.
 func (r *UserRepository) CrearUsuario(ctx context.Context, u *domain.Usuario) error {
 	if err := r.db.WithContext(ctx).Create(u).Error; err != nil {
+		if violacion := violacionUnicidad(err); violacion != "" {
+			return errors.New(violacion)
+		}
 		return fmt.Errorf("error al crear usuario: %w", err)
 	}
 	return nil
@@ -270,4 +283,20 @@ func usuarioAResumenDTO(u domain.Usuario) ports.UsuarioResumenDTO {
 		FechaUltimoAcceso: u.FechaUltimoAcceso,
 		FechaCreacion:     u.FechaCreacion,
 	}
+}
+
+// violacionUnicidad traduce una violación de índice único (SQLSTATE 23505) de
+// usuarios al mensaje de negocio; "" si el error es otro.
+func violacionUnicidad(err error) string {
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "23505" {
+		return ""
+	}
+	if pgErr.ConstraintName == indiceEmailParcial || strings.Contains(pgErr.ConstraintName, "email") {
+		return "el email ya está registrado en esta organización"
+	}
+	if strings.Contains(pgErr.ConstraintName, "nombre_usuario") {
+		return "el nombre de usuario ya está registrado en esta organización"
+	}
+	return ""
 }

@@ -80,6 +80,7 @@ type UsuarioDetalleDTO struct {
 	FechaUltimoAcceso         *time.Time            `json:"fechaUltimoAcceso"`
 	InstanciasPermitidas      []int                 `json:"instanciasPermitidas"` // VMIDs de Proxmox
 	Permisos                  []PermisoInstanciaDTO `json:"permisos"`
+	EliminadoEn               *time.Time            `json:"eliminadoEn,omitempty"` // solo si el usuario fue eliminado (DELETE)
 }
 
 // CrearUsuarioResult es la respuesta al crear un usuario exitosamente.

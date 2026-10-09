@@ -375,7 +375,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Devuelve todos los usuarios de la organización del admin autenticado, con un resumen (` + "`" + `summary` + "`" + `) de totales por rol. Soporta filtros opcionales: ` + "`" + `?rol=ADMIN|OPERATOR` + "`" + `, ` + "`" + `?activo=true|false` + "`" + `, ` + "`" + `?buscar=texto` + "`" + ` (nombre o email).",
+                "description": "Devuelve los usuarios de la organización del admin autenticado, con un resumen (` + "`" + `summary` + "`" + `) de totales por rol. No incluye a los usuarios eliminados (DELETE); sí a los suspendidos (` + "`" + `activo=false` + "`" + `). Soporta filtros opcionales: ` + "`" + `?rol=ADMIN|OPERATOR` + "`" + `, ` + "`" + `?activo=true|false` + "`" + `, ` + "`" + `?buscar=texto` + "`" + ` (nombre o email).",
                 "produces": [
                     "application/json"
                 ],
@@ -567,7 +567,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Actualiza parcialmente los datos de un usuario. Solo se modifican los campos presentes en el body (semántica PATCH). Campos posibles: ` + "`" + `nombreCompleto` + "`" + `, ` + "`" + `emailUsuario` + "`" + `, ` + "`" + `rol` + "`" + `, ` + "`" + `activo` + "`" + `.",
+                "description": "Actualiza parcialmente los datos de un usuario. Solo se modifican los campos presentes en el body (semántica PATCH). Campos posibles: ` + "`" + `nombreCompleto` + "`" + `, ` + "`" + `emailUsuario` + "`" + `, ` + "`" + `rol` + "`" + `, ` + "`" + `activo` + "`" + `. ` + "`" + `activo=false` + "`" + ` suspende la cuenta (reversible: el correo sigue reservado). Un usuario eliminado (DELETE) ya no admite cambios: responde 409.",
                 "consumes": [
                     "application/json"
                 ],
@@ -650,14 +650,14 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Marca al usuario como inactivo (` + "`" + `activo=false` + "`" + `) sin borrarlo físicamente, e invalida todas sus sesiones activas. Un admin no puede eliminarse a sí mismo.",
+                "description": "Elimina al usuario de forma irreversible sin borrar su fila (se conserva por la auditoría): registra ` + "`" + `eliminadoEn` + "`" + `, lo deja con ` + "`" + `activo=false` + "`" + ` e invalida todas sus sesiones. A diferencia de la suspensión (PUT con ` + "`" + `activo=false` + "`" + `), libera el correo: se puede crear una cuenta nueva con el mismo email (el nombre de usuario sigue siendo único para siempre). Desaparece del listado, pero su detalle y su actividad siguen disponibles. Un admin no puede eliminarse a sí mismo; eliminar a un usuario ya eliminado responde 404.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "Usuarios (Admin)"
                 ],
-                "summary": "Eliminar usuario (soft-delete)",
+                "summary": "Eliminar usuario (eliminación lógica)",
                 "parameters": [
                     {
                         "type": "string",
@@ -3005,6 +3005,10 @@ const docTemplate = `{
                 },
                 "cambioContrasenaRequerido": {
                     "type": "boolean"
+                },
+                "eliminadoEn": {
+                    "description": "solo si el usuario fue eliminado (DELETE)",
+                    "type": "string"
                 },
                 "emailUsuario": {
                     "type": "string"

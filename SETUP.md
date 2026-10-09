@@ -491,7 +491,7 @@ centinela-back/
 | POST   | `/api/admin/users`                    | `RequireAuth` + `RequireRole("ADMIN")` | Crear usuario → devuelve contrasenaTemp           |
 | GET    | `/api/admin/users/:id`                | `RequireAuth` + `RequireRole("ADMIN")` | Detalle con instanciasPermitidas                  |
 | PUT    | `/api/admin/users/:id`                | `RequireAuth` + `RequireRole("ADMIN")` | Actualizar nombre/email/rol/estado                |
-| DELETE | `/api/admin/users/:id`                | `RequireAuth` + `RequireRole("ADMIN")` | Soft-delete + cierra sesiones                     |
+| DELETE | `/api/admin/users/:id`                | `RequireAuth` + `RequireRole("ADMIN")` | Eliminación lógica + cierra sesiones              |
 | GET    | `/api/admin/users/:id/permissions`    | `RequireAuth` + `RequireRole("ADMIN")` | Permisos de instancias con su nivel de acceso     |
 | PUT    | `/api/admin/users/:id/permissions`    | `RequireAuth` + `RequireRole("ADMIN")` | Reemplazar permisos de instancias                 |
 | GET    | `/api/admin/users/:id/activity`       | `RequireAuth` + `RequireRole("ADMIN")` | Auditoría filtrada del usuario                    |
@@ -742,7 +742,7 @@ curl.exe -s -i -X POST http://localhost:8080/api/auth/logout -H "Content-Type: a
 
 ---
 
-### 12.12 Soft-delete de usuario
+### 12.12 Eliminación lógica de usuario
 
 ```powershell
 curl.exe -s -i -X DELETE "http://localhost:8080/api/admin/users/$UID" -H "Authorization: Bearer $ACCESS"
@@ -750,7 +750,9 @@ curl.exe -s -i -X DELETE "http://localhost:8080/api/admin/users/$UID" -H "Author
 
 **Respuesta esperada: `HTTP/1.1 204 No Content`**
 
-> El usuario queda con `activo: false` en la BD (no se borra físicamente) y sus sesiones activas se invalidan.
+> El usuario queda con `activo: false` y `eliminado_en` con la fecha (no se borra físicamente: la fila se conserva por la auditoría) y sus sesiones activas se invalidan. Su correo queda libre para una cuenta nueva; el nombre de usuario no.
+>
+> No confundir con la **suspensión** (`PUT` con `"activo": false`): es reversible y el correo sigue reservado para esa cuenta.
 
 ---
 

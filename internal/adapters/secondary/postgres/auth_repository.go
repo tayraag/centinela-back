@@ -23,12 +23,14 @@ func NewAuthRepository(db *gorm.DB) *AuthRepository {
 	return &AuthRepository{db: db}
 }
 
-// BuscarUsuarioPorEmail busca un usuario por su email.
+// BuscarUsuarioPorEmail busca el usuario no eliminado con ese email (sin
+// distinguir mayúsculas ni espacios). Un mismo correo puede estar en varias
+// filas eliminadas, pero en una sola no eliminada (uq_usuarios_email_activo_lower).
 // Retorna un error descriptivo si no se encuentra o si hay un error de BD.
 func (r *AuthRepository) BuscarUsuarioPorEmail(ctx context.Context, email string) (*domain.Usuario, error) {
 	var usuario domain.Usuario
 	result := r.db.WithContext(ctx).
-		Where("email_usuario = ?", email).
+		Where("lower(btrim(email_usuario)) = lower(btrim(?)) AND eliminado_en IS NULL", email).
 		First(&usuario)
 
 	if result.Error != nil {

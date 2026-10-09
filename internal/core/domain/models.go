@@ -27,9 +27,16 @@ type Usuario struct {
 
 	NombreCompleto string `gorm:"type:varchar(255);not null" json:"nombreCompleto"`
 	NombreUsuario  string `gorm:"type:varchar(100);uniqueIndex;not null" json:"nombreUsuario"`
-	EmailUsuario   string `gorm:"type:varchar(255);uniqueIndex;not null" json:"emailUsuario"`
+	// La unicidad del correo NO va en el tag: la garantiza el índice único parcial
+	// uq_usuarios_email_activo_lower, sobre lower(btrim(email_usuario)) y solo
+	// entre los no eliminados (ver postgres/migrar_usuarios.go).
+	EmailUsuario   string `gorm:"type:varchar(255);not null" json:"emailUsuario"`
 	ContrasenaHash string `gorm:"type:varchar(255);not null" json:"-"` // Oculto en JSON
 
+	// Activo = false sin EliminadoEn es una suspensión (PUT, reversible: el
+	// correo sigue reservado). Con EliminadoEn es una eliminación lógica (DELETE,
+	// irreversible: el correo queda libre). Invariante: EliminadoEn != nil ⇒
+	// Activo = false (constraint ck_usuarios_eliminado_inactivo).
 	Rol              string `gorm:"type:varchar(50);not null" json:"rol"` // ADMIN u OPERATOR
 	Activo           bool   `gorm:"default:true" json:"activo"`
 	CambioContrasena bool   `gorm:"default:false" json:"cambioContrasenaRequerido"` // Si es true, debe cambiar la clave al loguearse
@@ -46,6 +53,7 @@ type Usuario struct {
 
 	FechaUltimoAcceso *time.Time `json:"fechaUltimoAcceso"` // Puntero porque puede ser null inicialmente
 	FechaCreacion     time.Time  `gorm:"default:now()" json:"fechaCreacion"`
+	EliminadoEn       *time.Time `gorm:"column:eliminado_en;type:timestamptz;index" json:"eliminadoEn,omitempty"`
 
 	// Relaciones Has-Many (Para Foreign Keys)
 	SesionesActivas   []SesionActiva     `gorm:"foreignKey:UsuarioID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;" json:"-"`
@@ -93,7 +101,7 @@ type PermisoInstancia struct {
 
 type Auditoria struct {
 	ID        uuid.UUID  `gorm:"type:uuid;primaryKey;default:uuid_generate_v7()" json:"id"`
-	UsuarioID *uuid.UUID `gorm:"type:uuid;index:idx_auditoria_usuario_fecha" json:"usuarioId"` // Puntero: SET NULL si se elimina el usuario
+	UsuarioID *uuid.UUID `gorm:"type:uuid;index:idx_auditoria_usuario_fecha" json:"usuarioId"` // Puntero: NULL en eventos sin actor. FK ON DELETE RESTRICT: un usuario con auditoría no se puede borrar físicamente (se elimina lógicamente con eliminado_en)
 
 	Accion          string `gorm:"type:varchar(100);not null;index:idx_auditoria_accion" json:"accion"`
 	InstanciaID     string `gorm:"type:varchar(100);index:idx_auditoria_instancia" json:"instanciaId"`

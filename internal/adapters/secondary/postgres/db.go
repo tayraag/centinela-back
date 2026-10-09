@@ -58,6 +58,12 @@ func InitDB() (*gorm.DB, error) {
 	}
 	log.Println("✅ Migración completada exitosamente")
 
+	// Eliminación lógica de usuarios y unicidad del correo solo entre los no
+	// eliminados (idempotente; ver migrar_usuarios.go).
+	if err := migrarUnicidadEmail(db); err != nil {
+		return nil, err
+	}
+
 	// Crear tabla auditoria particionada e índices locales (idempotente)
 	if err := migrarAuditoriaParticionada(db); err != nil {
 		return nil, err
