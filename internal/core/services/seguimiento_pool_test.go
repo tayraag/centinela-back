@@ -86,7 +86,7 @@ func nuevoEntornoPool(t *testing.T, cfg services.ConfigSeguimiento, px *proxmoxP
 		pub:   &publicadorFalso{publicados: make(chan ports.RealtimeEvent, 500)},
 		audit: &auditoriaGrabadora{},
 	}
-	e.pool = services.NewSeguimientoTareas(px, e.repo, e.pub, e.audit, cfg)
+	e.pool = nuevoSeguimiento(px, e.repo, e.pub, e.audit, cfg)
 	return e
 }
 

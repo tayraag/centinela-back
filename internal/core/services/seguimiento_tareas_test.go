@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -124,11 +125,28 @@ func (p *publicadorFalso) Publicar(_ context.Context, ev ports.RealtimeEvent) er
 	return nil
 }
 
+// nuevoSeguimiento crea el pool con el mismo OnTaskFinished que arma
+// cmd/api/main.go: audita el resultado y publica TASK_FINISHED.
+func nuevoSeguimiento(px ports.ProxmoxPort, repo ports.TareaRepository, pub ports.EventosService, audit ports.AuditService, cfg services.ConfigSeguimiento) *services.PoolSeguimiento {
+	cfg.OnTaskFinished = func(ctx context.Context, tarea *domain.TareaAsincrona, recursoTipo string, r services.ResultadoTarea) {
+		resultado := ports.ResultadoExito
+		if r.Estado != ports.TareaCompleted {
+			resultado = ports.ResultadoFalla
+		}
+		audit.Registrar(ctx, ports.RegistrarAuditoriaInput{
+			UsuarioID: tarea.UsuarioID, Accion: strings.ToUpper(tarea.Accion),
+			InstanciaID: tarea.InstanciaID, Resultado: resultado, Detalles: r.Detalles(tarea),
+		})
+		_ = pub.Publicar(ctx, services.EventoTareaFinalizada(tarea, recursoTipo, r))
+	}
+	return services.NewSeguimientoTareas(px, repo, cfg)
+}
+
 func seguirTarea(t *testing.T, px *proxmoxTareas, accion string) (uuid.UUID, *tareasEnMemoria, ports.RealtimeEvent) {
 	t.Helper()
 	repo := &tareasEnMemoria{tareas: map[uuid.UUID]*domain.TareaAsincrona{}}
 	pub := &publicadorFalso{publicados: make(chan ports.RealtimeEvent, 1)}
-	seg := services.NewSeguimientoTareas(px, repo, pub, &auditoriaGrabadora{}, services.ConfigSeguimiento{Intervalo: 10 * time.Millisecond})
+	seg := nuevoSeguimiento(px, repo, pub, &auditoriaGrabadora{}, services.ConfigSeguimiento{Intervalo: 10 * time.Millisecond})
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	seg.Iniciar(ctx)
@@ -143,7 +161,7 @@ func seguirTarea(t *testing.T, px *proxmoxTareas, accion string) (uuid.UUID, *ta
 	select {
 	case ev := <-pub.publicados:
 		return id, repo, ev
-	case <-time.After(3 * time.Second):
+	case <-time.After(10 * time.Second): // con errores de red hay backoff de 1, 2, 4… s
 		t.Fatal("No se publicó TASK_FINISHED")
 		return id, repo, ports.RealtimeEvent{}
 	}
