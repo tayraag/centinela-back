@@ -1,6 +1,7 @@
 package http
 
 import (
+	"errors"
 	"net/http"
 	"os"
 	"strings"
@@ -56,7 +57,8 @@ type LoginRequest struct {
 // @Param        body body LoginRequest true "Credenciales de acceso"
 // @Success      200 {object} ports.LoginResult
 // @Failure      400 {object} ErrorResponse "Formato de petición inválido"
-// @Failure      401 {object} ErrorResponse "Credenciales incorrectas"
+// @Failure      401 {object} ErrorResponse "AUTH_FAILED — credenciales incorrectas o cuenta eliminada"
+// @Failure      403 {object} ErrorResponse "USER_INACTIVE — credenciales correctas pero la cuenta está suspendida"
 // @Router       /auth/login [post]
 func (h *AuthHandler) Login(c *gin.Context) {
 	var req LoginRequest
@@ -70,7 +72,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 
 	result, err := h.service.Login(c.Request.Context(), req.Email, req.Contrasena)
 	if err != nil {
-		SendError(c, http.StatusUnauthorized, "AUTH_FAILED", err.Error())
+		responderErrorAutenticacion(c, err, "AUTH_FAILED")
 		return
 	}
 
@@ -136,6 +138,8 @@ func (h *AuthHandler) ObtenerQR(c *gin.Context) {
 	if err != nil {
 		if strings.Contains(err.Error(), "el doble factor ya está activo") {
 			SendError(c, http.StatusConflict, "TWO_FACTOR_ALREADY_ENABLED", err.Error())
+		} else if errors.Is(err, ports.ErrCuentaSuspendida) {
+			responderErrorAutenticacion(c, err, "QR_ERROR")
 		} else {
 			SendError(c, http.StatusBadRequest, "QR_ERROR", err.Error())
 		}
@@ -165,7 +169,8 @@ type verificarTotpRequest struct {
 // @Param        body body verificarTotpRequest true "Código TOTP de 6 dígitos"
 // @Success      200 {object} ports.TokenResult
 // @Failure      400 {object} ErrorResponse "Código inválido (no tiene 6 dígitos)"
-// @Failure      401 {object} ErrorResponse "Código TOTP incorrecto o ya utilizado (anti-replay)"
+// @Failure      401 {object} ErrorResponse "TOTP_FAILED — código incorrecto o ya utilizado (anti-replay), o la cuenta fue eliminada durante el login"
+// @Failure      403 {object} ErrorResponse "USER_INACTIVE — la cuenta fue suspendida durante el login"
 // @Router       /auth/2fa/verify [post]
 func (h *AuthHandler) VerificarTotp(c *gin.Context) {
 	var req verificarTotpRequest
@@ -183,7 +188,7 @@ func (h *AuthHandler) VerificarTotp(c *gin.Context) {
 
 	result, err := h.service.VerificarTotp(c.Request.Context(), jtiStr, req.Codigo)
 	if err != nil {
-		SendError(c, http.StatusUnauthorized, "TOTP_FAILED", err.Error())
+		responderErrorAutenticacion(c, err, "TOTP_FAILED")
 		return
 	}
 
@@ -302,4 +307,15 @@ func (h *AuthHandler) ConfirmarRecuperacion(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Contraseña actualizada exitosamente. Ya puedes iniciar sesión.",
 	})
+}
+
+// responderErrorAutenticacion: una cuenta suspendida responde 403 USER_INACTIVE
+// (solo se informa con credenciales correctas); cualquier otra falla, incluida
+// una cuenta eliminada, responde 401 con el código del paso.
+func responderErrorAutenticacion(c *gin.Context, err error, codigo string) {
+	if errors.Is(err, ports.ErrCuentaSuspendida) {
+		SendError(c, http.StatusForbidden, "USER_INACTIVE", "La cuenta está suspendida. Contacte al administrador.")
+		return
+	}
+	SendError(c, http.StatusUnauthorized, codigo, err.Error())
 }

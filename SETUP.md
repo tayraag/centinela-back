@@ -599,6 +599,8 @@ curl.exe -s -X POST http://localhost:8080/api/admin/users -H "Content-Type: appl
 ```
 
 > 📋 El admin copia `contrasenaTemp` y se la comparte al nuevo usuario por su propio canal seguro.
+>
+> ⚠️ **Riesgo conocido en altas simultáneas:** el correo con la clave temporal se envía **antes** de guardar el usuario. Si dos admins dan de alta el mismo correo a la vez, los dos pueden recibir el envío pero solo uno se guarda (el otro responde `409 USER_EMAIL_ALREADY_EXISTS`), y el correo del rechazado lleva una clave que no sirve. No hay transacción entre el SMTP y la base; el caso es raro y no deja datos inconsistentes.
 
 Guardá el ID del nuevo usuario:
 
@@ -754,6 +756,15 @@ curl.exe -s -i -X DELETE "http://localhost:8080/api/admin/users/$UID" -H "Author
 >
 > No confundir con la **suspensión** (`PUT` con `"activo": false`): es reversible y el correo sigue reservado para esa cuenta.
 
+| | Suspendida (`PUT activo=false`) | Eliminada (`DELETE`) |
+|---|---|---|
+| Login | `403 USER_INACTIVE` (con la clave correcta) | `401 AUTH_FAILED`, como si no existiera |
+| Tokens y sesiones | Revocados | Revocados; un fallo al revocar devuelve `503` y la baja no se aplica |
+| Código de recuperación | Sigue vigente | Se borra |
+| Reactivar (`PUT activo=true`) | Sí | No: `404 USER_NOT_FOUND` (también para editar, permisos y resets) |
+| Su correo | Reservado | Libre para una cuenta nueva (UUID, clave y 2FA nuevos, sin permisos heredados) |
+| Su nombre de usuario | Reservado | Reservado para siempre |
+
 ---
 
 ### 12.13 Casos de error (verificar comportamiento)
@@ -770,7 +781,8 @@ curl.exe -s -i -X DELETE "http://localhost:8080/api/admin/users/<TU_PROPIO_UUID>
 ```powershell
 # Intentar crear otro usuario con el mismo email
 curl.exe -s -X POST http://localhost:8080/api/admin/users -H "Content-Type: application/json" -H "Authorization: Bearer $ACCESS" -d "@body_newuser.json"
-# HTTP 409 — errorCode: USER_CONFLICT
+# HTTP 409 — errorCode: USER_EMAIL_ALREADY_EXISTS
+# (con un nombre de usuario repetido: USER_USERNAME_ALREADY_EXISTS)
 ```
 
 **Sin token → 401:**

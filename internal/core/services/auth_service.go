@@ -57,7 +57,8 @@ func NewAuthService(repo ports.AuthRepository, kv ports.KeyValueStore, emailServ
 func (s *authServiceImpl) Login(ctx context.Context, email, contrasena string) (*ports.LoginResult, error) {
 	log.Printf("[AUTH] login attempt | email=%s", email)
 
-	// 1. Buscar usuario por email
+	// 1. Buscar el usuario NO eliminado con ese email. Las cuentas eliminadas que
+	//    usaron el mismo correo no participan: para el login no existen.
 	usuario, err := s.repo.BuscarUsuarioPorEmail(ctx, email)
 	if err != nil {
 		log.Printf("[AUTH] login failed | email=%s | reason=user_not_found", email)
@@ -65,13 +66,8 @@ func (s *authServiceImpl) Login(ctx context.Context, email, contrasena string) (
 		return nil, fmt.Errorf("credenciales inválidas")
 	}
 
-	// 2. Verificar que el usuario está activo
-	if !usuario.Activo {
-		log.Printf("[AUTH] login failed | email=%s | reason=account_inactive", email)
-		return nil, fmt.Errorf("cuenta desactivada, contacte al administrador")
-	}
-
-	// 3. Verificar contraseña
+	// 2. Verificar contraseña (antes que el estado: con una clave incorrecta no
+	//    se revela si la cuenta está suspendida)
 	if !crypto.VerificarContrasena(usuario.ContrasenaHash, contrasena) {
 		log.Printf("[AUTH] login failed | email=%s | reason=wrong_password", email)
 		s.auditSvc.Registrar(ctx, ports.RegistrarAuditoriaInput{
@@ -81,6 +77,12 @@ func (s *authServiceImpl) Login(ctx context.Context, email, contrasena string) (
 			Detalles:  map[string]any{"razon": "contraseña incorrecta"},
 		})
 		return nil, fmt.Errorf("credenciales inválidas")
+	}
+
+	// 3. Verificar que la cuenta no está suspendida
+	if !usuario.Activo {
+		log.Printf("[AUTH] login failed | email=%s | reason=account_suspended", email)
+		return nil, ports.ErrCuentaSuspendida
 	}
 
 	// 4. Registrar la sesión temporal pre-2FA SOLO en el almacén efímero, nunca en
@@ -147,6 +149,9 @@ func (s *authServiceImpl) ObtenerQRParaVinculacion(ctx context.Context, jtiTempo
 	if err != nil {
 		return nil, fmt.Errorf("usuario no encontrado: %w", err)
 	}
+	if err := cuentaHabilitada(usuario); err != nil {
+		return nil, err
+	}
 
 	// Verificar que el JWT secret es correcto (no expuesto al cliente)
 	_ = jwtSecret // Se usa en el middleware, aquí solo necesitamos la sesión de BD
@@ -194,6 +199,18 @@ func (s *authServiceImpl) ObtenerQRParaVinculacion(ctx context.Context, jtiTempo
 // ==========================================
 
 // VerificarTotp valida el código TOTP y emite access + refresh tokens si es correcto.
+// cuentaHabilitada rechaza el 2FA de una cuenta eliminada (como credenciales
+// inválidas: para la autenticación esa cuenta ya no existe) o suspendida.
+func cuentaHabilitada(usuario *domain.Usuario) error {
+	if usuario.EliminadoEn != nil {
+		return fmt.Errorf("credenciales inválidas")
+	}
+	if !usuario.Activo {
+		return ports.ErrCuentaSuspendida
+	}
+	return nil
+}
+
 func (s *authServiceImpl) VerificarTotp(ctx context.Context, jtiTemporal, codigo string) (*ports.TokenResult, error) {
 	jwtSecret := os.Getenv("JWT_SECRET")
 	encKey := os.Getenv("TOTP_ENCRYPTION_KEY")
@@ -204,10 +221,15 @@ func (s *authServiceImpl) VerificarTotp(ctx context.Context, jtiTemporal, codigo
 		return nil, err
 	}
 
-	// 2. Buscar usuario y validar TOTP
+	// 2. Buscar usuario y validar TOTP. La cuenta pudo haberse suspendido o
+	//    eliminado después del paso 1 (el token temporal vive 5 minutos).
 	usuario, err := s.repo.BuscarUsuarioPorID(ctx, usuarioID)
 	if err != nil {
 		return nil, fmt.Errorf("usuario no encontrado: %w", err)
+	}
+	if err := cuentaHabilitada(usuario); err != nil {
+		log.Printf("[2FA] totp rejected | user=%s | reason=%v", usuario.EmailUsuario, err)
+		return nil, err
 	}
 	if usuario.SecretoTotpCifrado == "" {
 		return nil, fmt.Errorf("el usuario no tiene TOTP configurado, obtenga primero el QR")

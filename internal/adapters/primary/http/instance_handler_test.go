@@ -181,6 +181,9 @@ func (m *mockUserRepository) ExisteUsernameEnOrg(ctx context.Context, username s
 func (m *mockUserRepository) CrearUsuario(ctx context.Context, u *domain.Usuario) error {
 	return nil
 }
+func (m *mockUserRepository) EliminarLogicamente(context.Context, uuid.UUID, func([]uuid.UUID) error) error {
+	return nil
+}
 func (m *mockUserRepository) ActualizarUsuario(ctx context.Context, id uuid.UUID, cambios map[string]any) error {
 	return nil
 }

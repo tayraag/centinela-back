@@ -77,7 +77,7 @@ func (h *AccountHandler) ActualizarPerfil(c *gin.Context) {
 	userID := extraerUserID(c)
 	usuario, err := h.service.ActualizarPerfil(c.Request.Context(), userID, input)
 	if err != nil {
-		SendError(c, http.StatusConflict, "PROFILE_UPDATE_CONFLICT", err.Error())
+		responderErrorUsuario(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, usuario)

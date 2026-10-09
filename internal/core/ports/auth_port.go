@@ -89,6 +89,11 @@ type AuthRepository interface {
 // ErrSesionRevocada indica que la sesión no existe, fue cerrada o revocada, o venció.
 var ErrSesionRevocada = errors.New("sesión revocada o expirada")
 
+// ErrCuentaSuspendida: credenciales correctas, pero la cuenta está suspendida
+// (activo = false y no eliminada). Se informa solo después de validar la
+// contraseña, para no revelar el estado de cuentas ajenas.
+var ErrCuentaSuspendida = errors.New("la cuenta está suspendida, contacte al administrador")
+
 // VerificadorSesion es lo que necesitan los middlewares de autenticación para
 // saber si un token sigue perteneciendo a una sesión viva.
 type VerificadorSesion interface {

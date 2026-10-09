@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"time"
 
 	"el-centinela/internal/core/domain"
 	"el-centinela/internal/core/ports"
@@ -65,7 +64,18 @@ func (s *userServiceImpl) ObtenerUsuario(ctx context.Context, id, orgID uuid.UUI
 }
 
 // CrearUsuario crea un nuevo usuario con contraseña temporal generada automáticamente.
-// No envía email (Plan A): devuelve la contraseña en texto plano solo en este momento.
+//
+// La cuenta nueva es independiente de cualquier cuenta eliminada que haya usado
+// el mismo correo: UUID nuevo, nombre de usuario distinto (es único para
+// siempre), clave temporal y 2FA propios, y sin permisos ni sesiones heredados.
+//
+// Riesgo conocido: el correo con la clave temporal se envía ANTES del INSERT
+// (para no crear cuentas sin credenciales entregadas). Si dos altas con el mismo
+// correo compiten, las dos pueden pasar la verificación previa y enviar su
+// correo, pero el índice único deja entrar solo a una: la otra responde 409
+// USER_EMAIL_ALREADY_EXISTS y su correo ya enviado lleva una clave que no sirve.
+// No hay transacción distribuida entre SMTP y PostgreSQL; el caso es raro (dos
+// admins dando de alta el mismo correo a la vez) y no deja datos inconsistentes.
 func (s *userServiceImpl) CrearUsuario(ctx context.Context, orgID uuid.UUID, actorID uuid.UUID, input ports.CrearUsuarioInput) (*ports.CrearUsuarioResult, error) {
 	log.Printf("[USERS] crear usuario | email=%s | rol=%s | org=%s", input.EmailUsuario, input.Rol, orgID)
 
@@ -73,13 +83,13 @@ func (s *userServiceImpl) CrearUsuario(ctx context.Context, orgID uuid.UUID, act
 	if existe, err := s.userRepo.ExisteEmailEnOrg(ctx, input.EmailUsuario, orgID, nil); err != nil {
 		return nil, err
 	} else if existe {
-		return nil, fmt.Errorf("el email ya está registrado en esta organización")
+		return nil, ports.ErrEmailYaRegistrado
 	}
 
 	if existe, err := s.userRepo.ExisteUsernameEnOrg(ctx, input.NombreUsuario, orgID, nil); err != nil {
 		return nil, err
 	} else if existe {
-		return nil, fmt.Errorf("el nombre de usuario ya está registrado en esta organización")
+		return nil, ports.ErrUsernameYaRegistrado
 	}
 
 	// 2. Generar contraseña temporal segura
@@ -152,7 +162,7 @@ func (s *userServiceImpl) ActualizarUsuario(ctx context.Context, id, orgID uuid.
 		if existe, err := s.userRepo.ExisteEmailEnOrg(ctx, input.EmailUsuario, orgID, &id); err != nil {
 			return nil, err
 		} else if existe {
-			return nil, fmt.Errorf("el email ya está registrado en esta organización")
+			return nil, ports.ErrEmailYaRegistrado
 		}
 		cambios["email_usuario"] = input.EmailUsuario
 	}
@@ -197,23 +207,43 @@ func (s *userServiceImpl) ActualizarUsuario(ctx context.Context, id, orgID uuid.
 	return &dto, nil
 }
 
-// EliminarUsuario realiza la eliminación lógica del usuario y cierra todas sus
-// sesiones. A diferencia de la suspensión (PUT con activo = false), es
-// irreversible y libera el correo: la fila queda solo por la auditoría.
+// EliminarUsuario realiza la eliminación lógica del usuario. A diferencia de la
+// suspensión (PUT con activo = false), es irreversible y libera el correo: la
+// fila queda solo por la auditoría.
+//
+// Es fail-closed: en una sola transacción marca eliminado_en, borra el código de
+// recuperación e invalida sus sesiones en PostgreSQL, y antes del COMMIT las
+// borra de Redis y corta sus streams SSE. Si algo de eso falla se deshace todo y
+// se devuelve ports.ErrRevocacionFallida: nunca se informa una baja con el
+// acceso todavía vivo. Los tokens temporales pre-2FA y los tickets SSE que
+// queden sueltos ya no sirven: VerificarTotp exige una cuenta activa y abrir un
+// stream exige una sesión activa.
 func (s *userServiceImpl) EliminarUsuario(ctx context.Context, id, orgID uuid.UUID, actorID uuid.UUID) error {
 	// Verificar que existe en la organización y que no fue eliminado antes
 	if _, err := s.buscarModificable(ctx, id, orgID); err != nil {
 		return err
 	}
 
-	// Eliminación lógica: eliminado_en y, por el invariante, activo = false
-	if err := s.userRepo.ActualizarUsuario(ctx, id, map[string]any{"activo": false, "eliminado_en": time.Now()}); err != nil {
+	err := s.userRepo.EliminarLogicamente(ctx, id, func(sesionIDs []uuid.UUID) error {
+		if err := s.sesiones.eliminarSesiones(ctx, sesionIDs...); err != nil {
+			return fmt.Errorf("sesiones en el almacén efímero: %w", err)
+		}
+		if err := s.bus.publicar(ctx, ports.MensajeBus{Tipo: ports.MensajeSesionesRevocadas, UsuarioID: &id}); err != nil {
+			return fmt.Errorf("corte de streams SSE: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		log.Printf("[USERS] no se eliminó el usuario %s: %v", id, err)
+		if errors.Is(err, ports.ErrRevocacionFallida) {
+			s.auditSvc.Registrar(ctx, ports.RegistrarAuditoriaInput{
+				UsuarioID: actorID,
+				Accion:    ports.AccionEliminarUsuario,
+				Resultado: ports.ResultadoFalla,
+				Detalles:  map[string]any{"usuarioEliminado": id.String(), "razon": "no se pudo revocar el acceso"},
+			})
+		}
 		return err
-	}
-
-	// Cerrar todas sus sesiones activas
-	if err := revocarSesionesDeUsuario(ctx, s.authRepo, s.sesiones, s.bus, id); err != nil {
-		log.Printf("[USERS] advertencia: error al invalidar sesiones al eliminar usuario %s: %v", id, err)
 	}
 
 	log.Printf("[USERS] usuario eliminado (eliminación lógica) | id=%s", id)
@@ -388,7 +418,7 @@ func (s *userServiceImpl) ActualizarPerfil(ctx context.Context, usuarioID uuid.U
 		if existe, err := s.userRepo.ExisteEmailEnOrg(ctx, input.EmailUsuario, usuario.OrganizacionID, &usuarioID); err != nil {
 			return nil, err
 		} else if existe {
-			return nil, fmt.Errorf("el email ya está en uso")
+			return nil, ports.ErrEmailYaRegistrado
 		}
 		cambios["email_usuario"] = input.EmailUsuario
 	}
@@ -457,10 +487,6 @@ func (s *userServiceImpl) CambiarContrasena(ctx context.Context, usuarioID uuid.
 // ==========================================
 
 // construirDetalleDTO arma el UsuarioDetalleDTO incluyendo los permisos de instancia.
-// ErrUsuarioEliminado indica que el usuario fue eliminado (DELETE): su fila se
-// conserva por la auditoría, pero ya no admite cambios.
-var ErrUsuarioEliminado = errors.New("usuario no encontrado: fue eliminado")
-
 // buscarModificable busca el usuario para una operación que lo modifica. Los
 // eliminados se siguen pudiendo consultar (detalle y actividad), pero no modificar.
 func (s *userServiceImpl) buscarModificable(ctx context.Context, id, orgID uuid.UUID) (*domain.Usuario, error) {
@@ -469,7 +495,7 @@ func (s *userServiceImpl) buscarModificable(ctx context.Context, id, orgID uuid.
 		return nil, err
 	}
 	if usuario.EliminadoEn != nil {
-		return nil, ErrUsuarioEliminado
+		return nil, ports.ErrUsuarioEliminado
 	}
 	return usuario, nil
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"el-centinela/internal/core/domain"
 	"el-centinela/internal/core/ports"
@@ -98,7 +99,7 @@ func (r *UserRepository) BuscarUsuarioPorIDEnOrg(ctx context.Context, id, orgID 
 
 	if result.Error != nil {
 		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
-			return nil, fmt.Errorf("usuario no encontrado")
+			return nil, ports.ErrUsuarioNoEncontrado
 		}
 		return nil, fmt.Errorf("error al buscar usuario: %w", result.Error)
 	}
@@ -143,8 +144,8 @@ func (r *UserRepository) ExisteUsernameEnOrg(ctx context.Context, username strin
 // simultáneas con el mismo correo) devuelve el mismo error que la verificación previa.
 func (r *UserRepository) CrearUsuario(ctx context.Context, u *domain.Usuario) error {
 	if err := r.db.WithContext(ctx).Create(u).Error; err != nil {
-		if violacion := violacionUnicidad(err); violacion != "" {
-			return errors.New(violacion)
+		if violacion := violacionUnicidad(err); violacion != nil {
+			return violacion
 		}
 		return fmt.Errorf("error al crear usuario: %w", err)
 	}
@@ -152,18 +153,66 @@ func (r *UserRepository) CrearUsuario(ctx context.Context, u *domain.Usuario) er
 }
 
 // ActualizarUsuario aplica cambios parciales a un usuario (solo los campos del mapa).
+// Nunca toca a un usuario eliminado: una cuenta eliminada es inmutable (si un
+// DELETE se adelanta a esta escritura, devuelve ports.ErrUsuarioEliminado).
 func (r *UserRepository) ActualizarUsuario(ctx context.Context, id uuid.UUID, cambios map[string]any) error {
 	result := r.db.WithContext(ctx).
 		Model(&domain.Usuario{}).
-		Where("id = ?", id).
+		Where("id = ? AND eliminado_en IS NULL", id).
 		Updates(cambios)
 	if result.Error != nil {
+		if violacion := violacionUnicidad(result.Error); violacion != nil {
+			return violacion
+		}
 		return fmt.Errorf("error al actualizar usuario: %w", result.Error)
 	}
 	if result.RowsAffected == 0 {
-		return fmt.Errorf("usuario no encontrado")
+		return ports.ErrUsuarioEliminado
 	}
 	return nil
+}
+
+// EliminarLogicamente implementa la baja de ports.UserRepository en una sola
+// transacción: marca eliminado_en (UTC) y activo = false, borra el código de
+// recuperación vigente e invalida las sesiones activas. revocar se llama antes
+// del COMMIT con los IDs de esas sesiones (para borrarlas de Redis): si falla,
+// se hace ROLLBACK y el usuario queda como estaba (fail-closed). No toca otras
+// tablas: permisos, tareas y auditoría quedan como historial.
+func (r *UserRepository) EliminarLogicamente(ctx context.Context, id uuid.UUID, revocar func(sesionIDs []uuid.UUID) error) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		baja := tx.Model(&domain.Usuario{}).
+			Where("id = ? AND eliminado_en IS NULL", id).
+			Updates(map[string]any{
+				"activo":                false,
+				"eliminado_en":          time.Now().UTC(),
+				"codigo_recuperacion":   nil,
+				"expiracion_codigo":     nil,
+				"intentos_recuperacion": 0,
+			})
+		if baja.Error != nil {
+			return fmt.Errorf("error al eliminar usuario: %w", baja.Error)
+		}
+		if baja.RowsAffected == 0 {
+			return ports.ErrUsuarioEliminado
+		}
+
+		var sesiones []uuid.UUID
+		if err := tx.Model(&domain.SesionActiva{}).
+			Where("usuario_id = ? AND activa = true", id).
+			Pluck("id", &sesiones).Error; err != nil {
+			return fmt.Errorf("%w: %v", ports.ErrRevocacionFallida, err)
+		}
+		if len(sesiones) > 0 {
+			if err := tx.Model(&domain.SesionActiva{}).Where("id IN ?", sesiones).
+				Updates(map[string]any{"activa": false, "fecha_actualizacion": time.Now()}).Error; err != nil {
+				return fmt.Errorf("%w: %v", ports.ErrRevocacionFallida, err)
+			}
+		}
+		if err := revocar(sesiones); err != nil {
+			return fmt.Errorf("%w: %v", ports.ErrRevocacionFallida, err)
+		}
+		return nil
+	})
 }
 
 // ListarPermisosDeUsuario devuelve los VMIDs a los que tiene acceso un usuario,
@@ -286,17 +335,18 @@ func usuarioAResumenDTO(u domain.Usuario) ports.UsuarioResumenDTO {
 }
 
 // violacionUnicidad traduce una violación de índice único (SQLSTATE 23505) de
-// usuarios al mensaje de negocio; "" si el error es otro.
-func violacionUnicidad(err error) string {
+// usuarios al error de negocio; nil si el error es otro (que NO se presenta como
+// conflicto: es un error de la base).
+func violacionUnicidad(err error) error {
 	var pgErr *pgconn.PgError
 	if !errors.As(err, &pgErr) || pgErr.Code != "23505" {
-		return ""
+		return nil
 	}
 	if pgErr.ConstraintName == indiceEmailParcial || strings.Contains(pgErr.ConstraintName, "email") {
-		return "el email ya está registrado en esta organización"
+		return ports.ErrEmailYaRegistrado
 	}
 	if strings.Contains(pgErr.ConstraintName, "nombre_usuario") {
-		return "el nombre de usuario ya está registrado en esta organización"
+		return ports.ErrUsernameYaRegistrado
 	}
-	return ""
+	return nil
 }

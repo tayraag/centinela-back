@@ -490,7 +490,19 @@ const docTemplate = `{
                         }
                     },
                     "409": {
-                        "description": "Email o username ya registrado",
+                        "description": "USER_EMAIL_ALREADY_EXISTS — el correo es de una cuenta activa o suspendida (sin distinguir mayúsculas ni espacios) | USER_USERNAME_ALREADY_EXISTS — el nombre de usuario ya existe (también si es de una cuenta eliminada)",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "INTERNAL_ERROR — error inesperado; nunca se informa como 409",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "502": {
+                        "description": "EMAIL_DELIVERY_FAILED — no se pudo enviar la clave temporal; el usuario no se creó",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -628,16 +640,19 @@ const docTemplate = `{
                         }
                     },
                     "404": {
-                        "description": "Not Found",
+                        "description": "USER_NOT_FOUND — no existe o fue eliminado (una cuenta eliminada no se edita ni se reactiva)",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
+                            "$ref": "#/definitions/http.ErrorResponse"
                         }
                     },
                     "409": {
-                        "description": "Email ya registrado",
+                        "description": "USER_EMAIL_ALREADY_EXISTS — el correo nuevo es de otra cuenta activa o suspendida",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "INTERNAL_ERROR",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -650,7 +665,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Elimina al usuario de forma irreversible sin borrar su fila (se conserva por la auditoría): registra ` + "`" + `eliminadoEn` + "`" + `, lo deja con ` + "`" + `activo=false` + "`" + ` e invalida todas sus sesiones. A diferencia de la suspensión (PUT con ` + "`" + `activo=false` + "`" + `), libera el correo: se puede crear una cuenta nueva con el mismo email (el nombre de usuario sigue siendo único para siempre). Desaparece del listado, pero su detalle y su actividad siguen disponibles. Un admin no puede eliminarse a sí mismo; eliminar a un usuario ya eliminado responde 404.",
+                "description": "Elimina al usuario de forma irreversible sin borrar su fila (se conserva por la auditoría): registra ` + "`" + `eliminadoEn` + "`" + ` (UTC), lo deja con ` + "`" + `activo=false` + "`" + `, borra su código de recuperación vigente, invalida sus sesiones en PostgreSQL y Redis y corta sus streams SSE, todo o nada: si no se puede cortar el acceso responde 503 y la baja no se aplica. A diferencia de la suspensión (PUT con ` + "`" + `activo=false` + "`" + `), libera el correo: se puede crear una cuenta nueva con el mismo email (el nombre de usuario sigue siendo único para siempre). Desaparece del listado, pero su detalle y su actividad siguen disponibles. Un admin no puede eliminarse a sí mismo; eliminar a un usuario ya eliminado responde 404.",
                 "produces": [
                     "application/json"
                 ],
@@ -696,12 +711,15 @@ const docTemplate = `{
                         }
                     },
                     "404": {
-                        "description": "Not Found",
+                        "description": "USER_NOT_FOUND — no existe o ya fue eliminado",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "USER_REVOCATION_FAILED — no se pudo cortar el acceso (sesiones en Redis o streams); la baja NO se aplicó (fail-closed). Reintentar",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
                         }
                     }
                 }
@@ -760,12 +778,9 @@ const docTemplate = `{
                         }
                     },
                     "404": {
-                        "description": "Not Found",
+                        "description": "USER_NOT_FOUND — no existe o fue eliminado",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
+                            "$ref": "#/definitions/http.ErrorResponse"
                         }
                     }
                 }
@@ -902,7 +917,7 @@ const docTemplate = `{
                         }
                     },
                     "404": {
-                        "description": "Usuario no encontrado en la organización",
+                        "description": "USER_NOT_FOUND — no existe en la organización o fue eliminado",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -1040,12 +1055,9 @@ const docTemplate = `{
                         }
                     },
                     "404": {
-                        "description": "Not Found",
+                        "description": "USER_NOT_FOUND — no existe o fue eliminado",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
+                            "$ref": "#/definitions/http.ErrorResponse"
                         }
                     }
                 }
@@ -1137,7 +1149,13 @@ const docTemplate = `{
                         }
                     },
                     "401": {
-                        "description": "Código TOTP incorrecto o ya utilizado (anti-replay)",
+                        "description": "TOTP_FAILED — código incorrecto o ya utilizado (anti-replay), o la cuenta fue eliminada durante el login",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "USER_INACTIVE — la cuenta fue suspendida durante el login",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -1183,7 +1201,13 @@ const docTemplate = `{
                         }
                     },
                     "401": {
-                        "description": "Credenciales incorrectas",
+                        "description": "AUTH_FAILED — credenciales incorrectas o cuenta eliminada",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "USER_INACTIVE — credenciales correctas pero la cuenta está suspendida",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }

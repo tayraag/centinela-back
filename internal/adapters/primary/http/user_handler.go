@@ -1,6 +1,8 @@
 package http
 
 import (
+	"errors"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -104,7 +106,9 @@ func (h *UserHandler) ListarUsuarios(c *gin.Context) {
 // @Failure      400 {object} ErrorResponse "Datos inválidos"
 // @Failure      401 {object} map[string]string
 // @Failure      403 {object} map[string]string
-// @Failure      409 {object} ErrorResponse "Email o username ya registrado"
+// @Failure      409 {object} ErrorResponse "USER_EMAIL_ALREADY_EXISTS — el correo es de una cuenta activa o suspendida (sin distinguir mayúsculas ni espacios) | USER_USERNAME_ALREADY_EXISTS — el nombre de usuario ya existe (también si es de una cuenta eliminada)"
+// @Failure      500 {object} ErrorResponse "INTERNAL_ERROR — error inesperado; nunca se informa como 409"
+// @Failure      502 {object} ErrorResponse "EMAIL_DELIVERY_FAILED — no se pudo enviar la clave temporal; el usuario no se creó"
 // @Router       /admin/users [post]
 func (h *UserHandler) CrearUsuario(c *gin.Context) {
 	var input ports.CrearUsuarioInput
@@ -124,7 +128,7 @@ func (h *UserHandler) CrearUsuario(c *gin.Context) {
 			SendError(c, http.StatusBadGateway, "EMAIL_DELIVERY_FAILED", "Usuario no creado. El servidor de correo no está disponible.")
 			return
 		}
-		SendError(c, http.StatusConflict, "USER_CONFLICT", err.Error())
+		responderErrorUsuario(c, err)
 		return
 	}
 	c.JSON(http.StatusCreated, resultado)
@@ -157,7 +161,7 @@ func (h *UserHandler) ObtenerUsuario(c *gin.Context) {
 
 	detalle, err := h.service.ObtenerUsuario(c.Request.Context(), id, orgID)
 	if err != nil {
-		SendError(c, http.StatusNotFound, "USER_NOT_FOUND", "Usuario no encontrado.")
+		responderErrorUsuario(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, detalle)
@@ -181,8 +185,9 @@ func (h *UserHandler) ObtenerUsuario(c *gin.Context) {
 // @Failure      400 {object} ErrorResponse "Datos inválidos"
 // @Failure      401 {object} map[string]string
 // @Failure      403 {object} map[string]string
-// @Failure      404 {object} map[string]string
-// @Failure      409 {object} ErrorResponse "Email ya registrado"
+// @Failure      404 {object} ErrorResponse "USER_NOT_FOUND — no existe o fue eliminado (una cuenta eliminada no se edita ni se reactiva)"
+// @Failure      409 {object} ErrorResponse "USER_EMAIL_ALREADY_EXISTS — el correo nuevo es de otra cuenta activa o suspendida"
+// @Failure      500 {object} ErrorResponse "INTERNAL_ERROR"
 // @Router       /admin/users/{id} [put]
 func (h *UserHandler) ActualizarUsuario(c *gin.Context) {
 	id, ok := parsearUUID(c, "id")
@@ -204,7 +209,7 @@ func (h *UserHandler) ActualizarUsuario(c *gin.Context) {
 
 	usuario, err := h.service.ActualizarUsuario(c.Request.Context(), id, orgID, actorID, input)
 	if err != nil {
-		SendError(c, http.StatusConflict, "UPDATE_CONFLICT", err.Error())
+		responderErrorUsuario(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, usuario)
@@ -217,7 +222,7 @@ func (h *UserHandler) ActualizarUsuario(c *gin.Context) {
 // EliminarUsuario realiza la eliminación lógica del usuario y cierra todas sus sesiones.
 //
 // @Summary      Eliminar usuario (eliminación lógica)
-// @Description  Elimina al usuario de forma irreversible sin borrar su fila (se conserva por la auditoría): registra `eliminadoEn`, lo deja con `activo=false` e invalida todas sus sesiones. A diferencia de la suspensión (PUT con `activo=false`), libera el correo: se puede crear una cuenta nueva con el mismo email (el nombre de usuario sigue siendo único para siempre). Desaparece del listado, pero su detalle y su actividad siguen disponibles. Un admin no puede eliminarse a sí mismo; eliminar a un usuario ya eliminado responde 404.
+// @Description  Elimina al usuario de forma irreversible sin borrar su fila (se conserva por la auditoría): registra `eliminadoEn` (UTC), lo deja con `activo=false`, borra su código de recuperación vigente, invalida sus sesiones en PostgreSQL y Redis y corta sus streams SSE, todo o nada: si no se puede cortar el acceso responde 503 y la baja no se aplica. A diferencia de la suspensión (PUT con `activo=false`), libera el correo: se puede crear una cuenta nueva con el mismo email (el nombre de usuario sigue siendo único para siempre). Desaparece del listado, pero su detalle y su actividad siguen disponibles. Un admin no puede eliminarse a sí mismo; eliminar a un usuario ya eliminado responde 404.
 // @Tags         Usuarios (Admin)
 // @Produce      json
 // @Security     BearerAuth
@@ -226,7 +231,8 @@ func (h *UserHandler) ActualizarUsuario(c *gin.Context) {
 // @Failure      400 {object} ErrorResponse "No puede eliminarse a sí mismo"
 // @Failure      401 {object} map[string]string
 // @Failure      403 {object} map[string]string
-// @Failure      404 {object} map[string]string
+// @Failure      404 {object} ErrorResponse "USER_NOT_FOUND — no existe o ya fue eliminado"
+// @Failure      503 {object} ErrorResponse "USER_REVOCATION_FAILED — no se pudo cortar el acceso (sesiones en Redis o streams); la baja NO se aplicó (fail-closed). Reintentar"
 // @Router       /admin/users/{id} [delete]
 func (h *UserHandler) EliminarUsuario(c *gin.Context) {
 	id, ok := parsearUUID(c, "id")
@@ -243,7 +249,7 @@ func (h *UserHandler) EliminarUsuario(c *gin.Context) {
 	}
 
 	if err := h.service.EliminarUsuario(c.Request.Context(), id, orgID, actorID); err != nil {
-		SendError(c, http.StatusNotFound, "USER_NOT_FOUND", "Usuario no encontrado.")
+		responderErrorUsuario(c, err)
 		return
 	}
 	c.Status(http.StatusNoContent)
@@ -274,7 +280,7 @@ type asignarPermisosRequest struct {
 // @Failure      400 {object} map[string]string
 // @Failure      401 {object} map[string]string
 // @Failure      403 {object} map[string]string
-// @Failure      404 {object} map[string]string
+// @Failure      404 {object} ErrorResponse "USER_NOT_FOUND — no existe o fue eliminado"
 // @Router       /admin/users/{id}/permissions [put]
 func (h *UserHandler) AsignarPermisos(c *gin.Context) {
 	id, ok := parsearUUID(c, "id")
@@ -297,7 +303,7 @@ func (h *UserHandler) AsignarPermisos(c *gin.Context) {
 	}
 
 	if err := h.service.AsignarPermisos(c.Request.Context(), id, orgID, actorID, req.Permisos); err != nil {
-		SendError(c, http.StatusNotFound, "USER_NOT_FOUND", err.Error())
+		responderErrorUsuario(c, err)
 		return
 	}
 	c.Status(http.StatusNoContent)
@@ -335,7 +341,7 @@ func (h *UserHandler) ObtenerPermisos(c *gin.Context) {
 
 	permisos, err := h.service.ObtenerPermisos(c.Request.Context(), id, orgID)
 	if err != nil {
-		SendError(c, http.StatusNotFound, "USER_NOT_FOUND", "Usuario no encontrado.")
+		responderErrorUsuario(c, err)
 		return
 	}
 
@@ -389,7 +395,7 @@ func (h *UserHandler) ListarActividad(c *gin.Context) {
 
 	actividad, err := h.service.ListarActividad(c.Request.Context(), id, orgID, filtros)
 	if err != nil {
-		SendError(c, http.StatusNotFound, "USER_NOT_FOUND", err.Error())
+		responderErrorUsuario(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, actividad)
@@ -410,7 +416,7 @@ func (h *UserHandler) ListarActividad(c *gin.Context) {
 // @Success      200 {object} map[string]string
 // @Failure      401 {object} map[string]string
 // @Failure      403 {object} map[string]string
-// @Failure      404 {object} map[string]string
+// @Failure      404 {object} ErrorResponse "USER_NOT_FOUND — no existe o fue eliminado"
 // @Router       /admin/users/{id}/2fa/reset [post]
 func (h *UserHandler) ResetearTotp(c *gin.Context) {
 	id, ok := parsearUUID(c, "id")
@@ -421,7 +427,7 @@ func (h *UserHandler) ResetearTotp(c *gin.Context) {
 	actorID := extraerUserID(c)
 
 	if err := h.service.ResetearTotp(c.Request.Context(), id, orgID, actorID); err != nil {
-		SendError(c, http.StatusNotFound, "USER_NOT_FOUND", err.Error())
+		responderErrorUsuario(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
@@ -444,7 +450,7 @@ func (h *UserHandler) ResetearTotp(c *gin.Context) {
 // @Success      200 {object} map[string]string
 // @Failure      401 {object} map[string]string
 // @Failure      403 {object} ErrorResponse "OPERATOR recibe 403 Forbidden"
-// @Failure      404 {object} ErrorResponse "Usuario no encontrado en la organización"
+// @Failure      404 {object} ErrorResponse "USER_NOT_FOUND — no existe en la organización o fue eliminado"
 // @Router       /admin/users/{id}/password/reset [post]
 func (h *UserHandler) ResetearContrasena(c *gin.Context) {
 	id, ok := parsearUUID(c, "id")
@@ -460,7 +466,7 @@ func (h *UserHandler) ResetearContrasena(c *gin.Context) {
 			SendError(c, http.StatusBadGateway, "EMAIL_DELIVERY_FAILED", "Error al enviar la contraseña por correo.")
 			return
 		}
-		SendError(c, http.StatusNotFound, "USER_NOT_FOUND", err.Error())
+		responderErrorUsuario(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
@@ -495,4 +501,30 @@ func parsearUUID(c *gin.Context, param string) (uuid.UUID, bool) {
 		return uuid.Nil, false
 	}
 	return id, true
+}
+
+// Mensaje del 409 por correo duplicado (contrato del FIX de identidad histórica).
+const mensajeEmailYaRegistrado = "El correo ingresado ya se encuentra registrado en una cuenta activa o suspendida."
+
+// responderErrorUsuario traduce los errores del ciclo de vida de usuarios. Solo
+// los conflictos de negocio son 409: un error inesperado (por ejemplo, de la
+// base) es 500 y su detalle queda en el log, no en la respuesta.
+func responderErrorUsuario(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, ports.ErrUsuarioNoEncontrado), errors.Is(err, ports.ErrUsuarioEliminado):
+		// Una cuenta eliminada es inmutable: para editarla, reactivarla o
+		// resetearla, es como si no existiera.
+		SendError(c, http.StatusNotFound, "USER_NOT_FOUND", "Usuario no encontrado.")
+	case errors.Is(err, ports.ErrEmailYaRegistrado):
+		SendError(c, http.StatusConflict, "USER_EMAIL_ALREADY_EXISTS", mensajeEmailYaRegistrado)
+	case errors.Is(err, ports.ErrUsernameYaRegistrado):
+		SendError(c, http.StatusConflict, "USER_USERNAME_ALREADY_EXISTS", "El nombre de usuario ya está registrado. Los nombres de usuario no se reutilizan, ni siquiera los de cuentas eliminadas.")
+	case errors.Is(err, ports.ErrRevocacionFallida):
+		SendError(c, http.StatusServiceUnavailable, "USER_REVOCATION_FAILED", "No se pudo revocar el acceso del usuario; la baja no se aplicó. Reintente en unos instantes.")
+	case strings.Contains(err.Error(), "EMAIL_DELIVERY_FAILED"):
+		SendError(c, http.StatusBadGateway, "EMAIL_DELIVERY_FAILED", "El servidor de correo no está disponible.")
+	default:
+		log.Printf("[USERS] error inesperado en %s %s: %v", c.Request.Method, c.FullPath(), err)
+		SendError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Error interno al procesar la solicitud.")
+	}
 }

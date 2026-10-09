@@ -2,6 +2,7 @@ package ports
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"el-centinela/internal/core/domain"
@@ -146,6 +147,25 @@ type CambiarContrasenaInput struct {
 // ==========================================
 
 // UserRepository define el contrato de persistencia para el dominio de usuarios.
+// Errores del ciclo de vida de usuarios. Los handlers los distinguen con
+// errors.Is para responder el status y errorCode correctos.
+var (
+	// ErrUsuarioNoEncontrado: el usuario no existe en la organización.
+	ErrUsuarioNoEncontrado = errors.New("usuario no encontrado")
+	// ErrUsuarioEliminado: el usuario fue eliminado (DELETE). Su fila se conserva
+	// por la auditoría, pero es inmutable: no se edita, no se reactiva ni se resetea.
+	ErrUsuarioEliminado = errors.New("usuario no encontrado: fue eliminado")
+	// ErrEmailYaRegistrado: el correo pertenece a una cuenta no eliminada (activa
+	// o suspendida) de la organización.
+	ErrEmailYaRegistrado = errors.New("el correo ingresado ya se encuentra registrado en una cuenta activa o suspendida")
+	// ErrUsernameYaRegistrado: el nombre de usuario ya existe. Es único para
+	// siempre, también frente a cuentas eliminadas.
+	ErrUsernameYaRegistrado = errors.New("el nombre de usuario ya está registrado")
+	// ErrRevocacionFallida: no se pudo cortar el acceso del usuario (sesiones en
+	// PostgreSQL o en el almacén efímero). La operación no se aplicó (fail-closed).
+	ErrRevocacionFallida = errors.New("no se pudo revocar el acceso del usuario")
+)
+
 type UserRepository interface {
 	// ListarUsuarios devuelve usuarios de una organización con filtros opcionales.
 	ListarUsuarios(ctx context.Context, orgID uuid.UUID, filtros FiltrosUsuario) (*ListaUsuariosResult, error)
@@ -158,6 +178,13 @@ type UserRepository interface {
 
 	// ExisteUsernameEnOrg verifica si el nombre de usuario ya está registrado en la organización.
 	ExisteUsernameEnOrg(ctx context.Context, username string, orgID uuid.UUID, excluirID *uuid.UUID) (bool, error)
+
+	// EliminarLogicamente marca al usuario como eliminado (eliminado_en, activo =
+	// false), borra sus códigos de recuperación e invalida sus sesiones, todo en
+	// una transacción. Antes de confirmarla llama a revocar con los IDs de las
+	// sesiones invalidadas (para borrarlas del almacén efímero): si revocar
+	// falla, se deshace todo. Devuelve ErrUsuarioEliminado si ya estaba eliminado.
+	EliminarLogicamente(ctx context.Context, id uuid.UUID, revocar func(sesionIDs []uuid.UUID) error) error
 
 	// CrearUsuario persiste un nuevo usuario en la base de datos.
 	CrearUsuario(ctx context.Context, u *domain.Usuario) error
