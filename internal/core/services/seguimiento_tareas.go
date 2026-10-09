@@ -16,10 +16,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// limiteSeguimiento: si Proxmox no da por terminada la tarea en este tiempo
-// (contado desde que se creó), se marca como fallida.
-const limiteSeguimiento = 10 * time.Minute
-
 // ventanaRecuperacion: al arrancar la API, las tareas RUNNING más viejas que
 // esto no se reanudan: se consultan una sola vez y, si no terminaron, se
 // cierran como FAILED con motivo TIMEOUT (RNF-04).
@@ -43,22 +39,22 @@ func mensajeTimeout(limite time.Duration) string {
 //     buena con advertencias), sin motivo ni error.
 //   - FAILED por Proxmox: motivo PROXMOX_ERROR; exitStatus y error, el texto de Proxmox.
 //   - FAILED por tiempo: motivo TIMEOUT, sin exitStatus (Proxmox no la cerró).
-type resultadoTarea struct {
-	estado     string
-	exitStatus string // "" = null
-	motivo     string // "" = null
-	error      string // "" = null
+type ResultadoTarea struct {
+	Estado     string
+	ExitStatus string // "" = null
+	Motivo     string // "" = null
+	Error      string // "" = null
 }
 
-func completada() resultadoTarea {
-	return resultadoTarea{estado: ports.TareaCompleted, exitStatus: "OK"}
+func completada() ResultadoTarea {
+	return ResultadoTarea{Estado: ports.TareaCompleted, ExitStatus: "OK"}
 }
 
 // completadaConAdvertencias cierra una tarea que Proxmox dio por buena pero con
 // advertencias (exitstatus "WARNINGS: N"). El texto se conserva tal cual; no es
 // un fallo ni lleva motivo/error.
-func completadaConAdvertencias(exitStatus string) resultadoTarea {
-	return resultadoTarea{estado: ports.TareaCompleted, exitStatus: exitStatus}
+func completadaConAdvertencias(exitStatus string) ResultadoTarea {
+	return ResultadoTarea{Estado: ports.TareaCompleted, ExitStatus: exitStatus}
 }
 
 // clasificarExitStatus traduce el exitstatus de Proxmox al desenlace de la tarea:
@@ -66,7 +62,7 @@ func completadaConAdvertencias(exitStatus string) resultadoTarea {
 //   - "WARNINGS: N": completada con advertencias (p. ej. "WARN: Systemd 257
 //     detected. You may need to enable nesting."); Proxmox la considera exitosa.
 //   - cualquier otro valor: el texto del error que reportó Proxmox.
-func clasificarExitStatus(exitStatus string) resultadoTarea {
+func clasificarExitStatus(exitStatus string) ResultadoTarea {
 	if exitStatus == "OK" {
 		return completada()
 	}
@@ -76,30 +72,30 @@ func clasificarExitStatus(exitStatus string) resultadoTarea {
 	return falloProxmox(exitStatus)
 }
 
-func falloProxmox(exitStatus string) resultadoTarea {
-	return resultadoTarea{estado: ports.TareaFailed, exitStatus: exitStatus, motivo: ports.MotivoProxmoxError, error: exitStatus}
+func falloProxmox(exitStatus string) ResultadoTarea {
+	return ResultadoTarea{Estado: ports.TareaFailed, ExitStatus: exitStatus, Motivo: ports.MotivoProxmoxError, Error: exitStatus}
 }
 
-func vencida(limite time.Duration) resultadoTarea {
-	return resultadoTarea{estado: ports.TareaFailed, motivo: ports.MotivoTimeout, error: mensajeTimeout(limite)}
+func vencida(limite time.Duration) ResultadoTarea {
+	return ResultadoTarea{Estado: ports.TareaFailed, Motivo: ports.MotivoTimeout, Error: mensajeTimeout(limite)}
 }
 
 // metadatos es lo que se guarda en tareas_asincronas.metadatos: {motivo, error}
 // en una tarea FAILED, nada en una COMPLETED.
-func (r resultadoTarea) metadatos() map[string]any {
-	if r.estado != ports.TareaFailed {
+func (r ResultadoTarea) metadatos() map[string]any {
+	if r.Estado != ports.TareaFailed {
 		return nil
 	}
-	return map[string]any{"motivo": r.motivo, "error": r.error}
+	return map[string]any{"motivo": r.Motivo, "error": r.Error}
 }
 
 // detalles arma detalles.{tareaId, accion, estado, exitstatus, motivo, error}
 // del TASK_FINISHED (y de la auditoría): siempre las seis claves, con null
 // cuando no aplican. accion va en mayúsculas, igual que en la auditoría.
-func (r resultadoTarea) detalles(tarea *domain.TareaAsincrona) map[string]any {
+func (r ResultadoTarea) Detalles(tarea *domain.TareaAsincrona) map[string]any {
 	return map[string]any{
-		"tareaId": tarea.ID.String(), "accion": strings.ToUpper(tarea.Accion), "estado": r.estado,
-		"exitstatus": nulo(r.exitStatus), "motivo": nulo(r.motivo), "error": nulo(r.error),
+		"tareaId": tarea.ID.String(), "accion": strings.ToUpper(tarea.Accion), "estado": r.Estado,
+		"exitstatus": nulo(r.ExitStatus), "motivo": nulo(r.Motivo), "error": nulo(r.Error),
 	}
 }
 
@@ -117,6 +113,8 @@ type ConfigSeguimiento struct {
 	Intervalo            time.Duration // cada cuánto se vuelve a consultar una tarea (default 1 s)
 	IntervaloReconciliar time.Duration // cada cuánto el reconciliador revisa la base (default 5 s)
 	VentanaRecuperacion  time.Duration // al arrancar, edad máxima para reanudar una tarea (default 3 min)
+	UpidTimeout          time.Duration // límite de seguimiento de tarea asíncrona (UPID_TIMEOUT, default 3m)
+	OnTaskFinished       func(ctx context.Context, tarea *domain.TareaAsincrona, recursoTipo string, r ResultadoTarea)
 }
 
 func (c ConfigSeguimiento) conDefaults() ConfigSeguimiento {
@@ -135,14 +133,18 @@ func (c ConfigSeguimiento) conDefaults() ConfigSeguimiento {
 	if c.VentanaRecuperacion <= 0 {
 		c.VentanaRecuperacion = ventanaRecuperacion
 	}
+	if c.UpidTimeout <= 0 {
+		c.UpidTimeout = 3 * time.Minute
+	}
 	return c
 }
 
 // TareaSeguimiento es una tarea dentro del pool.
 type TareaSeguimiento struct {
 	Tarea       domain.TareaAsincrona
-	Vmid        int
-	recursoTipo string // VM | LXC, se resuelve en la primera consulta
+	Vmid          int
+	recursoTipo   string // VM | LXC, se resuelve en la primera consulta
+	intentosFallo int    // reintentos de red o errores transitorios
 }
 
 // PoolSeguimiento implementa ports.SeguimientoTareas con un worker pool acotado:
@@ -157,8 +159,6 @@ type TareaSeguimiento struct {
 type PoolSeguimiento struct {
 	proxmox ports.ProxmoxPort
 	tareas  ports.TareaRepository
-	eventos ports.EventosService
-	audit   ports.AuditService
 	cfg     ConfigSeguimiento
 	ahora   func() time.Time
 
@@ -176,10 +176,10 @@ type PoolSeguimiento struct {
 var _ ports.SeguimientoTareas = (*PoolSeguimiento)(nil)
 
 // NewSeguimientoTareas crea el pool. Hay que arrancarlo con Iniciar.
-func NewSeguimientoTareas(proxmox ports.ProxmoxPort, tareas ports.TareaRepository, eventos ports.EventosService, audit ports.AuditService, cfg ConfigSeguimiento) *PoolSeguimiento {
+func NewSeguimientoTareas(proxmox ports.ProxmoxPort, tareas ports.TareaRepository, cfg ConfigSeguimiento) *PoolSeguimiento {
 	cfg = cfg.conDefaults()
 	return &PoolSeguimiento{
-		proxmox: proxmox, tareas: tareas, eventos: eventos, audit: audit, cfg: cfg, ahora: time.Now,
+		proxmox: proxmox, tareas: tareas, cfg: cfg, ahora: time.Now,
 		tareasChan: make(chan *TareaSeguimiento, cfg.Buffer),
 		enCurso:    map[uuid.UUID]bool{},
 		fin:        make(chan struct{}),
@@ -389,7 +389,7 @@ func (p *PoolSeguimiento) resolverRecurso(ctx context.Context, t *TareaSeguimien
 }
 
 // consultar hace UNA consulta del estado de la tarea. Si terminó (o venció el
-// límite) la cierra; si no, la reprograma para dentro de Intervalo.
+// límite) la cierra; si no, la reprograma para dentro de Intervalo (con backoff si falla).
 func (p *PoolSeguimiento) consultar(t *TareaSeguimiento) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeoutConsulta)
 	defer cancel()
@@ -402,15 +402,29 @@ func (p *PoolSeguimiento) consultar(t *TareaSeguimiento) {
 		p.finalizar(t, clasificarExitStatus(resultado.ExitStatus))
 		return
 	case err != nil:
-		log.Printf("[TAREAS] no se pudo consultar la tarea %s (se reintenta): %v", t.Tarea.ID, err)
+		t.intentosFallo++
+		log.Printf("[TAREAS] no se pudo consultar la tarea %s (intento %d): %v", t.Tarea.ID, t.intentosFallo, err)
+	case err == nil && !resultado.Terminada:
+		t.intentosFallo = 0 // reset al recuperar conectividad
 	}
 
-	if p.ahora().Sub(t.Tarea.FechaCreacion) > limiteSeguimiento {
-		p.finalizar(t, vencida(limiteSeguimiento))
+	if p.ahora().Sub(t.Tarea.FechaCreacion) > p.cfg.UpidTimeout {
+		p.finalizar(t, vencida(p.cfg.UpidTimeout))
 		return
 	}
+
+	intervalo := p.cfg.Intervalo
+	if t.intentosFallo > 0 {
+		// Backoff exponencial: 1s, 2s, 4s, tope 5s
+		backoffSecs := 1 << (t.intentosFallo - 1)
+		intervalo = time.Duration(backoffSecs) * time.Second
+		if intervalo > 5*time.Second {
+			intervalo = 5 * time.Second
+		}
+	}
+
 	// Reprogramar sin ocupar un worker mientras espera.
-	time.AfterFunc(p.cfg.Intervalo, func() {
+	time.AfterFunc(intervalo, func() {
 		if !p.encolar(t) {
 			// Cola llena o apagándose: queda RUNNING y la retoma el reconciliador.
 			log.Printf("[TAREAS] la tarea %s vuelve al reconciliador", t.Tarea.ID)
@@ -419,7 +433,7 @@ func (p *PoolSeguimiento) consultar(t *TareaSeguimiento) {
 }
 
 // finalizar guarda el estado final, audita y publica TASK_FINISHED.
-func (p *PoolSeguimiento) finalizar(t *TareaSeguimiento, r resultadoTarea) {
+func (p *PoolSeguimiento) finalizar(t *TareaSeguimiento, r ResultadoTarea) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	defer func() {
@@ -428,23 +442,14 @@ func (p *PoolSeguimiento) finalizar(t *TareaSeguimiento, r resultadoTarea) {
 		p.mu.Unlock()
 	}()
 
-	if err := p.tareas.ActualizarEstado(ctx, t.Tarea.ID, r.estado, r.metadatos()); err != nil {
+	if err := p.tareas.ActualizarEstado(ctx, t.Tarea.ID, r.Estado, r.metadatos()); err != nil {
 		log.Printf("[TAREAS] %v", err)
 	}
 
-	resultado := ports.ResultadoExito
-	if r.estado != ports.TareaCompleted {
-		resultado = ports.ResultadoFalla
-	}
-	// Mismo código de acción que el registro PENDING del handler (START, STOP, DELETE, ...).
-	p.audit.Registrar(ctx, ports.RegistrarAuditoriaInput{
-		UsuarioID: t.Tarea.UsuarioID, Accion: strings.ToUpper(t.Tarea.Accion),
-		InstanciaID: t.Tarea.InstanciaID, Resultado: resultado, Detalles: r.detalles(&t.Tarea),
-	})
-
-	log.Printf("[TAREAS] tarea %s (%s sobre %d) terminó: %s", t.Tarea.ID, t.Tarea.Accion, t.Vmid, r.estado)
-	if err := p.eventos.Publicar(ctx, eventoTareaFinalizada(&t.Tarea, t.recursoTipo, r)); err != nil {
-		log.Printf("[TAREAS] no se pudo publicar TASK_FINISHED de la tarea %s: %v", t.Tarea.ID, err)
+	log.Printf("[TAREAS] tarea %s (%s sobre %d) terminó: %s", t.Tarea.ID, t.Tarea.Accion, t.Vmid, r.Estado)
+	
+	if p.cfg.OnTaskFinished != nil {
+		p.cfg.OnTaskFinished(ctx, &t.Tarea, t.recursoTipo, r)
 	}
 }
 
@@ -489,8 +494,8 @@ func (p *PoolSeguimiento) reconciliar() {
 	}
 }
 
-// eventoTareaFinalizada arma el TASK_FINISHED de docs/contrato-eventos.md.
-func eventoTareaFinalizada(tarea *domain.TareaAsincrona, recursoTipo string, r resultadoTarea) ports.RealtimeEvent {
+// EventoTareaFinalizada arma el TASK_FINISHED de docs/contrato-eventos.md.
+func EventoTareaFinalizada(tarea *domain.TareaAsincrona, recursoTipo string, r ResultadoTarea) ports.RealtimeEvent {
 	nombre := nombresAccion[tarea.Accion]
 	if nombre == "" {
 		nombre = tarea.Accion
@@ -499,10 +504,10 @@ func eventoTareaFinalizada(tarea *domain.TareaAsincrona, recursoTipo string, r r
 		recursoTipo = ports.RecursoVM
 	}
 	severidad, mensaje := ports.SeveridadInfo, fmt.Sprintf("La tarea de %s finalizó correctamente", nombre)
-	if r.estado != ports.TareaCompleted {
+	if r.Estado != ports.TareaCompleted {
 		severidad, mensaje = ports.SeveridadWarning, fmt.Sprintf("La tarea de %s falló", nombre)
 	}
 	// NewRealtimeEvent solo falla con tipo/severidad/mensaje inválidos, y acá son constantes.
 	evento, _ := ports.NewRealtimeEvent(ports.EventoTareaFinalizada, severidad, mensaje)
-	return evento.ConRecurso(recursoTipo, tarea.InstanciaID).ConDetalles(r.detalles(tarea))
+	return evento.ConRecurso(recursoTipo, tarea.InstanciaID).ConDetalles(r.Detalles(tarea))
 }

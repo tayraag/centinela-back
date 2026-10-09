@@ -23,6 +23,7 @@ import (
 	"el-centinela/internal/adapters/secondary/redis"
 	"el-centinela/internal/core/ports"
 	"el-centinela/internal/core/services"
+	"el-centinela/internal/core/domain"
 
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
@@ -148,8 +149,27 @@ func main() {
 	auditHandler := httpHandlers.NewAuditHandler(auditService)
 	eventosService := services.NewEventosService(kvStore, authRepo, instanceRepo, auditService)
 	tareaRepo := postgres.NewTareaRepository(db)
-	seguimientoTareas := services.NewSeguimientoTareas(proxmoxClient, tareaRepo, eventosService, auditService,
-		services.ConfigSeguimiento{Workers: enteroDeEntorno("UPID_WORKERS", 8)})
+	seguimientoTareas := services.NewSeguimientoTareas(proxmoxClient, tareaRepo,
+		services.ConfigSeguimiento{
+			Workers:     enteroDeEntorno("UPID_WORKERS", 8),
+			UpidTimeout: duracionDeEntorno("UPID_TIMEOUT", 3*time.Minute),
+			OnTaskFinished: func(ctx context.Context, tarea *domain.TareaAsincrona, recursoTipo string, r services.ResultadoTarea) {
+				resultado := ports.ResultadoExito
+				if r.Estado != ports.TareaCompleted {
+					resultado = ports.ResultadoFalla
+				}
+				auditService.Registrar(ctx, ports.RegistrarAuditoriaInput{
+					UsuarioID:   tarea.UsuarioID,
+					Accion:      strings.ToUpper(tarea.Accion),
+					InstanciaID: tarea.InstanciaID,
+					Resultado:   resultado,
+					Detalles:    r.Detalles(tarea),
+				})
+				if err := eventosService.Publicar(ctx, services.EventoTareaFinalizada(tarea, recursoTipo, r)); err != nil {
+					log.Printf("[TAREAS] no se pudo publicar TASK_FINISHED de la tarea %s: %v", tarea.ID, err)
+				}
+			},
+		})
 	seguimientoTareas.Iniciar(ctx)
 	instanceHandler := httpHandlers.NewInstanceHandler(proxmoxClient, userRepo, seguimientoTareas, tareaRepo, auditService,
 		services.NewInventarioService(proxmoxClient))
@@ -351,6 +371,19 @@ func enteroDeEntorno(nombre string, defecto int) int {
 		log.Fatalf("❌ %s inválida (%q): debe ser un entero mayor a 0", nombre, v)
 	}
 	return n
+}
+
+// duracionDeEntorno lee una variable de entorno de duración, con un default.
+func duracionDeEntorno(nombre string, defecto time.Duration) time.Duration {
+	v := os.Getenv(nombre)
+	if v == "" {
+		return defecto
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil || d <= 0 {
+		log.Fatalf("❌ %s inválida (%q): debe ser una duración mayor a 0 (ej. 3m, 1h)", nombre, v)
+	}
+	return d
 }
 
 // conectarRedis inicializa el almacén clave-valor y Pub/Sub del backend
