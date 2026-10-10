@@ -47,6 +47,7 @@ func TestConectar(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Con la contraseña correcta debe conectar: %v", err)
 		}
+		defer store.Close()
 		_ = store.Set(ctx, "k", "v", time.Minute)
 		srv.Select(3)
 		if !srv.Exists("k") {
@@ -62,8 +63,8 @@ func TestConectar(t *testing.T) {
 		if _, err := redis.Conectar(ctx, redis.Config{Addr: addr}); err == nil {
 			t.Fatal("Conectar debe fallar si Redis no responde")
 		}
-		if time.Since(inicio) < 2*time.Second {
-			t.Error("Debe reintentar antes de rendirse (3 intentos con espera)")
+		if time.Since(inicio) < 1500*time.Millisecond {
+			t.Error("Debe reintentar antes de rendirse (5 intentos con espera)")
 		}
 	})
 
@@ -72,12 +73,14 @@ func TestConectar(t *testing.T) {
 		addr := srv.Addr()
 		srv.Close()
 		go func() {
-			time.Sleep(500 * time.Millisecond)
+			time.Sleep(300 * time.Millisecond)
 			_ = srv.StartAddr(addr)
 		}()
-		if _, err := redis.Conectar(ctx, redis.Config{Addr: addr}); err != nil {
+		store, err := redis.Conectar(ctx, redis.Config{Addr: addr})
+		if err != nil {
 			t.Fatalf("Debe conectar cuando Redis aparece en un reintento: %v", err)
 		}
+		_ = store.Close()
 	})
 }
 

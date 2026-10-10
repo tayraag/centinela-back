@@ -22,8 +22,9 @@ const (
 	timeoutConexion  = 3 * time.Second        // dial
 	timeoutOperacion = 2 * time.Second        // lectura y escritura de cada comando
 	reintentosCmd    = 3                      // reintentos del cliente ante errores de red en un comando
-	intentosArranque = 3                      // intentos de Ping al arrancar la API
-	esperaArranque   = 500 * time.Millisecond // espera entre intentos al arrancar (se duplica)
+	intentosArranque = 5                      // intentos de Ping al arrancar la API
+	esperaInicial    = 300 * time.Millisecond // espera inicial entre intentos al arrancar
+	esperaMax        = 600 * time.Millisecond // espera máxima entre intentos
 )
 
 // Config es la configuración de la conexión.
@@ -75,37 +76,43 @@ func Nuevo(cfg Config) *KVStore {
 }
 
 // Conectar crea el cliente y verifica con Ping que Redis responda. Si no hay
-// respuesta (por ejemplo, el contenedor todavía está levantando) reintenta;
+// respuesta (por ejemplo, el contenedor todavía está levantando) reintenta
+// creando una instancia limpia en cada intento para renovar el socket;
 // si Redis responde con un error propio (contraseña incorrecta, base
 // inexistente) falla enseguida, porque reintentar no lo va a arreglar.
 func Conectar(ctx context.Context, cfg Config) (*KVStore, error) {
-	store := Nuevo(cfg)
-	espera := esperaArranque
+	espera := esperaInicial
 	var err error
 	for intento := 1; intento <= intentosArranque; intento++ {
+		store := Nuevo(cfg)
 		ctxPing, cancel := context.WithTimeout(ctx, timeoutConexion)
 		err = store.Ping(ctxPing)
 		cancel()
+
 		if err == nil {
 			return store, nil
 		}
+
+		_ = store.Close()
+
 		var errRedis goredis.Error
 		if errors.As(err, &errRedis) {
-			_ = store.Close()
 			return nil, fmt.Errorf("redis rechazó la conexión en %s (revisar REDIS_PASSWORD / REDIS_DB): %w", cfg.Addr, err)
 		}
+
 		if intento < intentosArranque {
 			log.Printf("[WARN] Redis no responde en %s (intento %d/%d): %v", cfg.Addr, intento, intentosArranque, err)
 			select {
 			case <-time.After(espera):
 			case <-ctx.Done():
-				_ = store.Close()
 				return nil, ctx.Err()
 			}
-			espera *= 2
+			espera += 100 * time.Millisecond
+			if espera > esperaMax {
+				espera = esperaMax
+			}
 		}
 	}
-	_ = store.Close()
 	return nil, fmt.Errorf("redis no responde en %s: %w", cfg.Addr, err)
 }
 
