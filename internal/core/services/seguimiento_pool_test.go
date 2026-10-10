@@ -3,6 +3,7 @@ package services_test
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -86,7 +87,18 @@ func nuevoEntornoPool(t *testing.T, cfg services.ConfigSeguimiento, px *proxmoxP
 		pub:   &publicadorFalso{publicados: make(chan ports.RealtimeEvent, 500)},
 		audit: &auditoriaGrabadora{},
 	}
-	e.pool = nuevoSeguimiento(px, e.repo, e.pub, e.audit, cfg)
+	cfg.OnTaskFinished = func(ctx context.Context, tarea *domain.TareaAsincrona, recursoTipo string, r services.ResultadoTarea) {
+		resultado := ports.ResultadoExito
+		if r.Estado != ports.TareaCompleted {
+			resultado = ports.ResultadoFalla
+		}
+		e.audit.Registrar(ctx, ports.RegistrarAuditoriaInput{
+			UsuarioID: tarea.UsuarioID, Accion: strings.ToUpper(tarea.Accion),
+			InstanciaID: tarea.InstanciaID, Resultado: resultado, Detalles: r.Detalles(tarea),
+		})
+		_ = e.pub.Publicar(ctx, services.EventoTareaFinalizada(tarea, recursoTipo, r))
+	}
+	e.pool = services.NewSeguimientoTareas(px, e.repo, cfg)
 	return e
 }
 
