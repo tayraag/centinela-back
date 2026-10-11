@@ -21,9 +21,9 @@ import (
 	"el-centinela/internal/adapters/secondary/postgres"
 	"el-centinela/internal/adapters/secondary/proxmox"
 	"el-centinela/internal/adapters/secondary/redis"
+	"el-centinela/internal/core/domain"
 	"el-centinela/internal/core/ports"
 	"el-centinela/internal/core/services"
-	"el-centinela/internal/core/domain"
 
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
@@ -149,22 +149,13 @@ func main() {
 	auditHandler := httpHandlers.NewAuditHandler(auditService)
 	eventosService := services.NewEventosService(kvStore, authRepo, instanceRepo, auditService)
 	tareaRepo := postgres.NewTareaRepository(db)
-	seguimientoTareas := services.NewSeguimientoTareas(proxmoxClient, tareaRepo,
+	seguimientoTareas := services.NewSeguimientoTareas(proxmoxClient, tareaRepo, auditService,
 		services.ConfigSeguimiento{
 			Workers:     enteroDeEntorno("UPID_WORKERS", 8),
 			UpidTimeout: duracionDeEntorno("UPID_TIMEOUT", 3*time.Minute),
 			OnTaskFinished: func(ctx context.Context, tarea *domain.TareaAsincrona, recursoTipo string, r services.ResultadoTarea) {
-				resultado := ports.ResultadoExito
-				if r.Estado != ports.TareaCompleted {
-					resultado = ports.ResultadoFalla
-				}
-				auditService.Registrar(ctx, ports.RegistrarAuditoriaInput{
-					UsuarioID:   tarea.UsuarioID,
-					Accion:      strings.ToUpper(tarea.Accion),
-					InstanciaID: tarea.InstanciaID,
-					Resultado:   resultado,
-					Detalles:    r.Detalles(tarea),
-				})
+				// El repositorio confirmó el cierre y la auditoría RF-08 en una
+				// misma transacción antes de publicar el evento.
 				if err := eventosService.Publicar(ctx, services.EventoTareaFinalizada(tarea, recursoTipo, r)); err != nil {
 					log.Printf("[TAREAS] no se pudo publicar TASK_FINISHED de la tarea %s: %v", tarea.ID, err)
 				}
@@ -348,7 +339,7 @@ func main() {
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	
+
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		log.Printf("[ERROR] Forzando cierre del servidor HTTP por timeout: %v", err)
 	} else {

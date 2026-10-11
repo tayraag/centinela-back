@@ -4,6 +4,8 @@ import (
 	"context"
 	"time"
 
+	"el-centinela/internal/core/domain"
+
 	"github.com/google/uuid"
 )
 
@@ -14,11 +16,11 @@ import (
 // FiltrosAuditoria define los parámetros opcionales para filtrar el log de auditoría.
 type FiltrosAuditoria struct {
 	UsuarioID   *uuid.UUID // Filtrar por usuario específico
-	Accion      string     // Ej: "LOGIN", "CREATE_USER", "START_VM"
+	Accion      string     // Ej: "LOGIN", "CREAR_USUARIO", "INICIAR_VM"
 	InstanciaID string     // ID de la instancia Proxmox afectada
-	Resultado   string     // "EXITO" | "FALLA" | "PENDING" | "" (todos)
-	Desde       *time.Time // Rango temporal: desde (inclusive)
-	Hasta       *time.Time // Rango temporal: hasta (inclusive)
+	Resultado string  // "SUCCESS" | "FAILED" | "PENDIENTE" | "" (todos)
+	Desde     *time.Time // Rango temporal: desde (inclusive)
+	Hasta     *time.Time // Rango temporal: hasta (inclusive)
 }
 
 // OpcionesAuditoria define paginación y ordenamiento para el listado.
@@ -32,8 +34,8 @@ type OpcionesAuditoria struct {
 // AuditoriaDTO es la proyección pública de un registro de auditoría.
 type AuditoriaDTO struct {
 	ID              uuid.UUID  `json:"id"`
-	UsuarioID       *uuid.UUID `json:"usuarioId"`             // Puntero: puede ser null si el usuario fue eliminado
-	NombreUsuario   string     `json:"nombreUsuario"`         // Nombre completo (JOIN con usuarios, o "[usuario eliminado]")
+	UsuarioID       *uuid.UUID `json:"usuarioId"`     // Puntero: puede ser null si el usuario fue eliminado
+	NombreUsuario   string     `json:"nombreUsuario"` // Nombre completo (JOIN con usuarios, o "[usuario eliminado]")
 	FechaHora       time.Time  `json:"fechaHora"`
 	Accion          string     `json:"accion"`
 	InstanciaID     string     `json:"instanciaId,omitempty"`
@@ -55,7 +57,7 @@ type RegistrarAuditoriaInput struct {
 	Accion          string         // Código de la acción: "LOGIN", "CREATE_USER", etc.
 	InstanciaID     string         // ID de la instancia afectada (vacío si no aplica)
 	InstanciaNombre string         // Nombre de la instancia afectada (vacío si no aplica)
-	Resultado       string         // "EXITO" | "FALLA" | "PENDING"
+	Resultado       string         // Ciclo de vida: PENDIENTE/SUCCESS/FAILED; otras operaciones: EXITO/FALLA.
 	Detalles        map[string]any // Metadata adicional (se serializa a JSON)
 }
 
@@ -65,11 +67,11 @@ type RegistrarAuditoriaInput struct {
 
 // Acciones de autenticación
 const (
-	AccionLogin          = "LOGIN"
-	AccionLoginFalla     = "LOGIN_FALLA"
-	AccionVerificar2FA   = "VERIFICAR_2FA"
-	Accion2FAFalla       = "2FA_FALLA"
-	AccionLogout         = "LOGOUT"
+	AccionLogin        = "LOGIN"
+	AccionLoginFalla   = "LOGIN_FALLA"
+	AccionVerificar2FA = "VERIFICAR_2FA"
+	Accion2FAFalla     = "2FA_FALLA"
+	AccionLogout       = "LOGOUT"
 )
 
 // Acciones del canal de eventos en tiempo real (GET /api/events)
@@ -90,22 +92,28 @@ const (
 	AccionActualizarPerfil   = "ACTUALIZAR_PERFIL"
 )
 
-// Acciones sobre instancias (vocabulario canónico del contrato Etapa 1)
+// Acciones de auditoría sobre instancias (códigos solicitados por RF-08).
 const (
-	AccionIniciarVM   = "START"
-	AccionDetenerVM   = "STOP"
-	AccionReiniciarVM = "REBOOT"
-	AccionEliminarVM  = "DELETE"
-	AccionApagarVM    = "SHUTDOWN"
+	AccionIniciarVM   = "INICIAR_VM"
+	AccionDetenerVM   = "DETENER_VM"
+	AccionReiniciarVM = "REINICIAR_VM"
+	AccionEliminarVM  = "ELIMINAR_VM"
+	AccionApagarVM    = "APAGAR_VM"
 	AccionSuspenderVM = "SUSPENDER_VM"
 	AccionResumeVM    = "REANUDAR_VM"
 )
 
-// Resultados de auditoría
+// Resultados existentes de autenticación, usuarios y otras operaciones.
 const (
-	ResultadoExito     = "EXITO"
-	ResultadoFalla     = "FALLA"
-	ResultadoPendiente = "PENDING" // la orden se aceptó y la tarea sigue en curso
+	ResultadoExito = "EXITO"
+	ResultadoFalla = "FALLA"
+)
+
+// Resultados de las tareas asíncronas de ciclo de vida, según RF-08.
+const (
+	ResultadoPendiente = "PENDIENTE" // la orden se aceptó y la tarea sigue en curso
+	ResultadoSuccess   = "SUCCESS"   // desenlace de infraestructura con exitstatus OK
+	ResultadoFailed    = "FAILED"    // desenlace de infraestructura con error o timeout
 )
 
 // ==========================================
@@ -133,6 +141,10 @@ type AuditRepository interface {
 
 // AuditService define la lógica de negocio para el registro y consulta de auditoría.
 type AuditService interface {
+	// PrepararAuditoriaTarea aplica RF-08 sin persistir. El seguimiento entrega
+	// el registro al puerto de tareas para guardarlo en la misma transacción.
+	PrepararAuditoriaTarea(tarea *domain.TareaAsincrona, cierre map[string]any, ahora time.Time) RegistrarAuditoriaInput
+
 	// Registrar inserta un registro de auditoría. Los errores se registran en log
 	// pero no se propagan (fallo silencioso) para no interrumpir la operación principal.
 	Registrar(ctx context.Context, input RegistrarAuditoriaInput)

@@ -3,7 +3,6 @@ package services_test
 import (
 	"context"
 	"fmt"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -87,18 +86,11 @@ func nuevoEntornoPool(t *testing.T, cfg services.ConfigSeguimiento, px *proxmoxP
 		pub:   &publicadorFalso{publicados: make(chan ports.RealtimeEvent, 500)},
 		audit: &auditoriaGrabadora{},
 	}
+	e.repo.audit = e.audit
 	cfg.OnTaskFinished = func(ctx context.Context, tarea *domain.TareaAsincrona, recursoTipo string, r services.ResultadoTarea) {
-		resultado := ports.ResultadoExito
-		if r.Estado != ports.TareaCompleted {
-			resultado = ports.ResultadoFalla
-		}
-		e.audit.Registrar(ctx, ports.RegistrarAuditoriaInput{
-			UsuarioID: tarea.UsuarioID, Accion: strings.ToUpper(tarea.Accion),
-			InstanciaID: tarea.InstanciaID, Resultado: resultado, Detalles: r.Detalles(tarea),
-		})
 		_ = e.pub.Publicar(ctx, services.EventoTareaFinalizada(tarea, recursoTipo, r))
 	}
-	e.pool = services.NewSeguimientoTareas(px, e.repo, cfg)
+	e.pool = services.NewSeguimientoTareas(px, e.repo, services.NewAuditService(nil), cfg)
 	return e
 }
 
@@ -220,8 +212,8 @@ func TestPool_ReconciliadorRetomaTareasDeUnReinicio(t *testing.T) {
 		InstanciaID: "110", Accion: "stop", Estado: ports.TareaRunning, FechaCreacion: time.Now().Add(-72 * time.Hour),
 	}
 	px.tarea(vieja.UpidProxmox, time.Now())
-	_ = e.repo.Crear(context.Background(), &vieja)
-	_ = e.repo.Crear(context.Background(), &trabada)
+	_ = e.repo.Crear(context.Background(), &vieja, services.NewAuditService(nil).PrepararAuditoriaTarea(&vieja, nil, time.Now()))
+	_ = e.repo.Crear(context.Background(), &trabada, services.NewAuditService(nil).PrepararAuditoriaTarea(&trabada, nil, time.Now()))
 
 	e.iniciar(t)
 	eventos := e.esperarEventos(t, 2, 5*time.Second)
@@ -274,7 +266,7 @@ func TestPool_ApagadoOrdenado(t *testing.T) {
 	}
 }
 
-// Al terminar se audita con el mismo código de acción que el registro PENDING del handler.
+// El worker entrega al repositorio el resultado técnico necesario para RF-08.
 func TestPool_AuditaElResultadoFinal(t *testing.T) {
 	px := &proxmoxPool{}
 	e := nuevoEntornoPool(t, services.ConfigSeguimiento{Intervalo: 20 * time.Millisecond}, px)
@@ -284,8 +276,8 @@ func TestPool_AuditaElResultadoFinal(t *testing.T) {
 	id, _ := e.pool.Seguir(context.Background(), uuid.New(), 110, "shutdown", upid)
 	e.esperarEventos(t, 1, 3*time.Second)
 
-	reg := e.audit.buscar("SHUTDOWN")
-	if reg == nil || reg.Resultado != ports.ResultadoExito || reg.InstanciaID != "110" || reg.Detalles["tareaId"] != id.String() {
+	reg := e.audit.buscar("APAGAR_VM")
+	if reg == nil || reg.Resultado != ports.ResultadoSuccess || reg.InstanciaID != "110" || reg.Detalles["tareaId"] != id.String() || reg.Detalles["upid"] != upid {
 		t.Errorf("Auditoría del final de la tarea: %+v", reg)
 	}
 }
@@ -310,7 +302,7 @@ func TestPool_RecuperacionAlArrancar(t *testing.T) {
 		if finProxmox != nil {
 			px.tarea(tarea.UpidProxmox, *finProxmox)
 		}
-		_ = e.repo.Crear(context.Background(), &tarea)
+		_ = e.repo.Crear(context.Background(), &tarea, services.NewAuditService(nil).PrepararAuditoriaTarea(&tarea, nil, time.Now()))
 		return tarea
 	}
 	enCurso := time.Now().Add(300 * time.Millisecond) // termina mientras se la sigue
@@ -337,8 +329,8 @@ func TestPool_RecuperacionAlArrancar(t *testing.T) {
 	if e.repo.estado(reciente.ID) != ports.TareaCompleted || px.consultasDe(reciente.UpidProxmox) < 2 {
 		t.Errorf("La reciente debe reanudar el sondeo y completarse: %s, %d consultas", e.repo.estado(reciente.ID), px.consultasDe(reciente.UpidProxmox))
 	}
-	if e.repo.estado(viejaTerminada.ID) != ports.TareaCompleted || e.repo.metadatos(viejaTerminada.ID) != nil {
-		t.Errorf("La vieja que Proxmox ya terminó debe quedar COMPLETED sin metadatos: %s %v", e.repo.estado(viejaTerminada.ID), e.repo.metadatos(viejaTerminada.ID))
+	if e.repo.estado(viejaTerminada.ID) != ports.TareaCompleted || e.repo.metadatos(viejaTerminada.ID)["exitstatus"] != "OK" {
+		t.Errorf("La vieja que Proxmox ya terminó debe quedar COMPLETED con exitstatus OK: %s %v", e.repo.estado(viejaTerminada.ID), e.repo.metadatos(viejaTerminada.ID))
 	}
 	for _, tarea := range []domain.TareaAsincrona{viejaTerminada, viejaCorriendo, viejaSinRespuesta} {
 		if n := px.consultasDe(tarea.UpidProxmox); n != 1 {
@@ -350,7 +342,7 @@ func TestPool_RecuperacionAlArrancar(t *testing.T) {
 		if e.repo.estado(tarea.ID) != ports.TareaFailed {
 			t.Errorf("%s: debe quedar FAILED, quedó %s", tarea.Accion, e.repo.estado(tarea.ID))
 		}
-		if m := e.repo.metadatos(tarea.ID); m["motivo"] != "TIMEOUT" || m["error"] != mensaje || len(m) != 2 {
+		if m := e.repo.metadatos(tarea.ID); m["motivo"] != "TIMEOUT" || m["error"] != mensaje || m["exitstatus"] != nil || len(m) != 3 {
 			t.Errorf("%s: metadatos JSONB = %v", tarea.Accion, m)
 		}
 		d := porTarea[tarea.ID.String()].Detalles
@@ -358,7 +350,7 @@ func TestPool_RecuperacionAlArrancar(t *testing.T) {
 			t.Errorf("%s: TASK_FINISHED = %v", tarea.Accion, d)
 		}
 	}
-	for _, accion := range []string{"START", "STOP", "SHUTDOWN", "REBOOT"} {
+	for _, accion := range []string{"INICIAR_VM", "DETENER_VM", "APAGAR_VM", "REINICIAR_VM"} {
 		if e.audit.buscar(accion) == nil {
 			t.Errorf("Falta la auditoría final de %s", accion)
 		}
@@ -377,7 +369,7 @@ func TestPool_SeguimientoNormalNoUsaLaVentanaDe3Minutos(t *testing.T) {
 	px.tarea(upid, time.Now().Add(400*time.Millisecond))
 	tarea := domain.TareaAsincrona{ID: uuid.New(), UsuarioID: uuid.New(), UpidProxmox: upid, InstanciaID: "110",
 		Accion: "start", Estado: ports.TareaRunning, FechaCreacion: time.Now()}
-	_ = e.repo.Crear(context.Background(), &tarea)
+	_ = e.repo.Crear(context.Background(), &tarea, services.NewAuditService(nil).PrepararAuditoriaTarea(&tarea, nil, time.Now()))
 	e.iniciar(t)
 	e.esperarEventos(t, 1, 3*time.Second)
 	if e.repo.estado(tarea.ID) != ports.TareaCompleted {

@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // TareaRepository implementa ports.TareaRepository sobre la tabla tareas_asincronas.
@@ -27,28 +28,40 @@ func NewTareaRepository(db *gorm.DB) *TareaRepository {
 }
 
 // Crear inserta la tarea (se registra en estado RUNNING al disparar la acción).
-func (r *TareaRepository) Crear(ctx context.Context, tarea *domain.TareaAsincrona) error {
-	if err := r.db.WithContext(ctx).Create(tarea).Error; err != nil {
-		return fmt.Errorf("error al registrar tarea: %w", err)
-	}
-	return nil
+func (r *TareaRepository) Crear(ctx context.Context, tarea *domain.TareaAsincrona, auditoria ports.RegistrarAuditoriaInput) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(tarea).Error; err != nil {
+			return fmt.Errorf("error al registrar tarea: %w", err)
+		}
+		return NewAuditRepository(tx).Registrar(ctx, auditoria)
+	})
 }
 
 // ActualizarEstado guarda el estado final de la tarea y sus metadatos (JSONB).
-func (r *TareaRepository) ActualizarEstado(ctx context.Context, id uuid.UUID, estado string, metadatos map[string]any) error {
-	cambios := map[string]any{"estado": estado}
-	if metadatos != nil {
+func (r *TareaRepository) ActualizarEstado(ctx context.Context, id uuid.UUID, estado string, metadatos map[string]any, auditoria ports.RegistrarAuditoriaInput) error {
+	if estado != ports.TareaCompleted && estado != ports.TareaFailed {
+		return fmt.Errorf("estado de cierre inválido: %s", estado)
+	}
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var tarea domain.TareaAsincrona
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&tarea, "id = ?", id).Error; err != nil {
+			return err
+		}
+		if tarea.Estado != ports.TareaRunning {
+			return nil // otro worker ya confirmó el cierre y su auditoría
+		}
+		if metadatos == nil {
+			metadatos = map[string]any{}
+		}
+		if err := NewAuditRepository(tx).Registrar(ctx, auditoria); err != nil {
+			return err
+		}
 		crudo, err := json.Marshal(metadatos)
 		if err != nil {
 			return fmt.Errorf("error al serializar metadatos de la tarea: %w", err)
 		}
-		cambios["metadatos"] = string(crudo)
-	}
-	if err := r.db.WithContext(ctx).Model(&domain.TareaAsincrona{}).Where("id = ?", id).
-		Updates(cambios).Error; err != nil {
-		return fmt.Errorf("error al actualizar tarea: %w", err)
-	}
-	return nil
+		return tx.Model(&tarea).Updates(map[string]any{"estado": estado, "metadatos": string(crudo)}).Error
+	})
 }
 
 // BuscarTareasActivasPorVmids devuelve un mapa vmid → tarea en curso para todas

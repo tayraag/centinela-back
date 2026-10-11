@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"el-centinela/internal/core/domain"
 	"el-centinela/internal/core/ports"
 	"el-centinela/internal/core/services"
 
@@ -13,9 +14,9 @@ import (
 
 // mockAuditRepository implementa ports.AuditRepository en memoria para tests unitarios.
 type mockAuditRepository struct {
-	registros []ports.AuditoriaDTO
-	ultimoInput *ports.RegistrarAuditoriaInput
-	ultimaOrgID uuid.UUID
+	registros       []ports.AuditoriaDTO
+	ultimoInput     *ports.RegistrarAuditoriaInput
+	ultimaOrgID     uuid.UUID
 	ultimasOpciones ports.OpcionesAuditoria
 }
 
@@ -100,8 +101,8 @@ func TestAuditService_RegistrarYListar(t *testing.T) {
 
 	// 2. Probar listar auditoría con sanitización de opciones
 	opcionesInvalidas := ports.OpcionesAuditoria{
-		Pagina:     0,        // Debe sanitizarse a 1
-		TamanoPag:  -10,      // Debe sanitizarse a 50
+		Pagina:     0,          // Debe sanitizarse a 1
+		TamanoPag:  -10,        // Debe sanitizarse a 50
 		OrdenarPor: "invalido", // Debe sanitizarse a "fechaHora"
 		Direccion:  "invalido", // Debe sanitizarse a "desc"
 	}
@@ -134,5 +135,48 @@ func TestAuditService_RegistrarYListar(t *testing.T) {
 	}
 	if pagina.Items[0].Accion != ports.AccionLogin {
 		t.Errorf("Acción recuperada esperada: %s, obtenida: %s", ports.AccionLogin, pagina.Items[0].Accion)
+	}
+}
+
+func TestAuditService_PrepararAuditoriaTareaCorrelacion(t *testing.T) {
+	repo := newMockAuditRepository()
+	svc := services.NewAuditService(repo)
+	for accion, codigo := range map[string]string{"start": "INICIAR_VM", "stop": "DETENER_VM", "shutdown": "APAGAR_VM", "reboot": "REINICIAR_VM", "delete": "ELIMINAR_VM"} {
+		for _, caso := range []struct {
+			nombre, exit, motivo, resultado string
+		}{
+			{"exito", "OK", "", "SUCCESS"},
+			{"error", "permission denied", "PROXMOX_ERROR", "FAILED"},
+			{"timeout", "", "TIMEOUT", "FAILED"},
+			{"advertencias", "WARNINGS: 1", "", "FAILED"},
+		} {
+			t.Run(accion+"/"+caso.nombre, func(t *testing.T) {
+				meta := `{"instanciaNombre":"db-110","resource_type":"lxc"}`
+				tarea := domain.TareaAsincrona{ID: uuid.New(), UsuarioID: uuid.New(), Accion: accion, UpidProxmox: "UPID:test", InstanciaID: "110", FechaCreacion: time.Now(), Metadatos: &meta}
+				cierre := map[string]any{"exitstatus": caso.exit, "motivo": nil}
+				if caso.motivo != "" {
+					cierre["motivo"] = caso.motivo
+				}
+				inicio := svc.PrepararAuditoriaTarea(&tarea, nil, tarea.FechaCreacion)
+				fin := svc.PrepararAuditoriaTarea(&tarea, cierre, tarea.FechaCreacion.Add(2500*time.Millisecond))
+				if repo.ultimoInput != nil {
+					t.Fatal("preparar no debe escribir fuera de la transacción de tareas")
+				}
+				if inicio.Resultado != "PENDIENTE" || fin.Resultado != caso.resultado || inicio.Accion != codigo || fin.Accion != codigo {
+					t.Fatalf("registros incorrectos: %+v %+v", inicio, fin)
+				}
+				for _, reg := range []ports.RegistrarAuditoriaInput{inicio, fin} {
+					if reg.UsuarioID != tarea.UsuarioID || reg.InstanciaID != "110" || reg.InstanciaNombre != "db-110" || reg.Detalles["upid"] != tarea.UpidProxmox || reg.Detalles["tareaId"] != tarea.ID.String() {
+						t.Fatalf("correlación incorrecta: %+v", reg)
+					}
+				}
+				if fin.Detalles["duracionSegundos"] != 2.5 || fin.Detalles["exitstatus"] != caso.exit {
+					t.Fatalf("desenlace incorrecto: %+v", fin)
+				}
+				if caso.motivo != "" && fin.Detalles["motivo"] != caso.motivo {
+					t.Fatalf("motivo incorrecto: %+v", fin)
+				}
+			})
+		}
 	}
 }

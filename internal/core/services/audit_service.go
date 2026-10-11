@@ -1,4 +1,4 @@
-﻿package services
+package services
 
 import (
 	"bytes"
@@ -7,8 +7,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
+	"el-centinela/internal/core/domain"
 	"el-centinela/internal/core/ports"
 
 	"github.com/google/uuid"
@@ -139,4 +141,50 @@ func (s *auditServiceImpl) ExportarJSON(ctx context.Context, orgID uuid.UUID, fi
 	}
 
 	return data, nil
+}
+
+// PrepararAuditoriaTarea construye ambos registros RF-08. UPID permanece en el JSONB
+// existente: no requiere agregar columnas a la tabla particionada.
+// Un cierre sin exitstatus OK se audita FAILED, incluso si Proxmox informa
+// advertencias que el contrato de tareas/SSE considera COMPLETED.
+func (s *auditServiceImpl) PrepararAuditoriaTarea(t *domain.TareaAsincrona, cierre map[string]any, ahora time.Time) ports.RegistrarAuditoriaInput {
+	acciones := map[string]string{
+		"start": ports.AccionIniciarVM, "stop": ports.AccionDetenerVM,
+		"shutdown": ports.AccionApagarVM, "reboot": ports.AccionReiniciarVM, "delete": ports.AccionEliminarVM,
+	}
+	accion := acciones[strings.ToLower(t.Accion)]
+	if accion == "" {
+		accion = t.Accion
+	}
+	meta := map[string]any{}
+	if t.Metadatos != nil {
+		_ = json.Unmarshal([]byte(*t.Metadatos), &meta)
+	}
+	nombre, _ := meta["instanciaNombre"].(string)
+	detalles := map[string]any{
+		"upid": t.UpidProxmox, "tareaId": t.ID.String(), "instanciaNombre": nombre,
+	}
+	if tipo, ok := meta["resource_type"]; ok {
+		detalles["resource_type"] = tipo
+	}
+	resultado := ports.ResultadoPendiente
+	if cierre != nil {
+		resultado = ports.ResultadoFailed
+		if cierre["exitstatus"] == "OK" && cierre["motivo"] == nil {
+			resultado = ports.ResultadoSuccess
+		}
+		detalles["exitstatus"] = cierre["exitstatus"]
+		detalles["motivo"] = cierre["motivo"]
+		if resultado == ports.ResultadoFailed && detalles["motivo"] == nil {
+			detalles["motivo"] = ports.MotivoProxmoxError
+		}
+		detalles["duracionSegundos"] = max(0, ahora.Sub(t.FechaCreacion).Seconds())
+		if err, ok := cierre["error"]; ok {
+			detalles["error"] = err
+		}
+	}
+	return ports.RegistrarAuditoriaInput{
+		UsuarioID: t.UsuarioID, Accion: accion, InstanciaID: t.InstanciaID,
+		InstanciaNombre: nombre, Resultado: resultado, Detalles: detalles,
+	}
 }

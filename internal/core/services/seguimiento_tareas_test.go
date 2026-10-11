@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -54,26 +53,34 @@ func (p *proxmoxTareas) ListarInstancias(context.Context) ([]ports.InstanciaProx
 }
 func (p *proxmoxTareas) IniciarInstancia(context.Context, int) (string, error) { return "", nil }
 func (p *proxmoxTareas) DetenerInstancia(context.Context, int) (string, error) { return "", nil }
-func (p *proxmoxTareas) Shutdown(context.Context, string, int, string) (string, error) { return "", nil }
+func (p *proxmoxTareas) Shutdown(context.Context, string, int, string) (string, error) {
+	return "", nil
+}
 func (p *proxmoxTareas) Reboot(context.Context, string, int, string) (string, error) { return "", nil }
-func (p *proxmoxTareas) EliminarInstancia(context.Context, string, int, string) (string, error) { return "", nil }
+func (p *proxmoxTareas) EliminarInstancia(context.Context, string, int, string) (string, error) {
+	return "", nil
+}
 
 type tareasEnMemoria struct {
 	mu     sync.Mutex
 	tareas map[uuid.UUID]*domain.TareaAsincrona
+	audit  *auditoriaGrabadora
 }
 
-func (r *tareasEnMemoria) Crear(_ context.Context, t *domain.TareaAsincrona) error {
+func (r *tareasEnMemoria) Crear(_ context.Context, t *domain.TareaAsincrona, auditoria ports.RegistrarAuditoriaInput) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	copia := *t
 	r.tareas[t.ID] = &copia
 	return nil
 }
-func (r *tareasEnMemoria) ActualizarEstado(_ context.Context, id uuid.UUID, estado string, metadatos map[string]any) error {
+func (r *tareasEnMemoria) ActualizarEstado(_ context.Context, id uuid.UUID, estado string, metadatos map[string]any, auditoria ports.RegistrarAuditoriaInput) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if t, ok := r.tareas[id]; ok {
+		if r.audit != nil {
+			r.audit.Registrar(context.Background(), auditoria)
+		}
 		t.Estado = estado
 		if metadatos != nil {
 			crudo, _ := json.Marshal(metadatos)
@@ -129,22 +136,13 @@ func seguirTarea(t *testing.T, px *proxmoxTareas, accion string) (uuid.UUID, *ta
 	t.Helper()
 	repo := &tareasEnMemoria{tareas: map[uuid.UUID]*domain.TareaAsincrona{}}
 	pub := &publicadorFalso{publicados: make(chan ports.RealtimeEvent, 1)}
-	audit := &auditoriaGrabadora{}
 	cfg := services.ConfigSeguimiento{
 		Intervalo: 10 * time.Millisecond,
 		OnTaskFinished: func(ctx context.Context, tarea *domain.TareaAsincrona, recursoTipo string, r services.ResultadoTarea) {
-			resultado := ports.ResultadoExito
-			if r.Estado != ports.TareaCompleted {
-				resultado = ports.ResultadoFalla
-			}
-			audit.Registrar(ctx, ports.RegistrarAuditoriaInput{
-				UsuarioID: tarea.UsuarioID, Accion: strings.ToUpper(tarea.Accion),
-				InstanciaID: tarea.InstanciaID, Resultado: resultado, Detalles: r.Detalles(tarea),
-			})
 			_ = pub.Publicar(ctx, services.EventoTareaFinalizada(tarea, recursoTipo, r))
 		},
 	}
-	seg := services.NewSeguimientoTareas(px, repo, cfg)
+	seg := services.NewSeguimientoTareas(px, repo, services.NewAuditService(nil), cfg)
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	seg.Iniciar(ctx)

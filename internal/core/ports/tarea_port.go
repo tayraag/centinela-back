@@ -8,15 +8,17 @@ import (
 	"github.com/google/uuid"
 )
 
-
-// TareaRepository persiste las tareas asíncronas de Proxmox (tabla tareas_asincronas).
+// TareaRepository es el puerto de persistencia de tareas y su auditoría asociada.
+// El servicio construye el registro de auditoría; el adaptador garantiza que
+// ambas escrituras sean atómicas sin decidir sus códigos ni resultados.
 type TareaRepository interface {
-	// Crear inserta la tarea (estado RUNNING).
-	Crear(ctx context.Context, tarea *domain.TareaAsincrona) error
+	// Crear inserta atómicamente la tarea RUNNING y su auditoría PENDIENTE.
+	Crear(ctx context.Context, tarea *domain.TareaAsincrona, auditoria RegistrarAuditoriaInput) error
 
-	// ActualizarEstado guarda el estado final (COMPLETED | FAILED) y, si no es
-	// nil, los metadatos del cierre en la columna JSONB metadatos.
-	ActualizarEstado(ctx context.Context, id uuid.UUID, estado string, metadatos map[string]any) error
+	// ActualizarEstado confirma atómicamente el estado final (COMPLETED | FAILED),
+	// los metadatos técnicos y la auditoría definitiva. Repetir el cierre de una
+	// tarea terminada no genera nuevos registros. Un error deja RUNNING para reintento.
+	ActualizarEstado(ctx context.Context, id uuid.UUID, estado string, metadatos map[string]any, auditoria RegistrarAuditoriaInput) error
 
 	// BuscarTareasActivasPorVmids devuelve un mapa vmid → tarea en curso
 	// (tareaId, acción en mayúsculas y estado RUNNING) de cualquiera de los
