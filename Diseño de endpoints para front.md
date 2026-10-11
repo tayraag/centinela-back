@@ -678,6 +678,8 @@ El uso de Query Parameters en el requerimiento 7 cumple la función de delegar e
 
 **GET /api/instances?search=web\&type=VM\&status=running\&node=pve1**
 
+> **OPERATIVO ETAPA-1 (código actual): `GET /api/instances` no acepta query params (`search/type/status/node` son planificados, el backend los ignora) y devuelve un array directo `[]`, sin wrapper `{summary, instances}`. `type` es `vm|lxc` (mapea `qemu→vm`), `cpuUsage` es porcentaje 0-100 con 2 decimales (`null` si `stopped`), `ramUsage/maxRam` en bytes (`null` si `stopped`, salvo `maxRam` que va siempre que Proxmox informe `>0`), y `activeTask` es objeto `{tareaId, action: START|STOP|SHUTDOWN|REBOOT|DELETE, status: RUNNING}|null` (no string UPID). ADMIN ve todo, OPERATOR solo sus asignadas. Ver `instance_handler.go:ListarInstancias` y `docs/contrato-etapa1.md`.
+
 Con respecto a los query params en la url DE EJEMPLO de arriba:
 
 `-GET /api/instances`: Es la ruta base que indica al backend que se requiere obtener el inventario general de recursos.
@@ -733,6 +735,8 @@ Con respecto a los query params en la url DE EJEMPLO de arriba:
 }
 ```
 
+> **OPERATIVO ETAPA-1:** el ejemplo anterior con wrapper `{summary, instances}` y `activeTask` como string UPID es diseño futuro. El código devuelve `[]` directo y `activeTask` objeto o `null`, ej: `"activeTask": {"tareaId": "uuid", "action": "START", "status": "RUNNING"}`.
+
 #### 8.0 Detalle de instancia
 
 Este es el primer endpoint que el frontend consume al entrar al detalle. Alimenta la cabecera (estado, acciones permitidas, IP, tareas activas) y la primera pestaña de información general y hardware base.&nbsp;
@@ -740,6 +744,8 @@ Este es el primer endpoint que el frontend consume al entrar al detalle. Aliment
 &nbsp;
 
 **GET /api/instances/{id}**&nbsp;
+
+> **OPERATIVO ETAPA-1 (código actual): `GET /api/instances/:vmid` (`:vmid` entero, `400 INVALID_VMID` si no lo es) devuelve la lectura en vivo `InstanciaProxmoxDTO` (`{vmid, nombre, tipo: qemu|lxc, nodo, estado, cpu: fracción 0-1, mem, maxMem, maxCpu}`), no el detalle rico del ejemplo siguiente (`os, qemuAgentActive, permissions, availableActions, recentTasks...`, que queda como planificado).
 
 ```json
 {
@@ -800,11 +806,13 @@ Estas acciones (iniciar, apagar, forzar apagado, reiniciar) no necesitan que el 
 
 **POST /api/instances/{id}/status/{action}**
 
-Donde `{action}` puede ser: `start` (Iniciar), `stop` (Forzar apagado) o `reboot` (Reiniciar).
-*Nota: Se mantienen los alias directos `/start` y `/stop` por retrocompatibilidad.*
+Donde `{action}` puede ser: `start` (Iniciar), `stop` (Forzar apagado), `shutdown` (Apagado ordenado) o `reboot` (Reiniciar). Cualquier otro valor (incluido `pause`) responde `400 INVALID_ACTION`.
+*Nota: Se mantienen los alias directos `POST /{id}/start` y `POST /{id}/stop` por retrocompatibilidad.*
 
 **DELETE /api/instances/{id}** (Eliminar instancia)
-Requiere rol ADMIN estrictamente, y la instancia debe estar en estado `stopped`.
+Requiere rol ADMIN estrictamente, y la instancia debe estar en estado `stopped` (`409 INSTANCE_INVALID_STATE` si no, `409 INSTANCE_BUSY` si hay tarea RUNNING).
+
+> **OPERATIVO ETAPA-1:** las 4 acciones + el borrado son asíncronos y responden `202 {upid: string, tareaId?: string-uuid}` (`tareaId` se omite si falló el registro local, sin tratarlo como error; correlacionar por `TASK_FINISHED`). Pre-chequeos sin tocar Proxmox: `409 INSTANCE_BUSY` si hay tarea RUNNING; matriz `start→stopped`, `stop|shutdown|reboot→running` (`409 INSTANCE_INVALID_STATE`). Errores Proxmox: `404 INSTANCE_NOT_FOUND`, `502 PROXMOX_UNAVAILABLE` (orden no llegó), `504 PROXMOX_TIMEOUT` (pudo aplicarse). Sobre de error `{errorCode, message}`.
 
 Sí hay una respuesta para el front, pero está agrupada más abajo para no repetirla.
 
@@ -1386,6 +1394,8 @@ Para la seguridad de esto se requiere autenticación mediante JWT y validación 
 Mediante query parameters:
 
 **GET /api/admin/audit?page=1\&limit=10\&from=2024-05-01\&to=2024-05-08\&result=SUCCESS**
+
+> **OPERATIVO ETAPA-1 (código actual): los params reales son en español: `GET /api/admin/audit?accion=INICIAR_VM&resultado=SUCCESS&usuarioId=<uuid>&instanciaId=110&desde=2024-05-01&hasta=2024-05-08&pagina=1&tamano=50&ordenarPor=fechaHora&direccion=desc`. `page/limit/from/to/result` del ejemplo no existen en código. `GET /api/admin/audit/export` acepta los mismos filtros + `?formato=csv|json` (default `csv`, cualquier valor no-`json` devuelve CSV como adjunto). Respuesta real `200 {total, pagina, items:[{id, usuarioId, nombreUsuario, fechaHora, accion, instanciaId, instanciaNombre, resultado, detalles}]}` (`detalles` string JSON), sin `{statistics, pagination, events}` del ejemplo siguiente, que queda como diseño futuro.
 
 - GET /api/admin/audit: Es la ruta base del endpoint encargada de consultar y devolver los registros de auditoría almacenados en la base de datos.
 - GET /api/admin/audit/export: Exporta el log de auditoría completo según los filtros (descarga CSV).
