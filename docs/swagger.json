@@ -1789,7 +1789,7 @@
                         }
                     },
                     "409": {
-                        "description": "INSTANCE_INVALID_STATE — la instancia no está stopped | INSTANCE_BUSY — la instancia está ejecutando otra tarea; reintentar al recibir TASK_FINISHED",
+                        "description": "INSTANCE_INVALID_STATE: La instancia se encuentra en un estado incompatible para la acción solicitada | INSTANCE_BUSY — la instancia está ejecutando otra tarea; reintentar al recibir TASK_FINISHED",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -1878,7 +1878,7 @@
                         }
                     },
                     "409": {
-                        "description": "INSTANCE_INVALID_STATE — start exige stopped; stop, shutdown y reboot exigen running | INSTANCE_BUSY — la instancia está ejecutando otra tarea; reintentar al recibir TASK_FINISHED",
+                        "description": "INSTANCE_INVALID_STATE: La instancia se encuentra en un estado incompatible para la acción solicitada | INSTANCE_BUSY — la instancia está ejecutando otra tarea; reintentar al recibir TASK_FINISHED",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -1960,7 +1960,7 @@
                         }
                     },
                     "409": {
-                        "description": "INSTANCE_INVALID_STATE — la instancia no está running | INSTANCE_BUSY — la instancia está ejecutando otra tarea; reintentar al recibir TASK_FINISHED",
+                        "description": "INSTANCE_INVALID_STATE: La instancia se encuentra en un estado incompatible para la acción solicitada | INSTANCE_BUSY — la instancia está ejecutando otra tarea; reintentar al recibir TASK_FINISHED",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
