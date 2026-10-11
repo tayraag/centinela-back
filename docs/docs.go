@@ -211,7 +211,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Filtrar por resultado: EXITO o FALLA",
+                        "description": "Filtrar por resultado: PENDIENTE, SUCCESS, FAILED (infraestructura); EXITO o FALLA (otras acciones)",
                         "name": "resultado",
                         "in": "query"
                     },
@@ -317,7 +317,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "EXITO o FALLA",
+                        "description": "PENDIENTE, SUCCESS, FAILED (infraestructura); EXITO o FALLA (otras acciones)",
                         "name": "resultado",
                         "in": "query"
                     },

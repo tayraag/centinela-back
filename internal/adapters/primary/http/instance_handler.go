@@ -269,15 +269,15 @@ func (h *InstanceHandler) ListarInstancias(c *gin.Context) {
 
 		var cpuUsage *float64
 		var ramUsage, maxRam *int64
-		
+
 		if inst.Estado == "running" {
 			cpu := math.Round(inst.Cpu*10000) / 100 // CPU en porcentaje con 2 decimales
 			cpuUsage = &cpu
 			mem := inst.Mem
 			ramUsage = &mem
 		}
-		
-		// maxRam siempre debe enviarse independientemente del estado, 
+
+		// maxRam siempre debe enviarse independientemente del estado,
 		// salvo que Proxmox devuelva 0 (en cuyo caso dejamos el puntero nil).
 		if inst.MaxMem > 0 {
 			max := inst.MaxMem
@@ -375,10 +375,7 @@ func (h *InstanceHandler) IniciarInstancia(c *gin.Context) {
 		mapearErrorProxmox(c, err)
 		return
 	}
-	h.registrarAuditVM(c, vmid, instancia.Nombre, ports.AccionIniciarVM, ports.ResultadoPendiente, map[string]any{
-		"upid": upid, "action": "start", "resource_type": instancia.Tipo,
-	})
-	h.responderTarea(c, vmid, "start", upid)
+	h.responderTarea(c, vmid, "start", upid, map[string]any{"instanciaNombre": instancia.Nombre, "resource_type": instancia.Tipo})
 }
 
 // ==========================================
@@ -420,10 +417,7 @@ func (h *InstanceHandler) DetenerInstancia(c *gin.Context) {
 		mapearErrorProxmox(c, err)
 		return
 	}
-	h.registrarAuditVM(c, vmid, instancia.Nombre, ports.AccionDetenerVM, ports.ResultadoPendiente, map[string]any{
-		"upid": upid, "action": "stop", "resource_type": instancia.Tipo,
-	})
-	h.responderTarea(c, vmid, "stop", upid)
+	h.responderTarea(c, vmid, "stop", upid, map[string]any{"instanciaNombre": instancia.Nombre, "resource_type": instancia.Tipo})
 }
 
 // ==========================================
@@ -534,10 +528,7 @@ func (h *InstanceHandler) CambiarEstado(c *gin.Context) {
 		mapearErrorProxmox(c, err)
 		return
 	}
-	h.registrarAuditVM(c, vmid, instancia.Nombre, accionAudit, ports.ResultadoPendiente, map[string]any{
-		"upid": upid, "action": accion, "resource_type": instancia.Tipo,
-	})
-	h.responderTarea(c, vmid, accion, upid)
+	h.responderTarea(c, vmid, accion, upid, map[string]any{"instanciaNombre": instancia.Nombre, "resource_type": instancia.Tipo})
 }
 
 // ==========================================
@@ -600,8 +591,5 @@ func (h *InstanceHandler) EliminarInstancia(c *gin.Context) {
 		return
 	}
 
-	h.registrarAuditVM(c, vmid, instancia.Nombre, ports.AccionEliminarVM, ports.ResultadoPendiente, map[string]any{
-		"upid": upid, "action": "delete", "resource_type": instancia.Tipo,
-	})
-	h.responderTarea(c, vmid, "delete", upid, map[string]any{"resource_type": instancia.Tipo})
+	h.responderTarea(c, vmid, "delete", upid, map[string]any{"instanciaNombre": instancia.Nombre, "resource_type": instancia.Tipo})
 }

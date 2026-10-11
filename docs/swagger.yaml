@@ -863,7 +863,8 @@ paths:
         in: query
         name: instanciaId
         type: string
-      - description: 'Filtrar por resultado: EXITO o FALLA'
+      - description: 'Filtrar por resultado: PENDIENTE, SUCCESS, FAILED (infraestructura);
+          EXITO o FALLA (otras acciones)'
         in: query
         name: resultado
         type: string
@@ -933,7 +934,8 @@ paths:
         in: query
         name: instanciaId
         type: string
-      - description: EXITO o FALLA
+      - description: PENDIENTE, SUCCESS, FAILED (infraestructura); EXITO o FALLA (otras
+          acciones)
         in: query
         name: resultado
         type: string

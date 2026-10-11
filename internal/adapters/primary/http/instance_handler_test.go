@@ -13,6 +13,7 @@ import (
 	"el-centinela/internal/adapters/primary/http/middleware"
 	"el-centinela/internal/core/domain"
 	"el-centinela/internal/core/ports"
+	"el-centinela/internal/core/services"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -29,8 +30,8 @@ const (
 type mockProxmoxPort struct {
 	instancias []ports.InstanciaProxmoxDTO
 	errListar  error
-	errAccion  error // error de IniciarInstancia / DetenerInstancia
-	errDetalle error // error de ObtenerInstancia
+	errAccion  error  // error de IniciarInstancia / DetenerInstancia
+	errDetalle error  // error de ObtenerInstancia
 	estado     string // estado que informa ObtenerInstancia
 	lecturas   int    // órdenes de lectura recibidas (ObtenerInstancia)
 	escrituras int    // órdenes de escritura recibidas (start/stop/shutdown/reboot)
@@ -126,11 +127,14 @@ func (seguimientoNulo) Seguir(context.Context, uuid.UUID, int, string, string, .
 type mockTareaRepository struct {
 	activas map[int]ports.ActiveTaskDTO
 }
-func (m *mockTareaRepository) Crear(context.Context, *domain.TareaAsincrona) error { return nil }
+
+func (m *mockTareaRepository) Crear(context.Context, *domain.TareaAsincrona, ports.RegistrarAuditoriaInput) error {
+	return nil
+}
 func (m *mockTareaRepository) ListarEnCurso(context.Context) ([]domain.TareaAsincrona, error) {
 	return nil, nil
 }
-func (m *mockTareaRepository) ActualizarEstado(context.Context, uuid.UUID, string, map[string]any) error {
+func (m *mockTareaRepository) ActualizarEstado(context.Context, uuid.UUID, string, map[string]any, ports.RegistrarAuditoriaInput) error {
 	return nil
 }
 func (m *mockTareaRepository) BuscarTareasActivasPorVmids(context.Context, []int) (map[int]ports.ActiveTaskDTO, error) {
@@ -141,6 +145,7 @@ func (m *mockTareaRepository) BuscarTareasActivasPorVmids(context.Context, []int
 }
 
 type mockAuditService struct {
+	ports.AuditService
 	registros []ports.RegistrarAuditoriaInput
 }
 
@@ -156,10 +161,15 @@ func (m *mockAuditService) ultimo() (ports.RegistrarAuditoriaInput, bool) {
 	return m.registros[len(m.registros)-1], true
 }
 
-func (m *mockAuditService) ListarAuditoria(context.Context, uuid.UUID, ports.FiltrosAuditoria, ports.OpcionesAuditoria) (*ports.PaginaAuditoria, error) { return nil, nil }
-func (m *mockAuditService) ExportarCSV(context.Context, uuid.UUID, ports.FiltrosAuditoria) ([]byte, error) { return nil, nil }
-func (m *mockAuditService) ExportarJSON(context.Context, uuid.UUID, ports.FiltrosAuditoria) ([]byte, error) { return nil, nil }
-
+func (m *mockAuditService) ListarAuditoria(context.Context, uuid.UUID, ports.FiltrosAuditoria, ports.OpcionesAuditoria) (*ports.PaginaAuditoria, error) {
+	return nil, nil
+}
+func (m *mockAuditService) ExportarCSV(context.Context, uuid.UUID, ports.FiltrosAuditoria) ([]byte, error) {
+	return nil, nil
+}
+func (m *mockAuditService) ExportarJSON(context.Context, uuid.UUID, ports.FiltrosAuditoria) ([]byte, error) {
+	return nil, nil
+}
 
 // mockUserRepository implementa ports.UserRepository para pruebas
 type mockUserRepository struct {
@@ -605,6 +615,7 @@ func TestCambiarEstado_AccionInvalidaEs400(t *testing.T) {
 		t.Errorf("se esperaba 400 INVALID_ACTION, vino %d %v", status, cuerpo)
 	}
 }
+
 // inventarioFalso resuelve IPs fijas y registra qué instancias le pidieron.
 type inventarioFalso struct {
 	inventarioNulo
@@ -781,10 +792,22 @@ func TestEliminarInstancia_ErroresDeProxmox(t *testing.T) {
 
 // ejecutarCicloDeVidaConAuditoria ejecuta una acción sobre el router de ciclo de
 // vida y devuelve el código HTTP junto con el mock que captura la auditoría.
+type tareasAuditadas struct {
+	mockTareaRepository
+	audit *mockAuditService
+}
+
+func (r *tareasAuditadas) Crear(ctx context.Context, tarea *domain.TareaAsincrona, auditoria ports.RegistrarAuditoriaInput) error {
+	r.audit.Registrar(ctx, auditoria)
+	return nil
+}
+
 func ejecutarCicloDeVidaConAuditoria(mock *mockProxmoxPort, metodo, ruta string) (int, *mockAuditService) {
 	gin.SetMode(gin.TestMode)
 	audit := &mockAuditService{}
-	handler := adaptersHttp.NewInstanceHandler(mock, &mockUserRepository{}, seguimientoNulo{}, &mockTareaRepository{}, audit, inventarioNulo{})
+	repo := &tareasAuditadas{audit: audit}
+	seguimiento := services.NewSeguimientoTareas(mock, repo, services.NewAuditService(nil), services.ConfigSeguimiento{})
+	handler := adaptersHttp.NewInstanceHandler(mock, &mockUserRepository{}, seguimiento, repo, audit, inventarioNulo{})
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
 		c.Set(string(middleware.ContextKeyUserID), uuid.New().String())
@@ -810,13 +833,13 @@ func TestAuditoriaDeCicloDeVida_UsaVocabularioCanonicoYMetadatos(t *testing.T) {
 		accion    string
 		resultado string
 	}{
-		{"alias start", http.MethodPost, "/api/instances/110/start", "stopped", "START", "PENDING"},
-		{"alias stop", http.MethodPost, "/api/instances/110/stop", "running", "STOP", "PENDING"},
-		{"genérico start", http.MethodPost, "/api/instances/110/status/start", "stopped", "START", "PENDING"},
-		{"genérico stop", http.MethodPost, "/api/instances/110/status/stop", "running", "STOP", "PENDING"},
-		{"genérico shutdown", http.MethodPost, "/api/instances/110/status/shutdown", "running", "SHUTDOWN", "PENDING"},
-		{"genérico reboot", http.MethodPost, "/api/instances/110/status/reboot", "running", "REBOOT", "PENDING"},
-		{"delete", http.MethodDelete, "/api/instances/110", "stopped", "DELETE", "PENDING"},
+		{"alias start", http.MethodPost, "/api/instances/110/start", "stopped", "INICIAR_VM", "PENDIENTE"},
+		{"alias stop", http.MethodPost, "/api/instances/110/stop", "running", "DETENER_VM", "PENDIENTE"},
+		{"genérico start", http.MethodPost, "/api/instances/110/status/start", "stopped", "INICIAR_VM", "PENDIENTE"},
+		{"genérico stop", http.MethodPost, "/api/instances/110/status/stop", "running", "DETENER_VM", "PENDIENTE"},
+		{"genérico shutdown", http.MethodPost, "/api/instances/110/status/shutdown", "running", "APAGAR_VM", "PENDIENTE"},
+		{"genérico reboot", http.MethodPost, "/api/instances/110/status/reboot", "running", "REINICIAR_VM", "PENDIENTE"},
+		{"delete", http.MethodDelete, "/api/instances/110", "stopped", "ELIMINAR_VM", "PENDIENTE"},
 	}
 	for _, caso := range casos {
 		t.Run(caso.nombre, func(t *testing.T) {
@@ -843,6 +866,12 @@ func TestAuditoriaDeCicloDeVida_UsaVocabularioCanonicoYMetadatos(t *testing.T) {
 			if reg.Detalles["resource_type"] != tipoInstanciaMock {
 				t.Errorf("resource_type: se esperaba %q, vino %v", tipoInstanciaMock, reg.Detalles["resource_type"])
 			}
+			if _, err := uuid.Parse(fmt.Sprint(reg.Detalles["tareaId"])); err != nil {
+				t.Fatalf("falta tareaId válido: %v", reg.Detalles)
+			}
+			if reg.Detalles["upid"] == "" || reg.Detalles["instanciaNombre"] != nombreInstanciaMock {
+				t.Fatalf("faltan datos de correlación: %v", reg.Detalles)
+			}
 		})
 	}
 }
@@ -856,8 +885,8 @@ func TestAuditoriaDeAlias_FalloUsaAccionCanonicaYNombreReal(t *testing.T) {
 		estado string
 		accion string
 	}{
-		{"alias start", "/api/instances/110/start", "stopped", "START"},
-		{"alias stop", "/api/instances/110/stop", "running", "STOP"},
+		{"alias start", "/api/instances/110/start", "stopped", "INICIAR_VM"},
+		{"alias stop", "/api/instances/110/stop", "running", "DETENER_VM"},
 	}
 	for _, caso := range casos {
 		t.Run(caso.nombre, func(t *testing.T) {
