@@ -99,6 +99,10 @@ func (s *Simulador) rutas() {
 	m.HandleFunc("GET "+base+"/nodes/{node}/{tipo}/{vmid}/interfaces", s.interfacesLXC)
 	m.HandleFunc("GET "+base+"/nodes/{node}/{tipo}/{vmid}/agent/network-get-interfaces", s.interfacesAgenteQemu)
 
+	// Almacenamiento y contenidos (RF-05, RF-07)
+	m.HandleFunc("GET "+base+"/nodes/{node}/storage", s.listarStorage)
+	m.HandleFunc("GET "+base+"/nodes/{node}/storage/{storage}/content", s.listarContenidoStorage)
+
 	// Cualquier otra ruta: Proxmox responde 501 "Method ... not implemented".
 	m.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		errorPVE(w, http.StatusNotImplemented, fmt.Sprintf("Method '%s %s' not implemented", r.Method, strings.TrimPrefix(r.URL.Path, base)))

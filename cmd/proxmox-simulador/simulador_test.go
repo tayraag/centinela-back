@@ -998,3 +998,182 @@ func TestContrato_ClienteDelBackend_Interfaces(t *testing.T) {
 		}
 	}
 }
+
+// ==========================================
+// Storages y Contenido (RF-05, RF-07)
+// ==========================================
+
+func TestStorage_ListarYContenido(t *testing.T) {
+	e := nuevoEntorno(t, "")
+
+	// 1. GET /nodes/{node}/storage devuelve local, local-lvm y shared-nfs
+	s, data, _ := e.pedir("GET", "/nodes/proxmox/storage", nil)
+	if s != 200 {
+		t.Fatalf("GET /nodes/proxmox/storage devolvió %d", s)
+	}
+	storages, ok := data.([]any)
+	if !ok || len(storages) != 3 {
+		t.Fatalf("Se esperaban 3 storages simulados, vinieron %d: %v", len(storages), data)
+	}
+
+	mapa := map[string]map[string]any{}
+	for _, item := range storages {
+		st := item.(map[string]any)
+		nombre := st["storage"].(string)
+		mapa[nombre] = st
+		if st["active"].(float64) != 1 {
+			t.Errorf("Storage %s active debe ser 1", nombre)
+		}
+		if st["total"].(float64) <= 0 || st["avail"].(float64) < 0 {
+			t.Errorf("Storage %s total/avail inválidos: %+v", nombre, st)
+		}
+	}
+
+	if _, ok := mapa["local"]; !ok {
+		t.Error("Falta storage 'local'")
+	}
+	if _, ok := mapa["local-lvm"]; !ok {
+		t.Error("Falta storage 'local-lvm'")
+	}
+	if _, ok := mapa["shared-nfs"]; !ok {
+		t.Error("Falta storage 'shared-nfs'")
+	}
+
+	// 2. Filtro por ?content=iso
+	_, dataIso, _ := e.pedir("GET", "/nodes/proxmox/storage?content=iso", nil)
+	for _, item := range dataIso.([]any) {
+		st := item.(map[string]any)
+		if !strings.Contains(st["content"].(string), "iso") {
+			t.Errorf("Filtro content=iso devolvió storage sin iso: %+v", st)
+		}
+	}
+
+	// 3. GET /nodes/{node}/storage/{storage}/content
+	s, dataLocal, _ := e.pedir("GET", "/nodes/proxmox/storage/local/content", nil)
+	if s != 200 {
+		t.Fatalf("GET content local devolvió %d", s)
+	}
+	itemsLocal := dataLocal.([]any)
+	if len(itemsLocal) == 0 {
+		t.Fatal("local debe tener contenidos (ISOs y plantillas)")
+	}
+
+	tieneISO := false
+	tieneVztmpl := false
+	for _, it := range itemsLocal {
+		m := it.(map[string]any)
+		if m["content"] == "iso" {
+			tieneISO = true
+		}
+		if m["content"] == "vztmpl" {
+			tieneVztmpl = true
+		}
+		if m["volid"] == nil || m["format"] == nil || m["size"].(float64) <= 0 {
+			t.Errorf("Item de contenido incompleto: %+v", m)
+		}
+	}
+	if !tieneISO || !tieneVztmpl {
+		t.Errorf("local debe contener tanto iso como vztmpl: %+v", itemsLocal)
+	}
+
+	// 4. Filtro por ?content=iso en contenido
+	_, dataSoloIso, _ := e.pedir("GET", "/nodes/proxmox/storage/local/content?content=iso", nil)
+	for _, it := range dataSoloIso.([]any) {
+		m := it.(map[string]any)
+		if m["content"] != "iso" {
+			t.Errorf("Filtro ?content=iso trajo item de tipo %v", m["content"])
+		}
+	}
+
+	// 5. Storage inexistente da error 500 como Proxmox
+	sInex, _, errCuerpo := e.pedir("GET", "/nodes/proxmox/storage/inexistente/content", nil)
+	if sInex != 500 || !strings.Contains(errCuerpo["message"].(string), "does not exist") {
+		t.Errorf("Storage inexistente debe responder 500 con 'does not exist', vino %d: %v", sInex, errCuerpo)
+	}
+
+	// 6. Nodo inexistente responde error de lookup
+	sNodo, _, _ := e.pedir("GET", "/nodes/nodo-invalido/storage", nil)
+	if sNodo != 500 {
+		t.Errorf("Nodo inválido debe responder 500, vino %d", sNodo)
+	}
+}
+
+func TestAprovisionamientoYEdicionRecursos(t *testing.T) {
+	e := nuevoEntorno(t, "")
+
+	// 1. Aprovisionamiento POST /nodes/{node}/qemu responde 200 con UPID qmcreate
+	s, upidQemu, _ := e.pedir("POST", "/nodes/proxmox/qemu", url.Values{
+		"vmid":   {"501"},
+		"name":   {"vm-etapa2-test"},
+		"memory": {"4096"},
+		"cores":  {"4"},
+		"scsi0":  {"local-lvm:30"},
+		"net0":   {"virtio,bridge=vmbr0"},
+	})
+	if s != 200 || !strings.Contains(upidQemu.(string), ":qmcreate:501:") {
+		t.Fatalf("Creación Qemu falló: %d, upid: %v", s, upidQemu)
+	}
+	e.avanzar(3 * time.Second)
+
+	// 2. Aprovisionamiento POST /nodes/{node}/lxc responde 200 con UPID vzcreate
+	s, upidLxc, _ := e.pedir("POST", "/nodes/proxmox/lxc", url.Values{
+		"vmid":       {"502"},
+		"hostname":   {"ct-etapa2-test"},
+		"ostemplate": {"local:vztmpl/debian-12-standard_12.2-1_amd64.tar.zst"},
+		"memory":     {"1024"},
+		"swap":       {"256"},
+		"cores":      {"2"},
+		"rootfs":     {"local-lvm:10"},
+	})
+	if s != 200 || !strings.Contains(upidLxc.(string), ":vzcreate:502:") {
+		t.Fatalf("Creación LXC falló: %d, upid: %v", s, upidLxc)
+	}
+	e.avanzar(3 * time.Second)
+
+	// 3. Edición de recursos PUT /nodes/{node}/qemu/{vmid}/config
+	sPut, dataPut, _ := e.pedir("PUT", "/nodes/proxmox/qemu/501/config", url.Values{
+		"cores":  {"8"},
+		"memory": {"8192"},
+	})
+	if sPut != 200 || dataPut != nil {
+		t.Fatalf("PUT /config VM apagada debe responder 200 con data null: %d %v", sPut, dataPut)
+	}
+
+	_, configQemu, _ := e.pedir("GET", "/nodes/proxmox/qemu/501/config", nil)
+	cfgQ := configQemu.(map[string]any)
+	if cfgQ["cores"] != float64(8) || cfgQ["memory"] != "8192" {
+		t.Errorf("Config QEMU no persistió cambios: %+v", cfgQ)
+	}
+
+	// 4. Edición de recursos en LXC (swap, memory, cores)
+	sPutLxc, _, _ := e.pedir("PUT", "/nodes/proxmox/lxc/502/config", url.Values{
+		"cores":  {"4"},
+		"memory": {"2048"},
+		"swap":   {"512"},
+	})
+	if sPutLxc != 200 {
+		t.Fatalf("PUT /config LXC falló: %d", sPutLxc)
+	}
+	_, configLxc, _ := e.pedir("GET", "/nodes/proxmox/lxc/502/config", nil)
+	cfgL := configLxc.(map[string]any)
+	if cfgL["cores"] != float64(4) || cfgL["memory"] != float64(2048) || cfgL["swap"] != float64(512) {
+		t.Errorf("Config LXC no persistió cambios: %+v", cfgL)
+	}
+
+	// 5. Validar que ninguna de las nuevas rutas devuelva 501 Not Implemented
+	rutasAProbar := []string{
+		"/nodes/proxmox/storage",
+		"/nodes/proxmox/storage/local/content",
+		"/nodes/proxmox/storage/shared-nfs/content",
+		"/nodes/proxmox/qemu/501/rrddata?timeframe=hour",
+		"/nodes/proxmox/lxc/502/rrddata?timeframe=hour",
+		"/nodes/proxmox/qemu/501/config",
+		"/nodes/proxmox/lxc/502/config",
+	}
+	for _, r := range rutasAProbar {
+		st, _, _ := e.pedir("GET", r, nil)
+		if st == 501 {
+			t.Errorf("La ruta %s devolvió 501 Not Implemented", r)
+		}
+	}
+}
