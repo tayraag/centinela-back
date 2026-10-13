@@ -4,6 +4,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -82,6 +83,13 @@ func main() {
 		log.Println("✅ Variables de entorno cargadas desde el archivo .env")
 	}
 
+	// Resolver el proveedor antes de abrir conexiones o iniciar workers. Así una
+	// configuración insegura en producción detiene el proceso inmediatamente.
+	emailService, err := inicializarServicioEmail()
+	if err != nil {
+		log.Fatalf("[FATAL] %v", err)
+	}
+
 	// 2. Inicializar la base de datos
 	db, err := postgres.InitDB()
 	if err != nil {
@@ -101,18 +109,6 @@ func main() {
 	// 3. Inicializar adaptadores secundarios (repositorios)
 	authRepo := postgres.NewAuthRepository(db)
 	userRepo := postgres.NewUserRepository(db)
-	var emailService ports.EmailService
-	if os.Getenv("EMAIL_PROVIDER") == "smtp" {
-		svc, err := email.NewSMTPEmailService()
-		if err != nil {
-			log.Fatalf("❌ Configuración SMTP inválida: %v", err)
-		}
-		emailService = svc
-		log.Println("📧 Email Provider: SMTP (STARTTLS/TLS)")
-	} else {
-		emailService = email.NewMockEmailService()
-		log.Println("📧 Email Provider: MOCK (consola/tests)")
-	}
 	auditRepo := postgres.NewAuditRepository(db)
 	instanceRepo := postgres.NewInstanceRepository(db)
 	kvStore := conectarRedis()
@@ -352,6 +348,41 @@ func main() {
 
 	if err := seguimientoTareas.Esperar(shutdownCtx); err != nil {
 		log.Printf("⚠️  El seguimiento de tareas no terminó a tiempo: %v", err)
+	}
+}
+
+// inicializarServicioEmail selecciona el proveedor de forma explícita y evita
+// que una omisión de EMAIL_PROVIDER degrade silenciosamente el envío a MOCK.
+func inicializarServicioEmail() (ports.EmailService, error) {
+	provider := os.Getenv("EMAIL_PROVIDER")
+	production := os.Getenv("APP_ENV") == "production"
+
+	switch provider {
+	case "smtp":
+		svc, err := email.NewSMTPEmailService()
+		if err != nil {
+			return nil, fmt.Errorf("configuración SMTP inválida: %w", err)
+		}
+		log.Println("[INFO] EMAIL_PROVIDER configurado en modo SMTP (STARTTLS/TLS)")
+		return svc, nil
+
+	case "mock":
+		log.Println("[WARN] EMAIL_PROVIDER configurado en modo MOCK. Los correos se imprimirán por stdout")
+		return email.NewMockEmailService(), nil
+
+	case "":
+		if production {
+			return nil, errors.New("EMAIL_PROVIDER no configurado. Debe ser 'smtp' en entornos productivos")
+		}
+		log.Println("[WARN] EMAIL_PROVIDER ausente. Usando MOCK por defecto")
+		return email.NewMockEmailService(), nil
+
+	default:
+		if production {
+			return nil, fmt.Errorf("EMAIL_PROVIDER inválido (%q). Debe ser 'smtp' en entornos productivos", provider)
+		}
+		log.Printf("[WARN] EMAIL_PROVIDER desconocido (%q). Usando MOCK por defecto", provider)
+		return email.NewMockEmailService(), nil
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 
 	gomail "github.com/go-mail/mail/v2"
 )
@@ -25,19 +26,33 @@ type SMTPEmailService struct {
 }
 
 // NewSMTPEmailService construye el servicio leyendo la configuración del entorno.
-// Falla en el arranque si SMTP_PORT no es un número válido.
+// Falla en el arranque si falta una variable obligatoria o el puerto no es válido.
 func NewSMTPEmailService() (*SMTPEmailService, error) {
-	portStr := os.Getenv("SMTP_PORT")
+	required := []string{"SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASS", "SMTP_FROM"}
+	missing := make([]string, 0, len(required))
+	for _, name := range required {
+		if strings.TrimSpace(os.Getenv(name)) == "" {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) > 0 {
+		return nil, fmt.Errorf("faltan variables obligatorias: %s", strings.Join(missing, ", "))
+	}
+
+	portStr := strings.TrimSpace(os.Getenv("SMTP_PORT"))
 	port, err := strconv.Atoi(portStr)
 	if err != nil {
 		return nil, fmt.Errorf("SMTP_PORT inválido (%q): %w", portStr, err)
 	}
+	if port < 1 || port > 65535 {
+		return nil, fmt.Errorf("SMTP_PORT inválido (%q): debe estar entre 1 y 65535", portStr)
+	}
 	return &SMTPEmailService{
-		host:     os.Getenv("SMTP_HOST"),
+		host:     strings.TrimSpace(os.Getenv("SMTP_HOST")),
 		port:     port,
-		user:     os.Getenv("SMTP_USER"),
+		user:     strings.TrimSpace(os.Getenv("SMTP_USER")),
 		password: os.Getenv("SMTP_PASS"),
-		from:     os.Getenv("SMTP_FROM"),
+		from:     strings.TrimSpace(os.Getenv("SMTP_FROM")),
 	}, nil
 }
 

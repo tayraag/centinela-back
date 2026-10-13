@@ -40,8 +40,29 @@ Editar `.env` con valores reales. Los campos obligatorios son:
 | `JWT_REFRESH_TTL_DAYS` | Vida del refresh token en días                                       | `30`                                    |
 | `TOTP_ENCRYPTION_KEY`  | Clave AES-256 para cifrar secretos TOTP (exactamente 32 chars ASCII) | `0123456789abcdef0123456789abcdef`      |
 | `APP_NAME`             | Nombre que aparece en Google Authenticator                           | `El Centinela`                          |
+| `APP_ENV`              | Entorno de ejecución; usar `production` en producción                | `development`                           |
+| `EMAIL_PROVIDER`       | Proveedor de correo: `smtp` en producción; `mock` solo local/tests/CI | `smtp`                                  |
 
 > **Seguridad**: El `.env` ya está en `.gitignore`. Nunca lo commitees.
+
+### Correo electrónico
+
+En producción configurá explícitamente `APP_ENV=production` y
+`EMAIL_PROVIDER=smtp`. La rama SMTP exige `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`,
+`SMTP_PASS` y `SMTP_FROM`; el backend aborta durante el arranque si falta alguna.
+
+`EMAIL_PROVIDER=mock` está reservado exclusivamente para desarrollo local,
+tests y CI. No envía mensajes: imprime las credenciales temporales y los códigos
+OTP por stdout, y siempre deja una advertencia `[WARN]` visible en el log.
+
+Si `EMAIL_PROVIDER` se omite o contiene un valor desconocido, fuera de producción
+el backend arranca con mock pero emite una advertencia severa. Con
+`APP_ENV=production`, el backend aborta para impedir un despliegue sin entrega
+real de correos. En CI declaralo de manera explícita:
+
+```bash
+APP_ENV=test EMAIL_PROVIDER=mock go test ./...
+```
 
 ### Proxmox VE
 
