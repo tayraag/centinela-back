@@ -440,3 +440,80 @@ func TestClient_ObtenerInterfaces_ErrorYTimeout(t *testing.T) {
 		}
 	})
 }
+
+func TestClient_ObtenerStorages(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "PVEAPIToken="+tokenIDValido+"="+tokenSecretValido {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		if r.URL.Path != "/api2/json/nodes/pve1/storage" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]any{
+				{
+					"storage": "local-lvm",
+					"type":    "lvmthin",
+					"total":   500000000000,
+					"used":    180000000000,
+					"avail":   320000000000,
+					"active":  1,
+					"content": "images,rootdir",
+				},
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := proxmox.NewClient(server.URL, "pve1", tokenIDValido, tokenSecretValido, nil)
+	storages, err := client.ObtenerStorages(context.Background(), "pve1")
+	if err != nil {
+		t.Fatalf("ObtenerStorages falló: %v", err)
+	}
+
+	if len(storages) != 1 || storages[0].Storage != "local-lvm" || storages[0].Active != 1 {
+		t.Errorf("Resultado inesperado: %+v", storages)
+	}
+}
+
+func TestClient_ObtenerContenidoStorage(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "PVEAPIToken="+tokenIDValido+"="+tokenSecretValido {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		if r.URL.Path != "/api2/json/nodes/pve1/storage/local/content" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]any{
+				{
+					"volid":   "local:iso/ubuntu-24.04.iso",
+					"content": "iso",
+					"size":    2100000000,
+				},
+				{
+					"volid":   "local:vztmpl/debian-12.tar.zst",
+					"content": "vztmpl",
+					"size":    130000000,
+				},
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := proxmox.NewClient(server.URL, "pve1", tokenIDValido, tokenSecretValido, nil)
+	items, err := client.ObtenerContenidoStorage(context.Background(), "pve1", "local")
+	if err != nil {
+		t.Fatalf("ObtenerContenidoStorage falló: %v", err)
+	}
+
+	if len(items) != 2 || items[0].Volid != "local:iso/ubuntu-24.04.iso" || items[1].Content != "vztmpl" {
+		t.Errorf("Contenido inesperado: %+v", items)
+	}
+}

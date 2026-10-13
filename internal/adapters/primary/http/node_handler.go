@@ -2,6 +2,7 @@ package http
 
 import (
 	"net/http"
+	"strings"
 	"time"
 
 	"el-centinela/internal/core/ports"
@@ -9,14 +10,20 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// NodeHandler expone el estado consolidado del nodo de Proxmox.
+// NodeHandler expone el estado consolidado del nodo de Proxmox y sus recursos (storages, templates).
 type NodeHandler struct {
 	service ports.NodoService
+	proxmox ports.ProxmoxPort
+	nodo    string
 }
 
-// NewNodeHandler crea el handler del estado del nodo.
-func NewNodeHandler(service ports.NodoService) *NodeHandler {
-	return &NodeHandler{service: service}
+// NewNodeHandler crea el handler del estado del nodo y recursos de almacenamiento.
+func NewNodeHandler(service ports.NodoService, proxmox ports.ProxmoxPort, nodo string) *NodeHandler {
+	return &NodeHandler{
+		service: service,
+		proxmox: proxmox,
+		nodo:    nodo,
+	}
 }
 
 // ==========================================
@@ -65,4 +72,140 @@ func aEstadoNodeResponse(e *ports.EstadoNodo, stale bool) EstadoNodeResponse {
 		Stale:     stale,
 		FetchedAt: e.FetchedAt.UTC().Format(time.RFC3339),
 	}
+}
+
+// ==========================================
+// GET /api/node/storages
+// ==========================================
+
+// ObtenerStorages devuelve la lista de storages activos en el nodo.
+//
+// @Summary      Consultar catálogo de almacenamiento del nodo
+// @Description  ADMIN ONLY. Retorna las unidades de almacenamiento activas en el nodo, filtradas y normalizadas con sus capacidades en bytes y tipos de contenidos permitidos.
+// @Tags         Estado del nodo
+// @Produce      json
+// @Security     BearerAuth
+// @Success      200 {array}   StorageResponse
+// @Failure      401 {object} ErrorResponse "MISSING_TOKEN | INVALID_TOKEN | TOKEN_REVOKED"
+// @Failure      403 {object} ErrorResponse "WRONG_TOKEN_TYPE | 2FA_REQUIRED | INSUFFICIENT_PERMISSIONS"
+// @Failure      502 {object} ErrorResponse "PROXMOX_UNAVAILABLE — Proxmox caído, sin red o token rechazado"
+// @Failure      504 {object} ErrorResponse "PROXMOX_TIMEOUT — Proxmox no respondió a tiempo"
+// @Router       /node/storages [get]
+func (h *NodeHandler) ObtenerStorages(c *gin.Context) {
+	storages, err := h.proxmox.ObtenerStorages(c.Request.Context(), h.nodo)
+	if err != nil {
+		mapearErrorProxmox(c, err)
+		return
+	}
+
+	resultado := make([]StorageResponse, 0, len(storages))
+	for _, st := range storages {
+		if st.Active != 1 {
+			continue
+		}
+		var contentTypes []string
+		if st.Content != "" {
+			parts := strings.Split(st.Content, ",")
+			contentTypes = make([]string, 0, len(parts))
+			for _, p := range parts {
+				trimmed := strings.TrimSpace(p)
+				if trimmed != "" {
+					contentTypes = append(contentTypes, trimmed)
+				}
+			}
+		} else {
+			contentTypes = []string{}
+		}
+
+		resultado = append(resultado, StorageResponse{
+			Name:         st.Storage,
+			Type:         st.Type,
+			TotalBytes:   st.Total,
+			FreeBytes:    st.Avail,
+			ContentTypes: contentTypes,
+		})
+	}
+
+	c.JSON(http.StatusOK, resultado)
+}
+
+// ==========================================
+// GET /api/node/templates
+// ==========================================
+
+// ObtenerTemplates consolida y normaliza imágenes ISO y plantillas LXC disponibles en el nodo.
+//
+// @Summary      Consultar catálogo de plantillas e imágenes ISO
+// @Description  ADMIN ONLY. Consolida imágenes ISO de instalación y plantillas LXC de todos los storages activos que admiten dichos contenidos, formateando sus identificadores, nombres y tamaños.
+// @Tags         Estado del nodo
+// @Produce      json
+// @Security     BearerAuth
+// @Success      200 {array}   TemplateResponse
+// @Failure      401 {object} ErrorResponse "MISSING_TOKEN | INVALID_TOKEN | TOKEN_REVOKED"
+// @Failure      403 {object} ErrorResponse "WRONG_TOKEN_TYPE | 2FA_REQUIRED | INSUFFICIENT_PERMISSIONS"
+// @Failure      502 {object} ErrorResponse "PROXMOX_UNAVAILABLE — Proxmox caído, sin red o token rechazado"
+// @Failure      504 {object} ErrorResponse "PROXMOX_TIMEOUT — Proxmox no respondió a tiempo"
+// @Router       /node/templates [get]
+func (h *NodeHandler) ObtenerTemplates(c *gin.Context) {
+	ctx := c.Request.Context()
+	storages, err := h.proxmox.ObtenerStorages(ctx, h.nodo)
+	if err != nil {
+		mapearErrorProxmox(c, err)
+		return
+	}
+
+	resultado := make([]TemplateResponse, 0)
+	for _, st := range storages {
+		if st.Active != 1 {
+			continue
+		}
+		// Solo consultar contenido si el storage admite iso o vztmpl
+		admiteISO := strings.Contains(st.Content, "iso")
+		admiteVztmpl := strings.Contains(st.Content, "vztmpl")
+		if !admiteISO && !admiteVztmpl {
+			continue
+		}
+
+		items, err := h.proxmox.ObtenerContenidoStorage(ctx, h.nodo, st.Storage)
+		if err != nil {
+			mapearErrorProxmox(c, err)
+			return
+		}
+
+		for _, item := range items {
+			var tipo string
+			switch item.Content {
+			case "iso":
+				tipo = "ISO"
+			case "vztmpl":
+				tipo = "LXC_TEMPLATE"
+			default:
+				continue
+			}
+
+			// Extraer nombre amigable a partir del volid: ej. "local:iso/ubuntu.iso" -> "ubuntu.iso"
+			nombre := extraerNombreTemplate(item.Volid)
+
+			resultado = append(resultado, TemplateResponse{
+				ID:        item.Volid,
+				Name:      nombre,
+				Type:      tipo,
+				SizeBytes: item.Size,
+			})
+		}
+	}
+
+	c.JSON(http.StatusOK, resultado)
+}
+
+func extraerNombreTemplate(volid string) string {
+	parts := strings.Split(volid, "/")
+	if len(parts) > 1 {
+		return parts[len(parts)-1]
+	}
+	partsColon := strings.Split(volid, ":")
+	if len(partsColon) > 1 {
+		return partsColon[len(partsColon)-1]
+	}
+	return volid
 }

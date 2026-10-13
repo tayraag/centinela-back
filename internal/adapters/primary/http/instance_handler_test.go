@@ -109,6 +109,14 @@ func (m *mockProxmoxPort) EliminarInstancia(ctx context.Context, node string, vm
 	return "UPID:test:qmdestroy", nil
 }
 
+func (m *mockProxmoxPort) ObtenerStorages(ctx context.Context, node string) ([]ports.StorageDTO, error) {
+	return nil, nil
+}
+
+func (m *mockProxmoxPort) ObtenerContenidoStorage(ctx context.Context, node, storage string) ([]ports.StorageContentDTO, error) {
+	return nil, nil
+}
+
 // inventarioNulo implementa ports.InventarioService sin resolver ninguna IP.
 type inventarioNulo struct{}
 

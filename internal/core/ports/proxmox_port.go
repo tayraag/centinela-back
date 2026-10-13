@@ -126,6 +126,34 @@ type ProxmoxPort interface {
 	// Un contenedor apagado devuelve una lista vacía sin error (Proxmox responde
 	// {"data": null}). Una VM apagada o sin agente devuelve el error de Proxmox.
 	ObtenerInterfaces(ctx context.Context, node, tipo string, vmid int) ([]InterfazRed, error)
+
+	// ObtenerStorages consulta GET /nodes/{node}/storage.
+	ObtenerStorages(ctx context.Context, node string) ([]StorageDTO, error)
+
+	// ObtenerContenidoStorage consulta GET /nodes/{node}/storage/{storage}/content.
+	ObtenerContenidoStorage(ctx context.Context, node, storage string) ([]StorageContentDTO, error)
+}
+
+// StorageDTO representa un almacenamiento tal como lo informa Proxmox en /nodes/{node}/storage.
+type StorageDTO struct {
+	Storage string `json:"storage"`
+	Type    string `json:"type"`
+	Total   int64  `json:"total"`
+	Used    int64  `json:"used"`
+	Avail   int64  `json:"avail"`
+	Active  int    `json:"active"`
+	Content string `json:"content"`
+	Shared  int    `json:"shared"`
+	Enabled int    `json:"enabled"`
+}
+
+// StorageContentDTO representa un elemento de contenido en un storage (ISO, plantilla, etc.).
+type StorageContentDTO struct {
+	Volid   string `json:"volid"`
+	Content string `json:"content"`
+	Format  string `json:"format"`
+	Size    int64  `json:"size"`
+	CTime   int64  `json:"ctime,omitempty"`
 }
 
 // InterfazRed es una interfaz de red de una instancia, normalizada: el formato

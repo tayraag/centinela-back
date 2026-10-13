@@ -203,3 +203,24 @@ type SSETiposPayload struct {
 // @x-implementation-status "documentation-only"
 // @Router       /events/contrato-sse [get]
 func SSEDetallesTareaFinDocumentacion() {}
+
+// ==========================================
+// RF-07 — Inventario de Almacenamiento y Plantillas
+// ==========================================
+
+// StorageResponse documenta una unidad de almacenamiento disponible en el nodo.
+type StorageResponse struct {
+	Name         string   `json:"name" binding:"required" example:"local-lvm"`
+	Type         string   `json:"type" binding:"required" example:"lvmthin"`
+	TotalBytes   int64    `json:"totalBytes" binding:"required" example:"500000000000"`
+	FreeBytes    int64    `json:"freeBytes" binding:"required" example:"320000000000"`
+	ContentTypes []string `json:"contentTypes" binding:"required" example:"images,rootdir"`
+}
+
+// TemplateResponse documenta una imagen ISO o plantilla LXC disponible para crear instancias.
+type TemplateResponse struct {
+	ID        string `json:"id" binding:"required" example:"local:iso/ubuntu-24.04.iso"`
+	Name      string `json:"name" binding:"required" example:"ubuntu-24.04.iso"`
+	Type      string `json:"type" binding:"required" enums:"ISO,LXC_TEMPLATE" example:"ISO"`
+	SizeBytes int64  `json:"sizeBytes" binding:"required" example:"2100000000"`
+}

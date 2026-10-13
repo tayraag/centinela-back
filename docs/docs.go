@@ -2042,6 +2042,110 @@ const docTemplate = `{
                 }
             }
         },
+        "/node/storages": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "ADMIN ONLY. Retorna las unidades de almacenamiento activas en el nodo, filtradas y normalizadas con sus capacidades en bytes y tipos de contenidos permitidos.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Estado del nodo"
+                ],
+                "summary": "Consultar catálogo de almacenamiento del nodo",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/http.StorageResponse"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "MISSING_TOKEN | INVALID_TOKEN | TOKEN_REVOKED",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "WRONG_TOKEN_TYPE | 2FA_REQUIRED | INSUFFICIENT_PERMISSIONS",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "502": {
+                        "description": "PROXMOX_UNAVAILABLE — Proxmox caído, sin red o token rechazado",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "504": {
+                        "description": "PROXMOX_TIMEOUT — Proxmox no respondió a tiempo",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/node/templates": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "ADMIN ONLY. Consolida imágenes ISO de instalación y plantillas LXC de todos los storages activos que admiten dichos contenidos, formateando sus identificadores, nombres y tamaños.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Estado del nodo"
+                ],
+                "summary": "Consultar catálogo de plantillas e imágenes ISO",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/http.TemplateResponse"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "MISSING_TOKEN | INVALID_TOKEN | TOKEN_REVOKED",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "WRONG_TOKEN_TYPE | 2FA_REQUIRED | INSUFFICIENT_PERMISSIONS",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "502": {
+                        "description": "PROXMOX_UNAVAILABLE — Proxmox caído, sin red o token rechazado",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "504": {
+                        "description": "PROXMOX_TIMEOUT — Proxmox no respondió a tiempo",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/roles": {
             "get": {
                 "security": [
@@ -2534,6 +2638,44 @@ const docTemplate = `{
                 }
             }
         },
+        "http.StorageResponse": {
+            "type": "object",
+            "required": [
+                "contentTypes",
+                "freeBytes",
+                "name",
+                "totalBytes",
+                "type"
+            ],
+            "properties": {
+                "contentTypes": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "example": [
+                        "images",
+                        "rootdir"
+                    ]
+                },
+                "freeBytes": {
+                    "type": "integer",
+                    "example": 320000000000
+                },
+                "name": {
+                    "type": "string",
+                    "example": "local-lvm"
+                },
+                "totalBytes": {
+                    "type": "integer",
+                    "example": 500000000000
+                },
+                "type": {
+                    "type": "string",
+                    "example": "lvmthin"
+                }
+            }
+        },
         "http.TaskFailed": {
             "type": "object",
             "required": [
@@ -2634,6 +2776,37 @@ const docTemplate = `{
                 "tareaId": {
                     "type": "string",
                     "example": "3f2504e0-4f89-11d3-9a0c-0305e82c3301"
+                }
+            }
+        },
+        "http.TemplateResponse": {
+            "type": "object",
+            "required": [
+                "id",
+                "name",
+                "sizeBytes",
+                "type"
+            ],
+            "properties": {
+                "id": {
+                    "type": "string",
+                    "example": "local:iso/ubuntu-24.04.iso"
+                },
+                "name": {
+                    "type": "string",
+                    "example": "ubuntu-24.04.iso"
+                },
+                "sizeBytes": {
+                    "type": "integer",
+                    "example": 2100000000
+                },
+                "type": {
+                    "type": "string",
+                    "enum": [
+                        "ISO",
+                        "LXC_TEMPLATE"
+                    ],
+                    "example": "ISO"
                 }
             }
         },

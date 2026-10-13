@@ -535,3 +535,33 @@ func versionIP(tipo, ip string) int {
 	}
 	return 4
 }
+
+// ObtenerStorages consulta GET /nodes/{node}/storage y devuelve la lista de storages de Proxmox.
+func (c *Client) ObtenerStorages(ctx context.Context, node string) ([]ports.StorageDTO, error) {
+	raw, err := c.doRequest(ctx, http.MethodGet, fmt.Sprintf("/api2/json/nodes/%s/storage", url.PathEscape(node)), nil)
+	if err != nil {
+		return nil, err
+	}
+	var parsed struct {
+		Data []ports.StorageDTO `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return nil, fmt.Errorf("%w: respuesta de storages inválida: %v", ports.ErrProxmoxNoDisponible, err)
+	}
+	return parsed.Data, nil
+}
+
+// ObtenerContenidoStorage consulta GET /nodes/{node}/storage/{storage}/content.
+func (c *Client) ObtenerContenidoStorage(ctx context.Context, node, storage string) ([]ports.StorageContentDTO, error) {
+	raw, err := c.doRequest(ctx, http.MethodGet, fmt.Sprintf("/api2/json/nodes/%s/storage/%s/content", url.PathEscape(node), url.PathEscape(storage)), nil)
+	if err != nil {
+		return nil, err
+	}
+	var parsed struct {
+		Data []ports.StorageContentDTO `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return nil, fmt.Errorf("%w: respuesta de contenido de storage inválida: %v", ports.ErrProxmoxNoDisponible, err)
+	}
+	return parsed.Data, nil
+}

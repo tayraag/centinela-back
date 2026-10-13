@@ -165,7 +165,8 @@ func main() {
 	instanceHandler := httpHandlers.NewInstanceHandler(proxmoxClient, userRepo, seguimientoTareas, tareaRepo, auditService,
 		services.NewInventarioService(proxmoxClient))
 	eventsHandler := httpHandlers.NewEventsHandler(eventosService)
-	nodeHandler := httpHandlers.NewNodeHandler(services.NewNodoService(proxmoxClient, kvStore, valorODefecto(os.Getenv("PROXMOX_NODE"), "proxmox")))
+	nodoNombre := valorODefecto(os.Getenv("PROXMOX_NODE"), "proxmox")
+	nodeHandler := httpHandlers.NewNodeHandler(services.NewNodoService(proxmoxClient, kvStore, nodoNombre), proxmoxClient, nodoNombre)
 
 	// 6. Configurar el Router HTTP (Gin)
 	// Usamos gin.New() para tener control total sobre los middlewares.
@@ -278,6 +279,9 @@ func main() {
 
 		// Estado consolidado del nodo (ADMIN y OPERATOR), con caché en Redis
 		api.GET("/node/status", middleware.RequireAuth(authService), nodeHandler.ObtenerEstado)
+		// Catálogo de almacenamiento y plantillas/ISOs para aprovisionamiento (RF-07) — solo ADMIN
+		api.GET("/node/storages", middleware.RequireAuth(authService), middleware.RequireRole("ADMIN"), nodeHandler.ObtenerStorages)
+		api.GET("/node/templates", middleware.RequireAuth(authService), middleware.RequireRole("ADMIN"), nodeHandler.ObtenerTemplates)
 		api.GET("/events", eventsHandler.Stream)
 
 		// ==========================================

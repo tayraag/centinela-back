@@ -60,6 +60,12 @@ func (p *proxmoxTareas) Reboot(context.Context, string, int, string) (string, er
 func (p *proxmoxTareas) EliminarInstancia(context.Context, string, int, string) (string, error) {
 	return "", nil
 }
+func (p *proxmoxTareas) ObtenerStorages(context.Context, string) ([]ports.StorageDTO, error) {
+	return nil, nil
+}
+func (p *proxmoxTareas) ObtenerContenidoStorage(context.Context, string, string) ([]ports.StorageContentDTO, error) {
+	return nil, nil
+}
 
 type tareasEnMemoria struct {
 	mu     sync.Mutex

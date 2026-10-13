@@ -330,6 +330,34 @@ definitions:
     - taskFailed
     - taskSuccess
     type: object
+  http.StorageResponse:
+    properties:
+      contentTypes:
+        example:
+        - images
+        - rootdir
+        items:
+          type: string
+        type: array
+      freeBytes:
+        example: 320000000000
+        type: integer
+      name:
+        example: local-lvm
+        type: string
+      totalBytes:
+        example: 500000000000
+        type: integer
+      type:
+        example: lvmthin
+        type: string
+    required:
+    - contentTypes
+    - freeBytes
+    - name
+    - totalBytes
+    - type
+    type: object
   http.TaskFailed:
     properties:
       accion:
@@ -408,6 +436,29 @@ definitions:
     - exitstatus
     - motivo
     - tareaId
+    type: object
+  http.TemplateResponse:
+    properties:
+      id:
+        example: local:iso/ubuntu-24.04.iso
+        type: string
+      name:
+        example: ubuntu-24.04.iso
+        type: string
+      sizeBytes:
+        example: 2100000000
+        type: integer
+      type:
+        enum:
+        - ISO
+        - LXC_TEMPLATE
+        example: ISO
+        type: string
+    required:
+    - id
+    - name
+    - sizeBytes
+    - type
     type: object
   http.asignarPermisosRequest:
     properties:
@@ -2199,6 +2250,72 @@ paths:
       security:
       - BearerAuth: []
       summary: Consultar estado consolidado del nodo
+      tags:
+      - Estado del nodo
+  /node/storages:
+    get:
+      description: ADMIN ONLY. Retorna las unidades de almacenamiento activas en el nodo, filtradas y normalizadas con sus capacidades en bytes y tipos de contenidos permitidos.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/http.StorageResponse'
+            type: array
+        "401":
+          description: MISSING_TOKEN | INVALID_TOKEN | TOKEN_REVOKED
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "403":
+          description: WRONG_TOKEN_TYPE | 2FA_REQUIRED | INSUFFICIENT_PERMISSIONS
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "502":
+          description: PROXMOX_UNAVAILABLE — Proxmox caído, sin red o token rechazado
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "504":
+          description: PROXMOX_TIMEOUT — Proxmox no respondió a tiempo
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Consultar catálogo de almacenamiento del nodo
+      tags:
+      - Estado del nodo
+  /node/templates:
+    get:
+      description: ADMIN ONLY. Consolida imágenes ISO de instalación y plantillas LXC de todos los storages activos que admiten dichos contenidos, formateando sus identificadores, nombres y tamaños.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/http.TemplateResponse'
+            type: array
+        "401":
+          description: MISSING_TOKEN | INVALID_TOKEN | TOKEN_REVOKED
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "403":
+          description: WRONG_TOKEN_TYPE | 2FA_REQUIRED | INSUFFICIENT_PERMISSIONS
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "502":
+          description: PROXMOX_UNAVAILABLE — Proxmox caído, sin red o token rechazado
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "504":
+          description: PROXMOX_TIMEOUT — Proxmox no respondió a tiempo
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Consultar catálogo de plantillas e imágenes ISO
       tags:
       - Estado del nodo
   /roles:
