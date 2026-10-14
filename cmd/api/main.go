@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -137,6 +138,7 @@ func main() {
 	auditService := services.NewAuditService(auditRepo)
 	authService := services.NewAuthService(authRepo, kvStore, emailService, auditService)
 	userService := services.NewUserService(userRepo, authRepo, kvStore, auditService, emailService)
+	aprovisionamientoService := services.NewAprovisionamientoService(proxmoxClient, proxmoxClient, kvStore)
 
 	// 5. Inicializar handlers HTTP
 	authHandler := httpHandlers.NewAuthHandler(authService)
@@ -150,6 +152,16 @@ func main() {
 			Workers:     enteroDeEntorno("UPID_WORKERS", 8),
 			UpidTimeout: duracionDeEntorno("UPID_TIMEOUT", 3*time.Minute),
 			OnTaskFinished: func(ctx context.Context, tarea *domain.TareaAsincrona, recursoTipo string, r services.ResultadoTarea) {
+				if tarea.Metadatos != nil {
+					var meta map[string]any
+					if json.Unmarshal([]byte(*tarea.Metadatos), &meta) == nil {
+						if reservaID, _ := meta["reserva_id"].(string); reservaID != "" {
+							if err := aprovisionamientoService.LiberarReserva(ctx, reservaID); err != nil {
+								log.Printf("[APROVISIONAMIENTO] no se pudo liberar la reserva %s: %v", reservaID, err)
+							}
+						}
+					}
+				}
 				// El repositorio confirmó el cierre y la auditoría RF-08 en una
 				// misma transacción antes de publicar el evento.
 				if err := eventosService.Publicar(ctx, services.EventoTareaFinalizada(tarea, recursoTipo, r)); err != nil {
@@ -159,7 +171,7 @@ func main() {
 		})
 	seguimientoTareas.Iniciar(ctx)
 	instanceHandler := httpHandlers.NewInstanceHandler(proxmoxClient, userRepo, seguimientoTareas, tareaRepo, auditService,
-		services.NewInventarioService(proxmoxClient))
+		services.NewInventarioService(proxmoxClient), aprovisionamientoService)
 	eventsHandler := httpHandlers.NewEventsHandler(eventosService)
 	nodoNombre := valorODefecto(os.Getenv("PROXMOX_NODE"), "proxmox")
 	nodeHandler := httpHandlers.NewNodeHandler(services.NewNodoService(proxmoxClient, kvStore, nodoNombre), proxmoxClient, nodoNombre)

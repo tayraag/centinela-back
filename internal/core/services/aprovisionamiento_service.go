@@ -1,0 +1,296 @@
+package services
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
+	"time"
+
+	"el-centinela/internal/core/ports"
+
+	"github.com/google/uuid"
+)
+
+const (
+	claveLockAprovisionamiento    = "aprovisionamiento:lock"
+	claveReservas                 = "aprovisionamiento:reservas"
+	claveCacheEstadoNodo          = "node:status:current"
+	ttlLockAprovisionamiento      = time.Minute
+	ttlReservaAprovisionamiento   = 15 * time.Minute
+	ttlCapacidadAprovisionamiento = 10 * time.Second
+	bytesPorGiB                   = int64(1024 * 1024 * 1024)
+)
+
+type capacidadAprovisionamiento struct {
+	Nodo       ports.NodeStatusDTO         `json:"nodo"`
+	Instancias []ports.InstanciaProxmoxDTO `json:"instancias"`
+	Storages   []ports.StorageDTO          `json:"storages"`
+}
+
+type reservaAprovisionamiento struct {
+	ID         string    `json:"id"`
+	Nodo       string    `json:"nodo"`
+	StorageID  string    `json:"storageId"`
+	Compartido bool      `json:"compartido"`
+	Memoria    int64     `json:"memoriaBytes"`
+	Disco      int64     `json:"discoBytes"`
+	Cores      int       `json:"cores"`
+	Vence      time.Time `json:"vence"`
+}
+
+// AprovisionamientoService valida capacidad y mantiene una reserva temporal
+// compartida antes de delegar la creación en Proxmox. El lock global también
+// cubre storages compartidos entre nodos.
+type AprovisionamientoService struct {
+	proxmox ports.ProxmoxPort
+	creador ports.AprovisionamientoPort
+	store   ports.KeyValueStore
+	ahora   func() time.Time
+}
+
+var _ ports.AprovisionamientoPort = (*AprovisionamientoService)(nil)
+
+func NewAprovisionamientoService(proxmox ports.ProxmoxPort, creador ports.AprovisionamientoPort, store ports.KeyValueStore) *AprovisionamientoService {
+	return &AprovisionamientoService{proxmox: proxmox, creador: creador, store: store, ahora: time.Now}
+}
+
+func (s *AprovisionamientoService) AprovisionarInstancia(ctx context.Context, input ports.CrearInstanciaProxmoxInput) (*ports.ResultadoAprovisionamiento, error) {
+	release, err := s.store.AcquireLock(ctx, claveLockAprovisionamiento, ttlLockAprovisionamiento)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ports.ErrCoordinacionAprovisionamiento, err)
+	}
+	defer func() { _ = release(context.Background()) }()
+
+	reservas, err := s.leerReservas(ctx)
+	if err != nil {
+		return nil, err
+	}
+	reservas = reservasVigentes(reservas, s.ahora())
+
+	storage, err := s.validarCapacidad(ctx, input, reservas)
+	if err != nil {
+		return nil, err
+	}
+
+	reserva := reservaAprovisionamiento{
+		ID: uuid.NewString(), Nodo: input.Nodo, StorageID: input.StorageID,
+		Compartido: storage.Shared == 1, Memoria: int64(input.MemoriaMB) * 1024 * 1024,
+		Disco: int64(input.DiscoGB) * bytesPorGiB, Cores: input.Cores,
+		Vence: s.ahora().Add(ttlReservaAprovisionamiento),
+	}
+	reservas = append(reservas, reserva)
+	if err := s.guardarReservas(ctx, reservas); err != nil {
+		return nil, err
+	}
+
+	resultado, err := s.creador.AprovisionarInstancia(ctx, input)
+	if err != nil {
+		_ = s.guardarReservas(ctx, quitarReserva(reservas, reserva.ID))
+		return nil, err
+	}
+	resultado.ReservaID = reserva.ID
+	// Al aceptar una creación se invalidan solamente las fotos de capacidad;
+	// sesiones, tickets SSE y el resto de Redis no se tocan. La próxima lectura
+	// vuelve a Proxmox y la reserva cubre el lapso hasta que refleje el cambio.
+	s.invalidarCacheCapacidad(context.WithoutCancel(ctx), input.Nodo)
+	return resultado, nil
+}
+
+func (s *AprovisionamientoService) validarCapacidad(ctx context.Context, input ports.CrearInstanciaProxmoxInput, reservas []reservaAprovisionamiento) (ports.StorageDTO, error) {
+	capacidad, err := s.obtenerCapacidad(ctx, input.Nodo)
+	if err != nil {
+		return ports.StorageDTO{}, err
+	}
+
+	var storage ports.StorageDTO
+	encontrado := false
+	for _, candidato := range capacidad.Storages {
+		if candidato.Storage == input.StorageID {
+			storage, encontrado = candidato, true
+			break
+		}
+	}
+	contenidoNecesario := "images"
+	if input.Tipo == ports.TipoInstanciaLXC {
+		contenidoNecesario = "rootdir"
+	}
+	if !encontrado || storage.Active != 1 || storage.Enabled != 1 || !contieneTipoStorage(storage.Content, contenidoNecesario) {
+		return ports.StorageDTO{}, fmt.Errorf("%w: el storage %q no está disponible para %s", ports.ErrRecursosInsuficientes, input.StorageID, input.Tipo)
+	}
+
+	var memoriaAsignada int64
+	var coresAsignados int
+	for _, instancia := range capacidad.Instancias {
+		if instancia.Nodo == input.Nodo {
+			memoriaAsignada += instancia.MaxMem
+			coresAsignados += instancia.MaxCpu
+		}
+	}
+	var memoriaReservada, discoReservado int64
+	var coresReservados int
+	for _, reserva := range reservas {
+		if reserva.Nodo == input.Nodo {
+			memoriaReservada += reserva.Memoria
+			coresReservados += reserva.Cores
+		}
+		if reserva.StorageID == input.StorageID && (storage.Shared == 1 || reserva.Nodo == input.Nodo) {
+			discoReservado += reserva.Disco
+		}
+	}
+
+	memoriaComprometida := memoriaAsignada
+	if capacidad.Nodo.MemUsada > memoriaComprometida {
+		memoriaComprometida = capacidad.Nodo.MemUsada
+	}
+	memoriaPedida := int64(input.MemoriaMB) * 1024 * 1024
+	discoPedido := int64(input.DiscoGB) * bytesPorGiB
+	if memoriaPedida > capacidad.Nodo.MemTotal-memoriaComprometida-memoriaReservada {
+		return ports.StorageDTO{}, fmt.Errorf("%w: RAM disponible insuficiente en el nodo %s", ports.ErrRecursosInsuficientes, input.Nodo)
+	}
+	if input.Cores > capacidad.Nodo.CPUs-coresAsignados-coresReservados {
+		return ports.StorageDTO{}, fmt.Errorf("%w: vCPU disponibles insuficientes en el nodo %s", ports.ErrRecursosInsuficientes, input.Nodo)
+	}
+	if discoPedido > storage.Avail-discoReservado {
+		return ports.StorageDTO{}, fmt.Errorf("%w: espacio insuficiente en el storage %s", ports.ErrRecursosInsuficientes, input.StorageID)
+	}
+	return storage, nil
+}
+
+func (s *AprovisionamientoService) obtenerCapacidad(ctx context.Context, nodo string) (*capacidadAprovisionamiento, error) {
+	clave := claveCapacidadNodo(nodo)
+	if crudo, err := s.store.Get(ctx, clave); err == nil {
+		var capacidad capacidadAprovisionamiento
+		if json.Unmarshal([]byte(crudo), &capacidad) == nil {
+			return &capacidad, nil
+		}
+	} else if !errors.Is(err, ports.ErrClaveNoEncontrada) {
+		return nil, fmt.Errorf("%w: %v", ports.ErrCoordinacionAprovisionamiento, err)
+	}
+
+	estado, err := s.proxmox.ObtenerEstadoNodo(ctx, nodo)
+	if err != nil {
+		return nil, err
+	}
+	instancias, err := s.proxmox.ListarInstancias(ctx)
+	if err != nil {
+		return nil, err
+	}
+	storages, err := s.proxmox.ObtenerStorages(ctx, nodo)
+	if err != nil {
+		return nil, err
+	}
+	capacidad := &capacidadAprovisionamiento{Nodo: *estado, Instancias: instancias, Storages: storages}
+	if err := s.store.Set(ctx, clave, capacidad, ttlCapacidadAprovisionamiento); err != nil {
+		return nil, fmt.Errorf("%w: %v", ports.ErrCoordinacionAprovisionamiento, err)
+	}
+	return capacidad, nil
+}
+
+// LiberarReserva se llama cuando el worker cierra la tarea. Si Redis no está
+// disponible, el TTL sigue evitando que la reserva quede retenida para siempre.
+func (s *AprovisionamientoService) LiberarReserva(ctx context.Context, reservaID string) error {
+	if strings.TrimSpace(reservaID) == "" {
+		return nil
+	}
+	release, err := s.store.AcquireLock(ctx, claveLockAprovisionamiento, ttlLockAprovisionamiento)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ports.ErrCoordinacionAprovisionamiento, err)
+	}
+	defer func() { _ = release(context.Background()) }()
+	reservas, err := s.leerReservas(ctx)
+	if err != nil {
+		return err
+	}
+	vigentes := reservasVigentes(reservas, s.ahora())
+	restantes, nodo := quitarReservaYObtenerNodo(vigentes, reservaID)
+	if err := s.guardarReservas(ctx, restantes); err != nil {
+		return err
+	}
+	if nodo == "" {
+		// Compatibilidad con tareas antiguas que no persistieron una reserva.
+		_ = s.store.Del(context.WithoutCancel(ctx), claveCacheEstadoNodo)
+	} else {
+		s.invalidarCacheCapacidad(context.WithoutCancel(ctx), nodo)
+	}
+	return nil
+}
+
+func (s *AprovisionamientoService) invalidarCacheCapacidad(ctx context.Context, nodo string) {
+	_ = s.store.Del(ctx, claveCacheEstadoNodo, claveCapacidadNodo(nodo))
+}
+
+func claveCapacidadNodo(nodo string) string {
+	return "aprovisionamiento:capacidad:" + strings.TrimSpace(nodo)
+}
+
+func (s *AprovisionamientoService) leerReservas(ctx context.Context) ([]reservaAprovisionamiento, error) {
+	crudo, err := s.store.Get(ctx, claveReservas)
+	if errors.Is(err, ports.ErrClaveNoEncontrada) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ports.ErrCoordinacionAprovisionamiento, err)
+	}
+	var reservas []reservaAprovisionamiento
+	if err := json.Unmarshal([]byte(crudo), &reservas); err != nil {
+		return nil, fmt.Errorf("%w: reservas inválidas: %v", ports.ErrCoordinacionAprovisionamiento, err)
+	}
+	return reservas, nil
+}
+
+func (s *AprovisionamientoService) guardarReservas(ctx context.Context, reservas []reservaAprovisionamiento) error {
+	if len(reservas) == 0 {
+		if err := s.store.Del(ctx, claveReservas); err != nil {
+			return fmt.Errorf("%w: %v", ports.ErrCoordinacionAprovisionamiento, err)
+		}
+		return nil
+	}
+	if err := s.store.Set(ctx, claveReservas, reservas, ttlReservaAprovisionamiento); err != nil {
+		return fmt.Errorf("%w: %v", ports.ErrCoordinacionAprovisionamiento, err)
+	}
+	return nil
+}
+
+func reservasVigentes(reservas []reservaAprovisionamiento, ahora time.Time) []reservaAprovisionamiento {
+	vigentes := reservas[:0]
+	for _, reserva := range reservas {
+		if ahora.Before(reserva.Vence) {
+			vigentes = append(vigentes, reserva)
+		}
+	}
+	return vigentes
+}
+
+func quitarReserva(reservas []reservaAprovisionamiento, id string) []reservaAprovisionamiento {
+	resultado := reservas[:0]
+	for _, reserva := range reservas {
+		if reserva.ID != id {
+			resultado = append(resultado, reserva)
+		}
+	}
+	return resultado
+}
+
+func quitarReservaYObtenerNodo(reservas []reservaAprovisionamiento, id string) ([]reservaAprovisionamiento, string) {
+	resultado := reservas[:0]
+	nodo := ""
+	for _, reserva := range reservas {
+		if reserva.ID == id {
+			nodo = reserva.Nodo
+			continue
+		}
+		resultado = append(resultado, reserva)
+	}
+	return resultado, nodo
+}
+
+func contieneTipoStorage(contenidos, requerido string) bool {
+	for _, contenido := range strings.Split(contenidos, ",") {
+		if strings.TrimSpace(contenido) == requerido {
+			return true
+		}
+	}
+	return false
+}

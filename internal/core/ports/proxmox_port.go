@@ -38,6 +38,14 @@ var ErrProxmoxCredenciales = errors.New("credenciales de Proxmox rechazadas o no
 // junto con ErrProxmoxNoDisponible; hacia el cliente HTTP se responde 504.
 var ErrProxmoxTimeout = errors.New("Proxmox VE no respondió a tiempo")
 
+// ErrRecursosInsuficientes indica que la cuota solicitada supera la capacidad
+// disponible del nodo o storage. Se traduce a 409 RESOURCE_QUOTA_EXCEEDED.
+var ErrRecursosInsuficientes = errors.New("recursos insuficientes para aprovisionar la instancia")
+
+// ErrCoordinacionAprovisionamiento indica que no pudo mantenerse la reserva
+// compartida que evita carreras entre solicitudes concurrentes.
+var ErrCoordinacionAprovisionamiento = errors.New("no se pudo coordinar la reserva de aprovisionamiento")
+
 // InstanciaProxmoxDTO proyecta el estado de una instancia (VM o contenedor)
 // leído desde la API de Proxmox. Los campos de telemetría (Cpu, Mem, MaxMem)
 // provienen directamente de cluster/resources y solo tienen valor cuando la
@@ -216,9 +224,10 @@ type CrearInstanciaProxmoxInput struct {
 // ResultadoAprovisionamiento vincula el VMID reservado con el UPID que debe
 // registrar el worker. Accion contiene qmcreate o vzcreate.
 type ResultadoAprovisionamiento struct {
-	VMID   int
-	UPID   string
-	Accion string
+	VMID      int
+	UPID      string
+	Accion    string
+	ReservaID string
 }
 
 // AprovisionamientoPort separa las escrituras de creación del contrato de

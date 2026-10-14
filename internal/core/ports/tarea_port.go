@@ -32,6 +32,15 @@ func TipoRecursoCreacion(accion string) (string, bool) {
 	}
 }
 
+// AccionPublicaTarea normaliza los nombres internos de Proxmox al vocabulario
+// del contrato HTTP/SSE. qmcreate y vzcreate son una sola acción CREATE.
+func AccionPublicaTarea(accion string) string {
+	if _, creacion := TipoRecursoCreacion(accion); creacion {
+		return "CREATE"
+	}
+	return strings.ToUpper(strings.TrimSpace(accion))
+}
+
 // TareaRepository es el puerto de persistencia de tareas y su auditoría asociada.
 // El servicio construye el registro de auditoría; el adaptador garantiza que
 // ambas escrituras sean atómicas sin decidir sus códigos ni resultados.

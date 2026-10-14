@@ -167,6 +167,34 @@ func ProbarContrato(t *testing.T, nuevo Fabrica) {
 		}
 	})
 
+	t.Run("AcquireLock serializa y no libera un lock ajeno", func(t *testing.T) {
+		store, avanzar := nuevo(t)
+		liberarPrimero, err := store.AcquireLock(ctx, "lock:recurso", time.Minute)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// Simula la caída del primer dueño: el TTL vence y otro proceso toma
+		// la clave. La liberación tardía del primero no debe borrar el lock nuevo.
+		avanzar(2 * time.Minute)
+		liberarSegundo, err := store.AcquireLock(ctx, "lock:recurso", time.Minute)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := liberarPrimero(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.Get(ctx, "lock:recurso"); err != nil {
+			t.Fatalf("el dueño anterior no debe liberar el lock nuevo: %v", err)
+		}
+		if err := liberarSegundo(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.Get(ctx, "lock:recurso"); !errors.Is(err, ports.ErrClaveNoEncontrada) {
+			t.Fatalf("el dueño actual debe liberar el lock: %v", err)
+		}
+	})
+
 	t.Run("Publish y Subscribe", func(t *testing.T) {
 		store, _ := nuevo(t)
 		mensajes, cancelar, err := store.Subscribe(ctx, "eventos")

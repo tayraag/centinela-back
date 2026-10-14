@@ -258,7 +258,7 @@ func TestCrearInstancia_RegistraOrdenRealEnSeguimiento(t *testing.T) {
 	usuarioID := uuid.New()
 	tareaID := uuid.New()
 	upid := "UPID:pve1:1:2:3:vzcreate:502:root@pam:"
-	px := &mockProxmoxPort{aprovRes: &ports.ResultadoAprovisionamiento{VMID: 502, UPID: upid, Accion: ports.AccionProxmoxCrearLXC}}
+	px := &mockProxmoxPort{aprovRes: &ports.ResultadoAprovisionamiento{VMID: 502, UPID: upid, Accion: ports.AccionProxmoxCrearLXC, ReservaID: "reserva-502"}}
 	seguimiento := &seguimientoCaptura{id: tareaID}
 	handler := adaptersHttp.NewInstanceHandler(px, &mockUserRepository{}, seguimiento, &mockTareaRepository{}, &mockAuditService{}, inventarioNulo{})
 	router := gin.New()
@@ -285,7 +285,7 @@ func TestCrearInstancia_RegistraOrdenRealEnSeguimiento(t *testing.T) {
 	if seguimiento.llamadas != 1 || seguimiento.usuarioID != usuarioID || seguimiento.vmid != 502 || seguimiento.accion != ports.AccionProxmoxCrearLXC || seguimiento.upid != upid {
 		t.Fatalf("orden no registrada correctamente: %+v", seguimiento)
 	}
-	if seguimiento.metadatos["resource_type"] != ports.TipoInstanciaLXC || seguimiento.metadatos["instanciaNombre"] != "db-cache" {
+	if seguimiento.metadatos["resource_type"] != ports.TipoInstanciaLXC || seguimiento.metadatos["instanciaNombre"] != "db-cache" || seguimiento.metadatos["reserva_id"] != "reserva-502" {
 		t.Fatalf("metadatos de creación incorrectos: %v", seguimiento.metadatos)
 	}
 	var respuesta map[string]any
@@ -294,6 +294,23 @@ func TestCrearInstancia_RegistraOrdenRealEnSeguimiento(t *testing.T) {
 	}
 	if respuesta["upid"] != upid || respuesta["tareaId"] != tareaID.String() {
 		t.Fatalf("respuesta asincrónica incorrecta: %v", respuesta)
+	}
+}
+
+func TestCrearInstancia_RecursosInsuficientesEs409(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	px := &mockProxmoxPort{errAprov: fmt.Errorf("%w: RAM", ports.ErrRecursosInsuficientes)}
+	handler := adaptersHttp.NewInstanceHandler(px, &mockUserRepository{}, seguimientoNulo{}, &mockTareaRepository{}, &mockAuditService{}, inventarioNulo{})
+	router := gin.New()
+	router.POST("/api/instances", handler.CrearInstancia)
+	body := `{"type":"VM","node":"pve1","name":"web","cpu":{"cores":2},"ram":{"memoryMb":4096},"disk":{"storageId":"local-lvm","sizeGb":50},"network":{"bridge":"vmbr0","ipv4":{"type":"dhcp"}},"os":{"templateId":"local:iso/debian.iso"}}`
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/instances", strings.NewReader(body)))
+
+	var respuesta map[string]string
+	_ = json.Unmarshal(w.Body.Bytes(), &respuesta)
+	if w.Code != http.StatusConflict || respuesta["errorCode"] != "RESOURCE_QUOTA_EXCEEDED" {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
 	}
 }
 

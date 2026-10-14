@@ -71,7 +71,7 @@ type InstanciaInventarioResponse struct {
 // TASK_FINISHED; action es la acción en mayúsculas, igual que detalles.accion.
 type ActiveTaskResponse struct {
 	TareaID string `json:"tareaId" binding:"required" example:"3f2504e0-4f89-11d3-9a0c-0305e82c3301"`
-	Action  string `json:"action" binding:"required" enums:"START,STOP,SHUTDOWN,REBOOT,DELETE" example:"START"`
+	Action  string `json:"action" binding:"required" enums:"START,STOP,SHUTDOWN,REBOOT,DELETE,CREATE" example:"START"`
 	Status  string `json:"status" binding:"required" enums:"RUNNING" example:"RUNNING"`
 }
 

@@ -14,6 +14,7 @@ import (
 
 	"el-centinela/internal/core/ports"
 
+	"github.com/google/uuid"
 	goredis "github.com/redis/go-redis/v9"
 )
 
@@ -151,6 +152,42 @@ func (s *KVStore) Del(ctx context.Context, keys ...string) error {
 		return fmt.Errorf("redis DEL: %w", err)
 	}
 	return nil
+}
+
+// AcquireLock implementa un lock distribuido con SET NX y un token aleatorio.
+// El script de liberación compara el token antes de borrar para no eliminar un
+// lock que haya vencido y luego haya sido adquirido por otro proceso.
+func (s *KVStore) AcquireLock(ctx context.Context, key string, ttl time.Duration) (func(context.Context) error, error) {
+	if ttl <= 0 {
+		return nil, errors.New("el TTL del lock debe ser mayor que cero")
+	}
+	token := uuid.NewString()
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		ok, err := s.client.SetNX(ctx, key, token, ttl).Result()
+		if err != nil {
+			return nil, fmt.Errorf("redis SET NX %s: %w", key, err)
+		}
+		if ok {
+			var once sync.Once
+			return func(releaseCtx context.Context) error {
+				var releaseErr error
+				once.Do(func() {
+					const compareAndDelete = `if redis.call("GET", KEYS[1]) == ARGV[1] then return redis.call("DEL", KEYS[1]) else return 0 end`
+					if err := s.client.Eval(releaseCtx, compareAndDelete, []string{key}, token).Err(); err != nil {
+						releaseErr = fmt.Errorf("redis release lock %s: %w", key, err)
+					}
+				})
+				return releaseErr
+			}, nil
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+		}
+	}
 }
 
 func (s *KVStore) Publish(ctx context.Context, channel string, message interface{}) error {

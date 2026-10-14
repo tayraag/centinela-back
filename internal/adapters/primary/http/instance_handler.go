@@ -29,12 +29,13 @@ import (
 
 // InstanceHandler maneja los endpoints HTTP de instancias Proxmox.
 type InstanceHandler struct {
-	proxmox     ports.ProxmoxPort
-	userRepo    ports.UserRepository
-	seguimiento ports.SeguimientoTareas
-	inventario  ports.InventarioService // resuelve las IPs del listado
-	tareas      ports.TareaRepository
-	audit       ports.AuditService
+	proxmox           ports.ProxmoxPort
+	aprovisionamiento ports.AprovisionamientoPort
+	userRepo          ports.UserRepository
+	seguimiento       ports.SeguimientoTareas
+	inventario        ports.InventarioService // resuelve las IPs del listado
+	tareas            ports.TareaRepository
+	audit             ports.AuditService
 }
 
 type CrearInstanciaCPURequest struct {
@@ -95,14 +96,22 @@ func NewInstanceHandler(
 	tareas ports.TareaRepository,
 	audit ports.AuditService,
 	inventario ports.InventarioService,
+	aprovisionamiento ...ports.AprovisionamientoPort,
 ) *InstanceHandler {
+	var provisionador ports.AprovisionamientoPort
+	if len(aprovisionamiento) > 0 {
+		provisionador = aprovisionamiento[0]
+	} else {
+		provisionador, _ = proxmox.(ports.AprovisionamientoPort)
+	}
 	return &InstanceHandler{
-		inventario:  inventario,
-		proxmox:     proxmox,
-		userRepo:    userRepo,
-		seguimiento: seguimiento,
-		tareas:      tareas,
-		audit:       audit,
+		inventario:        inventario,
+		proxmox:           proxmox,
+		aprovisionamiento: provisionador,
+		userRepo:          userRepo,
+		seguimiento:       seguimiento,
+		tareas:            tareas,
+		audit:             audit,
 	}
 }
 
@@ -210,6 +219,12 @@ func mapearErrorProxmox(c *gin.Context, err error) {
 	case errors.Is(err, ports.ErrInstanciaOcupada):
 		log.Printf("⏳ Instancia ocupada [%s]: %v", ruta, err)
 		SendError(c, http.StatusConflict, "INSTANCE_BUSY", "La instancia se encuentra ejecutando otra tarea. Aguarde a que finalice.")
+	case errors.Is(err, ports.ErrRecursosInsuficientes):
+		log.Printf("📊 Cuota insuficiente [%s]: %v", ruta, err)
+		SendError(c, http.StatusConflict, "RESOURCE_QUOTA_EXCEEDED", "Los recursos solicitados ya no están disponibles en el nodo o almacenamiento seleccionado.")
+	case errors.Is(err, ports.ErrCoordinacionAprovisionamiento):
+		log.Printf("🔒 No se pudo coordinar la reserva [%s]: %v", ruta, err)
+		SendError(c, http.StatusServiceUnavailable, "PROVISIONING_COORDINATION_UNAVAILABLE", "No se pudo reservar la capacidad de forma segura. Intente nuevamente.")
 	case errors.Is(err, ports.ErrProxmoxTimeout):
 		log.Printf("⏱️  Proxmox no respondió a tiempo [%s]: %v", ruta, err)
 		// Distinto de PROXMOX_UNAVAILABLE: la orden pudo haber llegado y aplicarse,
@@ -280,7 +295,7 @@ func normalizarCreacion(req CrearInstanciaRequest) (ports.CrearInstanciaProxmoxI
 // vzcreate y registra inmediatamente el UPID con el usuario autenticado.
 //
 // @Summary      Crear una VM o contenedor
-// @Description  ADMIN ONLY. Reserva el siguiente VMID libre y comienza el aprovisionamiento asíncrono. El resultado llega por TASK_FINISHED con accion CREATE; al completar correctamente (OK o WARNINGS), el creador recibe FULL_ACCESS.
+// @Description  ADMIN ONLY. Bajo lock distribuido consulta la capacidad cacheada en Redis (o Proxmox si falta), valida y reserva CPU, RAM y disco, invalida la caché al aceptar la orden y comienza el aprovisionamiento asíncrono. El resultado llega por TASK_FINISHED con accion CREATE; al completar correctamente (OK o WARNINGS), el creador recibe FULL_ACCESS y se vuelve a invalidar la capacidad.
 // @Tags         Instancias Proxmox
 // @Accept       json
 // @Produce      json
@@ -290,7 +305,9 @@ func normalizarCreacion(req CrearInstanciaRequest) (ports.CrearInstanciaProxmoxI
 // @Failure      400 {object} ErrorResponse "INVALID_REQUEST"
 // @Failure      401 {object} ErrorResponse "MISSING_TOKEN | INVALID_TOKEN | TOKEN_REVOKED"
 // @Failure      403 {object} ErrorResponse "WRONG_TOKEN_TYPE | 2FA_REQUIRED | INSUFFICIENT_PERMISSIONS"
+// @Failure      409 {object} ErrorResponse "RESOURCE_QUOTA_EXCEEDED"
 // @Failure      502 {object} ErrorResponse "PROXMOX_UNAVAILABLE"
+// @Failure      503 {object} ErrorResponse "PROVISIONING_COORDINATION_UNAVAILABLE"
 // @Failure      504 {object} ErrorResponse "PROXMOX_TIMEOUT"
 // @Router       /instances [post]
 func (h *InstanceHandler) CrearInstancia(c *gin.Context) {
@@ -304,12 +321,11 @@ func (h *InstanceHandler) CrearInstancia(c *gin.Context) {
 		SendError(c, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
 		return
 	}
-	provisionador, ok := h.proxmox.(ports.AprovisionamientoPort)
-	if !ok {
+	if h.aprovisionamiento == nil {
 		SendError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "El aprovisionamiento no está disponible.")
 		return
 	}
-	resultado, err := provisionador.AprovisionarInstancia(c.Request.Context(), input)
+	resultado, err := h.aprovisionamiento.AprovisionarInstancia(c.Request.Context(), input)
 	if err != nil {
 		mapearErrorProxmox(c, err)
 		return
@@ -317,6 +333,7 @@ func (h *InstanceHandler) CrearInstancia(c *gin.Context) {
 	h.responderTarea(c, resultado.VMID, resultado.Accion, resultado.UPID, map[string]any{
 		"instanciaNombre": input.Nombre,
 		"resource_type":   input.Tipo,
+		"reserva_id":      resultado.ReservaID,
 	})
 }
 

@@ -116,7 +116,7 @@ func (r *TareaRepository) BuscarTareasActivasPorVmids(ctx context.Context, vmids
 		}
 		// Si hay más de una tarea RUNNING para el mismo vmid (no debería pasar),
 		// se queda con la más reciente.
-		resultado[vmid] = ports.ActiveTaskDTO{TareaID: t.ID.String(), Action: strings.ToUpper(t.Accion), Status: t.Estado}
+		resultado[vmid] = ports.ActiveTaskDTO{TareaID: t.ID.String(), Action: ports.AccionPublicaTarea(t.Accion), Status: t.Estado}
 	}
 	return resultado, nil
 }
