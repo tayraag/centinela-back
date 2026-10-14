@@ -133,6 +133,10 @@ func (m *mockProxmoxPort) ObtenerMetricasRRD(ctx context.Context, nodo, tipo str
 	return nil, nil
 }
 
+func (m *mockProxmoxPort) ObtenerEstadoActual(ctx context.Context, nodo, tipo string, vmid int) (*domain.MetricasEnVivoDTO, error) {
+	return nil, nil
+}
+
 // inventarioNulo implementa ports.InventarioService sin resolver ninguna IP.
 type inventarioNulo struct{}
 

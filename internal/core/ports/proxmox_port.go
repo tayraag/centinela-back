@@ -145,6 +145,9 @@ type ProxmoxPort interface {
 
 	// ObtenerMetricasRRD consulta GET /nodes/{node}/{tipo}/{vmid}/rrddata?timeframe={timeframe}.
 	ObtenerMetricasRRD(ctx context.Context, nodo, tipo string, vmid int, timeframe string) ([]domain.PuntoMetricaDTO, error)
+
+	// ObtenerEstadoActual consulta GET /nodes/{node}/{tipo}/{vmid}/status/current.
+	ObtenerEstadoActual(ctx context.Context, nodo, tipo string, vmid int) (*domain.MetricasEnVivoDTO, error)
 }
 
 // StorageDTO representa un almacenamiento tal como lo informa Proxmox en /nodes/{node}/storage.

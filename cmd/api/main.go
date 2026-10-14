@@ -141,7 +141,7 @@ func main() {
 	aprovisionamientoService := services.NewAprovisionamientoService(proxmoxClient, proxmoxClient, kvStore)
 
 	// 5. Inicializar handlers HTTP
-	authHandler := httpHandlers.NewAuthHandler(authService)
+	authHandler := httpHandlers.NewAuthHandler(authService, kvStore)
 	userHandler := httpHandlers.NewUserHandler(userService)
 	accountHandler := httpHandlers.NewAccountHandler(userService)
 	auditHandler := httpHandlers.NewAuditHandler(auditService)
@@ -175,6 +175,7 @@ func main() {
 	eventsHandler := httpHandlers.NewEventsHandler(eventosService)
 	nodoNombre := valorODefecto(os.Getenv("PROXMOX_NODE"), "proxmox")
 	nodeHandler := httpHandlers.NewNodeHandler(services.NewNodoService(proxmoxClient, kvStore, nodoNombre), proxmoxClient, nodoNombre)
+	wsMetricsHandler := httpHandlers.NewMetricsWSHandler(proxmoxClient, instanceRepo, authRepo, kvStore, nodoNombre)
 
 	// 6. Configurar el Router HTTP (Gin)
 	// Usamos gin.New() para tener control total sobre los middlewares.
@@ -219,6 +220,7 @@ func main() {
 
 			// Rutas protegidas (requieren JWT access)
 			auth.POST("/logout", middleware.RequireAuth(authService), authHandler.Logout)
+			auth.POST("/ws-ticket", middleware.RequireAuth(authService), authHandler.EmitirWsTicket)
 
 			// Recuperación de contraseña (públicas)
 			auth.POST("/password/forgot", authHandler.SolicitarRecuperacion)
@@ -293,6 +295,11 @@ func main() {
 		api.GET("/events", eventsHandler.Stream)
 
 		// ==========================================
+		// Canal WebSocket de telemetría en tiempo real (RF-05 / RNF-06)
+		// ==========================================
+		api.GET("/ws/instances/:vmid/metrics", wsMetricsHandler.StreamMetrics)
+
+		// ==========================================
 		// Rutas de Instancias Proxmox
 		// ==========================================
 		instances := api.Group("/instances", middleware.RequireAuth(authService))
@@ -336,7 +343,9 @@ func main() {
 		WriteTimeout: 15 * time.Second,
 		IdleTimeout:  60 * time.Second,
 	}
-	srv.RegisterOnShutdown(eventsHandler.CerrarStreams) // los streams SSE no terminan solos
+	srv.RegisterOnShutdown(eventsHandler.CerrarStreams)       // los streams SSE no terminan solos
+	srv.RegisterOnShutdown(wsMetricsHandler.CerrarConexiones) // los canales WS de telemetría tampoco
+
 
 	go func() {
 		log.Printf("[INFO] Servidor HTTP escuchando en %s", srv.Addr)

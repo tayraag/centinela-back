@@ -750,3 +750,45 @@ func TestClient_ObtenerMetricasRRD(t *testing.T) {
 	})
 }
 
+func TestClient_ObtenerEstadoActual(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api2/json/nodes/pve1/qemu/100/status/current" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": map[string]any{
+				"vmid":      100,
+				"status":    "running",
+				"cpus":      2,
+				"cpu":       0.05,
+				"mem":       536870912,
+				"maxmem":    2147483648,
+				"disk":      1073741824,
+				"maxdisk":   10737418240,
+				"netin":     1024,
+				"netout":    2048,
+				"diskread":  500,
+				"diskwrite": 600,
+				"uptime":    3600,
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := proxmox.NewClient(server.URL, "pve1", tokenIDValido, tokenSecretValido, nil)
+	m, err := client.ObtenerEstadoActual(context.Background(), "pve1", "qemu", 100)
+	if err != nil {
+		t.Fatalf("ObtenerEstadoActual falló: %v", err)
+	}
+
+	if m.VMID != 100 || m.Status != "running" || m.CPU != 0.05 || m.CPUs != 2 {
+		t.Errorf("Estado actual incorrecto: %+v", m)
+	}
+	if m.Mem != 536870912 || m.MaxMem != 2147483648 {
+		t.Errorf("Memoria incorrecta: %+v", m)
+	}
+}
+
+

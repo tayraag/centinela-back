@@ -755,3 +755,96 @@ func (c *Client) ObtenerMetricasRRD(ctx context.Context, nodo, tipo string, vmid
 	return resultado, nil
 }
 
+// estadoActualProxmox representa el cuerpo crudo de /status/current.
+type estadoActualProxmox struct {
+	Vmid      int      `json:"vmid"`
+	Status    string   `json:"status"`
+	Cpus      int      `json:"cpus"`
+	CPU       *float64 `json:"cpu"`
+	Mem       *int64   `json:"mem"`
+	MaxMem    *int64   `json:"maxmem"`
+	Disk      *int64   `json:"disk"`
+	MaxDisk   *int64   `json:"maxdisk"`
+	NetIn     *int64   `json:"netin"`
+	NetOut    *int64   `json:"netout"`
+	DiskRead  *int64   `json:"diskread"`
+	DiskWrite *int64   `json:"diskwrite"`
+	Uptime    *int64   `json:"uptime"`
+}
+
+// ObtenerEstadoActual consulta /nodes/{node}/{tipo}/{vmid}/status/current.
+func (c *Client) ObtenerEstadoActual(ctx context.Context, nodo, tipo string, vmid int) (*domain.MetricasEnVivoDTO, error) {
+	tipoPVE := strings.ToLower(strings.TrimSpace(tipo))
+	if tipoPVE == "vm" {
+		tipoPVE = ports.TipoInstanciaQemu
+	}
+	if tipoPVE != ports.TipoInstanciaQemu && tipoPVE != ports.TipoInstanciaLXC {
+		return nil, fmt.Errorf("tipo de instancia desconocido %q", tipo)
+	}
+
+	path := fmt.Sprintf("/api2/json/nodes/%s/%s/%d/status/current", url.PathEscape(nodo), url.PathEscape(tipoPVE), vmid)
+	raw, err := c.doRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var parsed struct {
+		Data estadoActualProxmox `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return nil, fmt.Errorf("%w: respuesta de status/current inválida: %v", ports.ErrProxmoxNoDisponible, err)
+	}
+
+	d := parsed.Data
+	var cpuVal float64
+	if d.CPU != nil {
+		cpuVal = *d.CPU
+	}
+	var memVal, maxMemVal, diskVal, maxDiskVal, netInVal, netOutVal, readVal, writeVal, upVal int64
+	if d.Mem != nil {
+		memVal = *d.Mem
+	}
+	if d.MaxMem != nil {
+		maxMemVal = *d.MaxMem
+	}
+	if d.Disk != nil {
+		diskVal = *d.Disk
+	}
+	if d.MaxDisk != nil {
+		maxDiskVal = *d.MaxDisk
+	}
+	if d.NetIn != nil {
+		netInVal = *d.NetIn
+	}
+	if d.NetOut != nil {
+		netOutVal = *d.NetOut
+	}
+	if d.DiskRead != nil {
+		readVal = *d.DiskRead
+	}
+	if d.DiskWrite != nil {
+		writeVal = *d.DiskWrite
+	}
+	if d.Uptime != nil {
+		upVal = *d.Uptime
+	}
+
+	return &domain.MetricasEnVivoDTO{
+		Timestamp: time.Now().Unix(),
+		VMID:      vmid,
+		Status:    d.Status,
+		CPU:       cpuVal,
+		CPUs:      d.Cpus,
+		Mem:       memVal,
+		MaxMem:    maxMemVal,
+		Disk:      diskVal,
+		MaxDisk:   maxDiskVal,
+		NetIn:     netInVal,
+		NetOut:    netOutVal,
+		DiskRead:  readVal,
+		DiskWrite: writeVal,
+		Uptime:    upVal,
+	}, nil
+}
+
+

@@ -69,6 +69,9 @@ func (p *proxmoxTareas) ObtenerContenidoStorage(context.Context, string, string)
 func (p *proxmoxTareas) ObtenerMetricasRRD(context.Context, string, string, int, string) ([]domain.PuntoMetricaDTO, error) {
 	return nil, nil
 }
+func (p *proxmoxTareas) ObtenerEstadoActual(context.Context, string, string, int) (*domain.MetricasEnVivoDTO, error) {
+	return nil, nil
+}
 
 type tareasEnMemoria struct {
 	mu     sync.Mutex
