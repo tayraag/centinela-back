@@ -38,9 +38,10 @@ func (r *TareaRepository) Crear(ctx context.Context, tarea *domain.TareaAsincron
 }
 
 // ActualizarEstado guarda el estado final de la tarea y sus metadatos (JSONB).
-// Para una creación que terminó con exitstatus OK, la misma transacción otorga
-// FULL_ACCESS al usuario creador. Así nunca queda una tarea COMPLETED sin su
-// permiso, ni se publica TASK_FINISHED antes de que el inventario sea visible.
+// Para una creación que Proxmox dio por completada (OK o WARNINGS), la misma
+// transacción otorga FULL_ACCESS al usuario creador. Así nunca queda una tarea
+// COMPLETED sin su permiso, ni se publica TASK_FINISHED antes de que el
+// inventario sea visible.
 func (r *TareaRepository) ActualizarEstado(ctx context.Context, id uuid.UUID, estado string, metadatos map[string]any, auditoria ports.RegistrarAuditoriaInput) error {
 	if estado != ports.TareaCompleted && estado != ports.TareaFailed {
 		return fmt.Errorf("estado de cierre inválido: %s", estado)
@@ -82,7 +83,8 @@ func (r *TareaRepository) ActualizarEstado(ctx context.Context, id uuid.UUID, es
 func debeAsignarPermisoCreacion(tarea domain.TareaAsincrona, estado string, metadatos map[string]any) bool {
 	_, esCreacion := ports.TipoRecursoCreacion(tarea.Accion)
 	exitstatus, _ := metadatos["exitstatus"].(string)
-	return esCreacion && estado == ports.TareaCompleted && exitstatus == "OK"
+	exitoProxmox := exitstatus == "OK" || strings.HasPrefix(exitstatus, "WARNINGS")
+	return esCreacion && estado == ports.TareaCompleted && exitoProxmox
 }
 
 // BuscarTareasActivasPorVmids devuelve un mapa vmid → tarea en curso para todas

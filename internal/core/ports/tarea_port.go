@@ -40,8 +40,9 @@ type TareaRepository interface {
 	Crear(ctx context.Context, tarea *domain.TareaAsincrona, auditoria RegistrarAuditoriaInput) error
 
 	// ActualizarEstado confirma atómicamente el estado final (COMPLETED | FAILED),
-	// los metadatos técnicos y la auditoría definitiva. En una creación exitosa
-	// también asigna FULL_ACCESS al usuario creador sobre el VMID reservado.
+	// los metadatos técnicos y la auditoría definitiva. En una creación que
+	// Proxmox completó (OK o WARNINGS) también asigna FULL_ACCESS al usuario
+	// creador sobre el VMID reservado.
 	// Repetir el cierre de una tarea terminada no genera nuevos registros. Un
 	// error deja RUNNING para reintento.
 	ActualizarEstado(ctx context.Context, id uuid.UUID, estado string, metadatos map[string]any, auditoria RegistrarAuditoriaInput) error

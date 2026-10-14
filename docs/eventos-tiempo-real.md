@@ -86,7 +86,7 @@ Como se consulta en vivo, **si un admin le quita un permiso a un operador, deja 
 1. Una acción de energía (`POST /api/instances/:vmid/start`, `/stop` o `/status/{action}`), un borrado (`DELETE /api/instances/:vmid`, solo ADMIN) o una orden de aprovisionamiento se dispara en Proxmox y responde `202 { "upid": "...", "tareaId": "..." }`.
 2. La tarea se registra en `tareas_asincronas` con estado `RUNNING` y entra al **pool de seguimiento**. Mientras está así, `GET /api/instances` la muestra en `activeTask: { tareaId, action, status: "RUNNING" }`.
 3. Los workers del pool le preguntan a Proxmox cómo va (`GET /nodes/{node}/tasks/{upid}/status`) cada 1 s.
-4. Cuando termina, se guarda `COMPLETED` o `FAILED`, se audita el resultado y se publica `TASK_FINISHED` con el mismo `tareaId`, así el front puede asociarlo a la acción que disparó. En una creación con `exitstatus: "OK"`, el mismo commit asigna `FULL_ACCESS` al creador antes de publicar el evento.
+4. Cuando termina, se guarda `COMPLETED` o `FAILED`, se audita el resultado y se publica `TASK_FINISHED` con el mismo `tareaId`, así el front puede asociarlo a la acción que disparó. En una creación completada (`OK` o `WARNINGS`), el mismo commit asigna `FULL_ACCESS` al creador antes de publicar el evento.
 
 | Resultado | `severidad` | `mensaje` | `detalles` |
 | --------- | ----------- | --------- | ---------- |

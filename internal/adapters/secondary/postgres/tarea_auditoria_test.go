@@ -218,35 +218,40 @@ func TestCreacionExitosaAutoasignaFullAccess(t *testing.T) {
 	}
 }
 
-func TestCreacionNoAsignaPermisoSinExitstatusOK(t *testing.T) {
+func TestCreacionNoAsignaPermisoCuandoFalla(t *testing.T) {
 	db, usuario, _ := baseRF08(t)
 	repo, ctx := postgres.NewTareaRepository(db), context.Background()
-
-	casos := []struct {
-		nombre     string
-		estado     string
-		exitstatus string
-	}{
-		{"fallida", ports.TareaFailed, "unable to create VM"},
-		{"con advertencias", ports.TareaCompleted, "WARNINGS: 1"},
+	tarea := nuevaTareaRF08(usuario, ports.AccionProxmoxCrearVM)
+	tarea.InstanciaID = strconv.Itoa(220)
+	if err := repo.Crear(ctx, tarea, services.NewAuditService(nil).PrepararAuditoriaTarea(tarea, nil, time.Now())); err != nil {
+		t.Fatal(err)
 	}
-	for i, caso := range casos {
-		t.Run(caso.nombre, func(t *testing.T) {
-			tarea := nuevaTareaRF08(usuario, ports.AccionProxmoxCrearVM)
-			tarea.InstanciaID = strconv.Itoa(220 + i)
-			if err := repo.Crear(ctx, tarea, services.NewAuditService(nil).PrepararAuditoriaTarea(tarea, nil, time.Now())); err != nil {
-				t.Fatal(err)
-			}
-			cierre := map[string]any{"exitstatus": caso.exitstatus, "motivo": ports.MotivoProxmoxError}
-			if err := repo.ActualizarEstado(ctx, tarea.ID, caso.estado, cierre, services.NewAuditService(nil).PrepararAuditoriaTarea(tarea, cierre, time.Now())); err != nil {
-				t.Fatal(err)
-			}
-			var cantidad int64
-			db.Model(&domain.PermisoInstancia{}).Where("usuario_id = ? AND vmid_proxmox = ?", usuario, tarea.InstanciaID).Count(&cantidad)
-			if cantidad != 0 {
-				t.Fatalf("se creó un permiso para una creación no exitosa")
-			}
-		})
+	cierre := map[string]any{"exitstatus": "unable to create VM", "motivo": ports.MotivoProxmoxError}
+	if err := repo.ActualizarEstado(ctx, tarea.ID, ports.TareaFailed, cierre, services.NewAuditService(nil).PrepararAuditoriaTarea(tarea, cierre, time.Now())); err != nil {
+		t.Fatal(err)
+	}
+	var cantidad int64
+	db.Model(&domain.PermisoInstancia{}).Where("usuario_id = ? AND vmid_proxmox = ?", usuario, tarea.InstanciaID).Count(&cantidad)
+	if cantidad != 0 {
+		t.Fatal("se creó un permiso para una creación fallida")
+	}
+}
+
+func TestCreacionConAdvertenciasTambienAutoasignaPermiso(t *testing.T) {
+	db, usuario, _ := baseRF08(t)
+	repo, ctx := postgres.NewTareaRepository(db), context.Background()
+	tarea := nuevaTareaRF08(usuario, ports.AccionProxmoxCrearLXC)
+	tarea.InstanciaID = "221"
+	if err := repo.Crear(ctx, tarea, services.NewAuditService(nil).PrepararAuditoriaTarea(tarea, nil, time.Now())); err != nil {
+		t.Fatal(err)
+	}
+	cierre := map[string]any{"exitstatus": "WARNINGS: 1", "motivo": nil, "error": nil}
+	if err := repo.ActualizarEstado(ctx, tarea.ID, ports.TareaCompleted, cierre, services.NewAuditService(nil).PrepararAuditoriaTarea(tarea, cierre, time.Now())); err != nil {
+		t.Fatal(err)
+	}
+	var permiso domain.PermisoInstancia
+	if err := db.Where("usuario_id = ? AND vmid_proxmox = ?", usuario, 221).First(&permiso).Error; err != nil {
+		t.Fatalf("la creación completada con advertencias debe ser visible: %v", err)
 	}
 }
 
