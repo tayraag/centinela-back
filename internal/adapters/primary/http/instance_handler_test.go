@@ -35,6 +35,18 @@ type mockProxmoxPort struct {
 	estado     string // estado que informa ObtenerInstancia
 	lecturas   int    // órdenes de lectura recibidas (ObtenerInstancia)
 	escrituras int    // órdenes de escritura recibidas (start/stop/shutdown/reboot)
+	aprovInput ports.CrearInstanciaProxmoxInput
+	aprovRes   *ports.ResultadoAprovisionamiento
+	errAprov   error
+}
+
+func (m *mockProxmoxPort) AprovisionarInstancia(_ context.Context, input ports.CrearInstanciaProxmoxInput) (*ports.ResultadoAprovisionamiento, error) {
+	m.escrituras++
+	m.aprovInput = input
+	if m.errAprov != nil {
+		return nil, m.errAprov
+	}
+	return m.aprovRes, nil
 }
 
 func (m *mockProxmoxPort) ObtenerInstancia(ctx context.Context, vmid int) (*ports.InstanciaProxmoxDTO, error) {
@@ -132,6 +144,25 @@ func (seguimientoNulo) Seguir(context.Context, uuid.UUID, int, string, string, .
 	return uuid.New(), nil
 }
 
+type seguimientoCaptura struct {
+	id        uuid.UUID
+	usuarioID uuid.UUID
+	vmid      int
+	accion    string
+	upid      string
+	metadatos map[string]any
+	llamadas  int
+}
+
+func (s *seguimientoCaptura) Seguir(_ context.Context, usuarioID uuid.UUID, vmid int, accion, upid string, metadatos ...map[string]any) (uuid.UUID, error) {
+	s.llamadas++
+	s.usuarioID, s.vmid, s.accion, s.upid = usuarioID, vmid, accion, upid
+	if len(metadatos) > 0 {
+		s.metadatos = metadatos[0]
+	}
+	return s.id, nil
+}
+
 type mockTareaRepository struct {
 	activas map[int]ports.ActiveTaskDTO
 }
@@ -220,6 +251,65 @@ func (m *mockUserRepository) ReemplazarPermisos(ctx context.Context, usuarioID u
 }
 func (m *mockUserRepository) ListarActividadDeUsuario(ctx context.Context, usuarioID uuid.UUID, filtros ports.FiltrosActividad) ([]domain.Auditoria, error) {
 	return nil, nil
+}
+
+func TestCrearInstancia_RegistraOrdenRealEnSeguimiento(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	usuarioID := uuid.New()
+	tareaID := uuid.New()
+	upid := "UPID:pve1:1:2:3:vzcreate:502:root@pam:"
+	px := &mockProxmoxPort{aprovRes: &ports.ResultadoAprovisionamiento{VMID: 502, UPID: upid, Accion: ports.AccionProxmoxCrearLXC}}
+	seguimiento := &seguimientoCaptura{id: tareaID}
+	handler := adaptersHttp.NewInstanceHandler(px, &mockUserRepository{}, seguimiento, &mockTareaRepository{}, &mockAuditService{}, inventarioNulo{})
+	router := gin.New()
+	router.POST("/api/instances", func(c *gin.Context) {
+		c.Set(string(middleware.ContextKeyUserID), usuarioID.String())
+	}, handler.CrearInstancia)
+
+	body := `{
+		"type":"LXC","node":"pve1","name":"db-cache","password":"PasswordSegura123!",
+		"cpu":{"cores":1},"ram":{"memoryMb":1024},
+		"disk":{"storageId":"local-lvm","sizeGb":10},
+		"network":{"bridge":"vmbr0","firewall":false,"ipv4":{"type":"static","address":"192.168.1.50","mask":"24","gateway":"192.168.1.1"}},
+		"os":{"templateId":"local:vztmpl/debian.tar.zst"}
+	}`
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/instances", strings.NewReader(body)))
+
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	if px.aprovInput.Tipo != ports.TipoInstanciaLXC || px.aprovInput.Password == "" || px.aprovInput.IPv4Tipo != "static" {
+		t.Fatalf("input a Proxmox incorrecto: %+v", px.aprovInput)
+	}
+	if seguimiento.llamadas != 1 || seguimiento.usuarioID != usuarioID || seguimiento.vmid != 502 || seguimiento.accion != ports.AccionProxmoxCrearLXC || seguimiento.upid != upid {
+		t.Fatalf("orden no registrada correctamente: %+v", seguimiento)
+	}
+	if seguimiento.metadatos["resource_type"] != ports.TipoInstanciaLXC || seguimiento.metadatos["instanciaNombre"] != "db-cache" {
+		t.Fatalf("metadatos de creación incorrectos: %v", seguimiento.metadatos)
+	}
+	var respuesta map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &respuesta); err != nil {
+		t.Fatal(err)
+	}
+	if respuesta["upid"] != upid || respuesta["tareaId"] != tareaID.String() {
+		t.Fatalf("respuesta asincrónica incorrecta: %v", respuesta)
+	}
+}
+
+func TestCrearInstancia_RechazaLXCSinPasswordAntesDeProxmox(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	px := &mockProxmoxPort{}
+	handler := adaptersHttp.NewInstanceHandler(px, &mockUserRepository{}, seguimientoNulo{}, &mockTareaRepository{}, &mockAuditService{}, inventarioNulo{})
+	router := gin.New()
+	router.POST("/api/instances", handler.CrearInstancia)
+	body := `{"type":"LXC","node":"pve1","name":"cache","cpu":{"cores":1},"ram":{"memoryMb":512},"disk":{"storageId":"local-lvm","sizeGb":4},"network":{"bridge":"vmbr0","ipv4":{"type":"dhcp"}},"os":{"templateId":"local:vztmpl/debian.tar.zst"}}`
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/instances", strings.NewReader(body)))
+
+	if w.Code != http.StatusBadRequest || px.escrituras != 0 {
+		t.Fatalf("status=%d escrituras=%d body=%s", w.Code, px.escrituras, w.Body.String())
+	}
 }
 
 func TestListarInstancias_AdminVisualizaTodas(t *testing.T) {

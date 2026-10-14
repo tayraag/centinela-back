@@ -190,3 +190,39 @@ type EstadoTareaDTO struct {
 	Terminada  bool   // Proxmox reporta status "stopped"
 	ExitStatus string // "OK" si salió bien; si no, el mensaje de error de Proxmox
 }
+
+// CrearInstanciaProxmoxInput contiene la configuración normalizada que el
+// adaptador traduce a los parámetros form-urlencoded de qemu o lxc.
+type CrearInstanciaProxmoxInput struct {
+	Tipo        string // qemu | lxc
+	Nodo        string
+	Nombre      string
+	Descripcion string
+	Password    string // obligatorio solo para LXC
+	Cores       int
+	MemoriaMB   int
+	StorageID   string
+	DiscoGB     int
+	TemplateID  string
+	Bridge      string
+	VLAN        *int
+	Firewall    bool
+	IPv4Tipo    string // dhcp | static
+	IPv4Address string
+	IPv4Mask    string
+	IPv4Gateway string
+}
+
+// ResultadoAprovisionamiento vincula el VMID reservado con el UPID que debe
+// registrar el worker. Accion contiene qmcreate o vzcreate.
+type ResultadoAprovisionamiento struct {
+	VMID   int
+	UPID   string
+	Accion string
+}
+
+// AprovisionamientoPort separa las escrituras de creación del contrato de
+// consulta/operación de instancias existente. El cliente real implementa ambos.
+type AprovisionamientoPort interface {
+	AprovisionarInstancia(ctx context.Context, input CrearInstanciaProxmoxInput) (*ResultadoAprovisionamiento, error)
+}

@@ -35,6 +35,95 @@ definitions:
     - status
     - tareaId
     type: object
+  http.CrearInstanciaCPURequest:
+    properties:
+      cores:
+        example: 2
+        type: integer
+    type: object
+  http.CrearInstanciaDiscoRequest:
+    properties:
+      format:
+        example: raw
+        type: string
+      sizeGb:
+        example: 50
+        type: integer
+      storageId:
+        example: local-lvm
+        type: string
+      thinProvisioning:
+        example: true
+        type: boolean
+    type: object
+  http.CrearInstanciaIPv4Request:
+    properties:
+      address:
+        example: 192.168.1.50
+        type: string
+      gateway:
+        example: 192.168.1.1
+        type: string
+      mask:
+        example: "24"
+        type: string
+      type:
+        example: dhcp
+        type: string
+    type: object
+  http.CrearInstanciaOSRequest:
+    properties:
+      templateId:
+        example: local:iso/debian-12.iso
+        type: string
+    type: object
+  http.CrearInstanciaRAMRequest:
+    properties:
+      memoryMb:
+        example: 4096
+        type: integer
+    type: object
+  http.CrearInstanciaRedRequest:
+    properties:
+      bridge:
+        example: vmbr0
+        type: string
+      firewall:
+        example: true
+        type: boolean
+      ipv4:
+        $ref: '#/definitions/http.CrearInstanciaIPv4Request'
+      vlan:
+        example: 100
+        type: integer
+    type: object
+  http.CrearInstanciaRequest:
+    properties:
+      cpu:
+        $ref: '#/definitions/http.CrearInstanciaCPURequest'
+      description:
+        example: Servidor web principal
+        type: string
+      disk:
+        $ref: '#/definitions/http.CrearInstanciaDiscoRequest'
+      name:
+        example: web-server
+        type: string
+      network:
+        $ref: '#/definitions/http.CrearInstanciaRedRequest'
+      node:
+        example: pve1
+        type: string
+      os:
+        $ref: '#/definitions/http.CrearInstanciaOSRequest'
+      password:
+        type: string
+      ram:
+        $ref: '#/definitions/http.CrearInstanciaRAMRequest'
+      type:
+        example: VM
+        type: string
+    type: object
   http.ErrorResponse:
     properties:
       errorCode:
@@ -1842,6 +1931,51 @@ paths:
       security:
       - BearerAuth: []
       summary: Listar instancias
+      tags:
+      - Instancias Proxmox
+    post:
+      consumes:
+      - application/json
+      description: ADMIN ONLY. Reserva el siguiente VMID libre y comienza el aprovisionamiento
+        asíncrono. El resultado llega por TASK_FINISHED con accion CREATE; al completar
+        correctamente (OK o WARNINGS), el creador recibe FULL_ACCESS.
+      parameters:
+      - description: Configuración de la instancia
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/http.CrearInstanciaRequest'
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Accepted
+          schema:
+            $ref: '#/definitions/http.AccionAceptadaResponse'
+        "400":
+          description: INVALID_REQUEST
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "401":
+          description: MISSING_TOKEN | INVALID_TOKEN | TOKEN_REVOKED
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "403":
+          description: WRONG_TOKEN_TYPE | 2FA_REQUIRED | INSUFFICIENT_PERMISSIONS
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "502":
+          description: PROXMOX_UNAVAILABLE
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "504":
+          description: PROXMOX_TIMEOUT
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Crear una VM o contenedor
       tags:
       - Instancias Proxmox
   /instances/{vmid}:

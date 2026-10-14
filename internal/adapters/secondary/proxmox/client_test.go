@@ -158,6 +158,71 @@ func TestClient_ObtenerInstancia_VmidInexistente(t *testing.T) {
 	}
 }
 
+func TestClient_AprovisionarInstancia_ReservaVMIDYEnviaConfiguracion(t *testing.T) {
+	casos := []struct {
+		nombre string
+		input  ports.CrearInstanciaProxmoxInput
+		path   string
+		accion string
+		upid   string
+		campos map[string]string
+	}{
+		{
+			nombre: "VM", path: "/api2/json/nodes/pve1/qemu", accion: ports.AccionProxmoxCrearVM,
+			upid:   "UPID:pve1:1:2:3:qmcreate:501:root@pam:",
+			input:  ports.CrearInstanciaProxmoxInput{Tipo: ports.TipoInstanciaQemu, Nodo: "pve1", Nombre: "web", Cores: 2, MemoriaMB: 4096, StorageID: "local-lvm", DiscoGB: 30, TemplateID: "local:iso/debian.iso", Bridge: "vmbr0", Firewall: true},
+			campos: map[string]string{"name": "web", "scsi0": "local-lvm:30", "ide2": "local:iso/debian.iso,media=cdrom", "net0": "virtio,bridge=vmbr0,firewall=1"},
+		},
+		{
+			nombre: "LXC", path: "/api2/json/nodes/pve1/lxc", accion: ports.AccionProxmoxCrearLXC,
+			upid:   "UPID:pve1:1:2:3:vzcreate:501:root@pam:",
+			input:  ports.CrearInstanciaProxmoxInput{Tipo: ports.TipoInstanciaLXC, Nodo: "pve1", Nombre: "cache", Password: "secreta", Cores: 1, MemoriaMB: 1024, StorageID: "local-lvm", DiscoGB: 10, TemplateID: "local:vztmpl/debian.tar.zst", Bridge: "vmbr0", IPv4Tipo: "static", IPv4Address: "192.168.1.50", IPv4Mask: "24", IPv4Gateway: "192.168.1.1"},
+			campos: map[string]string{"hostname": "cache", "password": "secreta", "rootfs": "local-lvm:10", "ostemplate": "local:vztmpl/debian.tar.zst", "net0": "name=eth0,bridge=vmbr0,firewall=0,ip=192.168.1.50/24,gw=192.168.1.1"},
+		},
+	}
+	for _, caso := range casos {
+		t.Run(caso.nombre, func(t *testing.T) {
+			var secuencia []string
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				secuencia = append(secuencia, r.Method+" "+r.URL.Path)
+				w.Header().Set("Content-Type", "application/json")
+				switch {
+				case r.Method == http.MethodGet && r.URL.Path == "/api2/json/cluster/nextid":
+					_, _ = w.Write([]byte(`{"data":"501"}`))
+				case r.Method == http.MethodPost && r.URL.Path == caso.path:
+					if err := r.ParseForm(); err != nil {
+						t.Error(err)
+					}
+					for clave, esperado := range caso.campos {
+						if recibido := r.Form.Get(clave); recibido != esperado {
+							t.Errorf("%s = %q, se esperaba %q", clave, recibido, esperado)
+						}
+					}
+					if r.Form.Get("vmid") != "501" || r.Form.Get("cores") != fmt.Sprint(caso.input.Cores) || r.Form.Get("memory") != fmt.Sprint(caso.input.MemoriaMB) {
+						t.Errorf("parámetros base incompletos: %v", r.Form)
+					}
+					_ = json.NewEncoder(w).Encode(map[string]any{"data": caso.upid})
+				default:
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			t.Cleanup(server.Close)
+			client := proxmox.NewClient(server.URL, "pve1", tokenIDValido, tokenSecretValido, nil)
+
+			resultado, err := client.AprovisionarInstancia(context.Background(), caso.input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if resultado.VMID != 501 || resultado.UPID != caso.upid || resultado.Accion != caso.accion {
+				t.Fatalf("resultado inesperado: %+v", resultado)
+			}
+			if len(secuencia) != 2 || secuencia[0] != "GET /api2/json/cluster/nextid" || secuencia[1] != "POST "+caso.path {
+				t.Fatalf("secuencia inesperada: %v", secuencia)
+			}
+		})
+	}
+}
+
 func TestClient_ListarInstancias_ProxmoxCaido(t *testing.T) {
 	// Servidor que responde con error 500
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

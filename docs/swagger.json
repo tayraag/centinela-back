@@ -1492,6 +1492,73 @@
                         }
                     }
                 }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "ADMIN ONLY. Reserva el siguiente VMID libre y comienza el aprovisionamiento asíncrono. El resultado llega por TASK_FINISHED con accion CREATE; al completar correctamente (OK o WARNINGS), el creador recibe FULL_ACCESS.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Instancias Proxmox"
+                ],
+                "summary": "Crear una VM o contenedor",
+                "parameters": [
+                    {
+                        "description": "Configuración de la instancia",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/http.CrearInstanciaRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Accepted",
+                        "schema": {
+                            "$ref": "#/definitions/http.AccionAceptadaResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "INVALID_REQUEST",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "MISSING_TOKEN | INVALID_TOKEN | TOKEN_REVOKED",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "WRONG_TOKEN_TYPE | 2FA_REQUIRED | INSUFFICIENT_PERMISSIONS",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "502": {
+                        "description": "PROXMOX_UNAVAILABLE",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "504": {
+                        "description": "PROXMOX_TIMEOUT",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    }
+                }
             }
         },
         "/instances/{vmid}": {
@@ -2232,6 +2299,134 @@
                 "tareaId": {
                     "type": "string",
                     "example": "3f2504e0-4f89-11d3-9a0c-0305e82c3301"
+                }
+            }
+        },
+        "http.CrearInstanciaCPURequest": {
+            "type": "object",
+            "properties": {
+                "cores": {
+                    "type": "integer",
+                    "example": 2
+                }
+            }
+        },
+        "http.CrearInstanciaDiscoRequest": {
+            "type": "object",
+            "properties": {
+                "format": {
+                    "type": "string",
+                    "example": "raw"
+                },
+                "sizeGb": {
+                    "type": "integer",
+                    "example": 50
+                },
+                "storageId": {
+                    "type": "string",
+                    "example": "local-lvm"
+                },
+                "thinProvisioning": {
+                    "type": "boolean",
+                    "example": true
+                }
+            }
+        },
+        "http.CrearInstanciaIPv4Request": {
+            "type": "object",
+            "properties": {
+                "address": {
+                    "type": "string",
+                    "example": "192.168.1.50"
+                },
+                "gateway": {
+                    "type": "string",
+                    "example": "192.168.1.1"
+                },
+                "mask": {
+                    "type": "string",
+                    "example": "24"
+                },
+                "type": {
+                    "type": "string",
+                    "example": "dhcp"
+                }
+            }
+        },
+        "http.CrearInstanciaOSRequest": {
+            "type": "object",
+            "properties": {
+                "templateId": {
+                    "type": "string",
+                    "example": "local:iso/debian-12.iso"
+                }
+            }
+        },
+        "http.CrearInstanciaRAMRequest": {
+            "type": "object",
+            "properties": {
+                "memoryMb": {
+                    "type": "integer",
+                    "example": 4096
+                }
+            }
+        },
+        "http.CrearInstanciaRedRequest": {
+            "type": "object",
+            "properties": {
+                "bridge": {
+                    "type": "string",
+                    "example": "vmbr0"
+                },
+                "firewall": {
+                    "type": "boolean",
+                    "example": true
+                },
+                "ipv4": {
+                    "$ref": "#/definitions/http.CrearInstanciaIPv4Request"
+                },
+                "vlan": {
+                    "type": "integer",
+                    "example": 100
+                }
+            }
+        },
+        "http.CrearInstanciaRequest": {
+            "type": "object",
+            "properties": {
+                "cpu": {
+                    "$ref": "#/definitions/http.CrearInstanciaCPURequest"
+                },
+                "description": {
+                    "type": "string",
+                    "example": "Servidor web principal"
+                },
+                "disk": {
+                    "$ref": "#/definitions/http.CrearInstanciaDiscoRequest"
+                },
+                "name": {
+                    "type": "string",
+                    "example": "web-server"
+                },
+                "network": {
+                    "$ref": "#/definitions/http.CrearInstanciaRedRequest"
+                },
+                "node": {
+                    "type": "string",
+                    "example": "pve1"
+                },
+                "os": {
+                    "$ref": "#/definitions/http.CrearInstanciaOSRequest"
+                },
+                "password": {
+                    "type": "string"
+                },
+                "ram": {
+                    "$ref": "#/definitions/http.CrearInstanciaRAMRequest"
+                },
+                "type": {
+                    "type": "string",
+                    "example": "VM"
                 }
             }
         },

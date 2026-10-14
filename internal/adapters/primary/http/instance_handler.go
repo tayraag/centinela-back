@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -34,6 +35,54 @@ type InstanceHandler struct {
 	inventario  ports.InventarioService // resuelve las IPs del listado
 	tareas      ports.TareaRepository
 	audit       ports.AuditService
+}
+
+type CrearInstanciaCPURequest struct {
+	Cores int `json:"cores" example:"2"`
+}
+
+type CrearInstanciaRAMRequest struct {
+	MemoryMB int `json:"memoryMb" example:"4096"`
+}
+
+type CrearInstanciaDiscoRequest struct {
+	StorageID        string `json:"storageId" example:"local-lvm"`
+	SizeGB           int    `json:"sizeGb" example:"50"`
+	Format           string `json:"format,omitempty" example:"raw"`
+	ThinProvisioning bool   `json:"thinProvisioning,omitempty" example:"true"`
+}
+
+type CrearInstanciaIPv4Request struct {
+	Type    string `json:"type" example:"dhcp"`
+	Address string `json:"address,omitempty" example:"192.168.1.50"`
+	Mask    string `json:"mask,omitempty" example:"24"`
+	Gateway string `json:"gateway,omitempty" example:"192.168.1.1"`
+}
+
+type CrearInstanciaRedRequest struct {
+	Bridge   string                    `json:"bridge" example:"vmbr0"`
+	VLAN     *int                      `json:"vlan,omitempty" example:"100"`
+	Firewall bool                      `json:"firewall" example:"true"`
+	IPv4     CrearInstanciaIPv4Request `json:"ipv4"`
+}
+
+type CrearInstanciaOSRequest struct {
+	TemplateID string `json:"templateId" example:"local:iso/debian-12.iso"`
+}
+
+// CrearInstanciaRequest es el resumen final del wizard de aprovisionamiento.
+// type acepta VM o LXC; password solo es obligatorio para LXC.
+type CrearInstanciaRequest struct {
+	Type        string                     `json:"type" example:"VM"`
+	Node        string                     `json:"node" example:"pve1"`
+	Name        string                     `json:"name" example:"web-server"`
+	Description string                     `json:"description,omitempty" example:"Servidor web principal"`
+	Password    string                     `json:"password,omitempty"`
+	CPU         CrearInstanciaCPURequest   `json:"cpu"`
+	RAM         CrearInstanciaRAMRequest   `json:"ram"`
+	Disk        CrearInstanciaDiscoRequest `json:"disk"`
+	Network     CrearInstanciaRedRequest   `json:"network"`
+	OS          CrearInstanciaOSRequest    `json:"os"`
 }
 
 // NewInstanceHandler crea un nuevo InstanceHandler.
@@ -176,6 +225,99 @@ func mapearErrorProxmox(c *gin.Context, err error) {
 		log.Printf("❌ Error inesperado de Proxmox [%s]: %v", ruta, err)
 		SendError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Error inesperado al comunicarse con Proxmox VE.")
 	}
+}
+
+func normalizarCreacion(req CrearInstanciaRequest) (ports.CrearInstanciaProxmoxInput, error) {
+	tipo := strings.ToUpper(strings.TrimSpace(req.Type))
+	tipoProxmox := ports.TipoInstanciaQemu
+	if tipo == "LXC" {
+		tipoProxmox = ports.TipoInstanciaLXC
+	} else if tipo != "VM" {
+		return ports.CrearInstanciaProxmoxInput{}, fmt.Errorf("type debe ser VM o LXC")
+	}
+	if strings.TrimSpace(req.Node) == "" || strings.TrimSpace(req.Name) == "" {
+		return ports.CrearInstanciaProxmoxInput{}, fmt.Errorf("node y name son obligatorios")
+	}
+	if req.CPU.Cores < 1 || req.RAM.MemoryMB < 16 {
+		return ports.CrearInstanciaProxmoxInput{}, fmt.Errorf("cpu.cores debe ser al menos 1 y ram.memoryMb al menos 16")
+	}
+	if strings.TrimSpace(req.Disk.StorageID) == "" || req.Disk.SizeGB < 1 {
+		return ports.CrearInstanciaProxmoxInput{}, fmt.Errorf("disk.storageId es obligatorio y disk.sizeGb debe ser al menos 1")
+	}
+	if strings.TrimSpace(req.Network.Bridge) == "" || strings.TrimSpace(req.OS.TemplateID) == "" {
+		return ports.CrearInstanciaProxmoxInput{}, fmt.Errorf("network.bridge y os.templateId son obligatorios")
+	}
+	if req.Network.VLAN != nil && (*req.Network.VLAN < 1 || *req.Network.VLAN > 4094) {
+		return ports.CrearInstanciaProxmoxInput{}, fmt.Errorf("network.vlan debe estar entre 1 y 4094")
+	}
+	ipv4Tipo := strings.ToLower(strings.TrimSpace(req.Network.IPv4.Type))
+	if ipv4Tipo != "dhcp" && ipv4Tipo != "static" {
+		return ports.CrearInstanciaProxmoxInput{}, fmt.Errorf("network.ipv4.type debe ser dhcp o static")
+	}
+	if ipv4Tipo == "static" {
+		mask, err := strconv.Atoi(req.Network.IPv4.Mask)
+		if net.ParseIP(req.Network.IPv4.Address) == nil || net.ParseIP(req.Network.IPv4.Gateway) == nil || err != nil || mask < 0 || mask > 32 {
+			return ports.CrearInstanciaProxmoxInput{}, fmt.Errorf("network.ipv4 estática requiere address, mask IPv4 (0-32) y gateway válidos")
+		}
+	}
+	if tipoProxmox == ports.TipoInstanciaLXC && strings.TrimSpace(req.Password) == "" {
+		return ports.CrearInstanciaProxmoxInput{}, fmt.Errorf("password es obligatorio para LXC")
+	}
+
+	return ports.CrearInstanciaProxmoxInput{
+		Tipo: tipoProxmox, Nodo: strings.TrimSpace(req.Node), Nombre: strings.TrimSpace(req.Name),
+		Descripcion: strings.TrimSpace(req.Description), Password: req.Password,
+		Cores: req.CPU.Cores, MemoriaMB: req.RAM.MemoryMB,
+		StorageID: strings.TrimSpace(req.Disk.StorageID), DiscoGB: req.Disk.SizeGB,
+		TemplateID: strings.TrimSpace(req.OS.TemplateID), Bridge: strings.TrimSpace(req.Network.Bridge),
+		VLAN: req.Network.VLAN, Firewall: req.Network.Firewall, IPv4Tipo: ipv4Tipo,
+		IPv4Address: strings.TrimSpace(req.Network.IPv4.Address), IPv4Mask: strings.TrimSpace(req.Network.IPv4.Mask),
+		IPv4Gateway: strings.TrimSpace(req.Network.IPv4.Gateway),
+	}, nil
+}
+
+// CrearInstancia reserva el siguiente VMID en Proxmox, dispara qmcreate o
+// vzcreate y registra inmediatamente el UPID con el usuario autenticado.
+//
+// @Summary      Crear una VM o contenedor
+// @Description  ADMIN ONLY. Reserva el siguiente VMID libre y comienza el aprovisionamiento asíncrono. El resultado llega por TASK_FINISHED con accion CREATE; al completar correctamente (OK o WARNINGS), el creador recibe FULL_ACCESS.
+// @Tags         Instancias Proxmox
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        body body CrearInstanciaRequest true "Configuración de la instancia"
+// @Success      202 {object} AccionAceptadaResponse
+// @Failure      400 {object} ErrorResponse "INVALID_REQUEST"
+// @Failure      401 {object} ErrorResponse "MISSING_TOKEN | INVALID_TOKEN | TOKEN_REVOKED"
+// @Failure      403 {object} ErrorResponse "WRONG_TOKEN_TYPE | 2FA_REQUIRED | INSUFFICIENT_PERMISSIONS"
+// @Failure      502 {object} ErrorResponse "PROXMOX_UNAVAILABLE"
+// @Failure      504 {object} ErrorResponse "PROXMOX_TIMEOUT"
+// @Router       /instances [post]
+func (h *InstanceHandler) CrearInstancia(c *gin.Context) {
+	var req CrearInstanciaRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		SendError(c, http.StatusBadRequest, "INVALID_REQUEST", "El cuerpo de la solicitud no es un JSON válido.")
+		return
+	}
+	input, err := normalizarCreacion(req)
+	if err != nil {
+		SendError(c, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+		return
+	}
+	provisionador, ok := h.proxmox.(ports.AprovisionamientoPort)
+	if !ok {
+		SendError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "El aprovisionamiento no está disponible.")
+		return
+	}
+	resultado, err := provisionador.AprovisionarInstancia(c.Request.Context(), input)
+	if err != nil {
+		mapearErrorProxmox(c, err)
+		return
+	}
+	h.responderTarea(c, resultado.VMID, resultado.Accion, resultado.UPID, map[string]any{
+		"instanciaNombre": input.Nombre,
+		"resource_type":   input.Tipo,
+	})
 }
 
 // ==========================================

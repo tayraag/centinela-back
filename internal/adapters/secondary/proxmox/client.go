@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"el-centinela/internal/core/ports"
@@ -33,6 +34,7 @@ type Client struct {
 	tokenID        string
 	tokenSecret    string
 	httpClient     *http.Client
+	aprovisionMu   sync.Mutex // serializa nextid + create dentro de esta API
 }
 
 // NewClient crea un cliente de Proxmox VE.
@@ -60,6 +62,7 @@ func NewClient(baseURL, node, tokenID, tokenSecret string, tlsCfg *tls.Config) *
 }
 
 var _ ports.ProxmoxPort = (*Client)(nil)
+var _ ports.AprovisionamientoPort = (*Client)(nil)
 
 // TokenConfigurado indica si el cliente tiene un API Token completo.
 func (c *Client) TokenConfigurado() bool {
@@ -165,6 +168,94 @@ func detalle(body []byte) string {
 		return s[:maxDetalleError] + "..."
 	}
 	return s
+}
+
+// AprovisionarInstancia reserva el siguiente VMID y dispara qmcreate/vzcreate.
+// El mutex cubre ambas llamadas para que dos requests atendidos por este
+// proceso no intenten crear el mismo VMID. Proxmox conserva la última defensa
+// ante carreras con otros procesos mediante la unicidad global del VMID.
+func (c *Client) AprovisionarInstancia(ctx context.Context, input ports.CrearInstanciaProxmoxInput) (*ports.ResultadoAprovisionamiento, error) {
+	c.aprovisionMu.Lock()
+	defer c.aprovisionMu.Unlock()
+
+	raw, err := c.doRequest(ctx, http.MethodGet, "/api2/json/cluster/nextid", nil)
+	if err != nil {
+		return nil, err
+	}
+	var siguiente struct {
+		Data string `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &siguiente); err != nil {
+		return nil, fmt.Errorf("%w: respuesta de cluster/nextid inválida: %v", ports.ErrProxmoxNoDisponible, err)
+	}
+	vmid, err := strconv.Atoi(siguiente.Data)
+	if err != nil || vmid < 100 {
+		return nil, fmt.Errorf("%w: VMID inválido en cluster/nextid: %q", ports.ErrProxmoxNoDisponible, siguiente.Data)
+	}
+
+	tipo := strings.ToLower(input.Tipo)
+	if tipo != ports.TipoInstanciaQemu && tipo != ports.TipoInstanciaLXC {
+		return nil, fmt.Errorf("tipo de instancia desconocido %q", input.Tipo)
+	}
+	params := parametrosCreacion(vmid, input)
+	path := fmt.Sprintf("/api2/json/nodes/%s/%s", url.PathEscape(input.Nodo), tipo)
+	raw, err = c.doRequest(ctx, http.MethodPost, path, params)
+	if err != nil {
+		return nil, err
+	}
+	var creada upidResponse
+	if err := json.Unmarshal(raw, &creada); err != nil || strings.TrimSpace(creada.Data) == "" {
+		return nil, fmt.Errorf("%w: respuesta de creación inválida", ports.ErrProxmoxNoDisponible)
+	}
+	accion := ports.AccionProxmoxCrearVM
+	if tipo == ports.TipoInstanciaLXC {
+		accion = ports.AccionProxmoxCrearLXC
+	}
+	return &ports.ResultadoAprovisionamiento{VMID: vmid, UPID: creada.Data, Accion: accion}, nil
+}
+
+func parametrosCreacion(vmid int, input ports.CrearInstanciaProxmoxInput) url.Values {
+	params := url.Values{
+		"vmid":   {strconv.Itoa(vmid)},
+		"memory": {strconv.Itoa(input.MemoriaMB)},
+		"cores":  {strconv.Itoa(input.Cores)},
+	}
+	if input.Descripcion != "" {
+		params.Set("description", input.Descripcion)
+	}
+	firewall := "0"
+	if input.Firewall {
+		firewall = "1"
+	}
+
+	if strings.EqualFold(input.Tipo, ports.TipoInstanciaLXC) {
+		params.Set("hostname", input.Nombre)
+		params.Set("password", input.Password)
+		params.Set("ostemplate", input.TemplateID)
+		params.Set("rootfs", fmt.Sprintf("%s:%d", input.StorageID, input.DiscoGB))
+		net0 := fmt.Sprintf("name=eth0,bridge=%s,firewall=%s", input.Bridge, firewall)
+		if input.IPv4Tipo == "static" {
+			net0 += fmt.Sprintf(",ip=%s/%s,gw=%s", input.IPv4Address, input.IPv4Mask, input.IPv4Gateway)
+		} else {
+			net0 += ",ip=dhcp"
+		}
+		if input.VLAN != nil {
+			net0 += ",tag=" + strconv.Itoa(*input.VLAN)
+		}
+		params.Set("net0", net0)
+		return params
+	}
+
+	params.Set("name", input.Nombre)
+	params.Set("scsi0", fmt.Sprintf("%s:%d", input.StorageID, input.DiscoGB))
+	params.Set("scsihw", "virtio-scsi-pci")
+	params.Set("ide2", input.TemplateID+",media=cdrom")
+	net0 := fmt.Sprintf("virtio,bridge=%s,firewall=%s", input.Bridge, firewall)
+	if input.VLAN != nil {
+		net0 += ",tag=" + strconv.Itoa(*input.VLAN)
+	}
+	params.Set("net0", net0)
+	return params
 }
 
 // ==========================================
@@ -331,7 +422,7 @@ func (c *Client) EliminarInstancia(ctx context.Context, node string, vmid int, v
 	} else if tipoProxmox == "LXC" {
 		tipoProxmox = "lxc"
 	}
-	
+
 	path := fmt.Sprintf("/api2/json/nodes/%s/%s/%d", url.PathEscape(node), tipoProxmox, vmid)
 	raw, err := c.doRequest(ctx, http.MethodDelete, path, nil)
 	if err != nil {

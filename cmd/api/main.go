@@ -286,6 +286,7 @@ func main() {
 		instances := api.Group("/instances", middleware.RequireAuth(authService))
 		{
 			instances.GET("", instanceHandler.ListarInstancias)
+			instances.POST("", middleware.RequireRole("ADMIN"), instanceHandler.CrearInstancia)
 			instances.GET("/:vmid", middleware.RequireInstanceAccess(instanceRepo, "vmid", ports.NivelAccesoReadOnly), instanceHandler.ObtenerInstancia)
 			instances.POST("/:vmid/start", middleware.RequireInstanceAccess(instanceRepo, "vmid", ports.NivelAccesoFullAccess), middleware.RejectProtectedInstance(vmidsProtegidos, "vmid"), instanceHandler.IniciarInstancia)
 			// Las acciones destructivas llevan además RejectProtectedInstance (VMIDs de infraestructura).
