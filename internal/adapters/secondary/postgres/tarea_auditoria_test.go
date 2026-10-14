@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -46,6 +47,7 @@ func baseRF08(t *testing.T) (*gorm.DB, uuid.UUID, uuid.UUID) {
 	t.Cleanup(func() { sqlDB, _ := db.DB(); sqlDB.Close() })
 	for _, ddl := range []string{
 		`CREATE TABLE usuarios (id uuid PRIMARY KEY, organizacion_id uuid NOT NULL, nombre_completo text)`,
+		`CREATE TABLE permisos_instancia (id uuid PRIMARY KEY DEFAULT uuidv7(), usuario_id uuid NOT NULL REFERENCES usuarios(id), vmid_proxmox integer NOT NULL, nivel_acceso varchar(30) NOT NULL, UNIQUE (usuario_id, vmid_proxmox))`,
 		`CREATE TABLE tareas_asincronas (id uuid PRIMARY KEY, usuario_id uuid NOT NULL REFERENCES usuarios(id), upid_proxmox varchar(255) UNIQUE NOT NULL, instancia_id varchar(100), accion varchar(100), estado varchar(50) NOT NULL, metadatos jsonb, fecha_creacion timestamptz NOT NULL)`,
 		`CREATE TABLE auditoria (id uuid NOT NULL DEFAULT uuidv7(), usuario_id uuid REFERENCES usuarios(id), accion varchar(100) NOT NULL, instancia_id varchar(100), instancia_nombre varchar(255), resultado varchar(50) NOT NULL, detalles jsonb, fecha_hora timestamptz NOT NULL, PRIMARY KEY (id, fecha_hora)) PARTITION BY RANGE (fecha_hora)`,
 		`CREATE TABLE auditoria_actual PARTITION OF auditoria FOR VALUES FROM ('2020-01-01') TO ('2100-01-01')`,
@@ -181,5 +183,98 @@ func TestRF08TimeoutPersistido(t *testing.T) {
 	}
 	if detalles["motivo"] != "TIMEOUT" || detalles["exitstatus"] != nil || detalles["upid"] != tarea.UpidProxmox {
 		t.Fatalf("timeout incorrecto: %v", detalles)
+	}
+}
+
+func TestCreacionExitosaAutoasignaFullAccess(t *testing.T) {
+	db, usuario, _ := baseRF08(t)
+	repo, ctx := postgres.NewTareaRepository(db), context.Background()
+
+	casos := []struct {
+		accion string
+		vmid   string
+	}{
+		{ports.AccionCrearVM, "210"},
+		{ports.AccionProxmoxCrearLXC, "211"},
+	}
+	for _, caso := range casos {
+		tarea := nuevaTareaRF08(usuario, caso.accion)
+		tarea.InstanciaID = caso.vmid
+		if err := repo.Crear(ctx, tarea, services.NewAuditService(nil).PrepararAuditoriaTarea(tarea, nil, time.Now())); err != nil {
+			t.Fatal(err)
+		}
+		cierre := map[string]any{"exitstatus": "OK", "motivo": nil, "error": nil}
+		if err := repo.ActualizarEstado(ctx, tarea.ID, ports.TareaCompleted, cierre, services.NewAuditService(nil).PrepararAuditoriaTarea(tarea, cierre, time.Now())); err != nil {
+			t.Fatal(err)
+		}
+
+		var permiso domain.PermisoInstancia
+		if err := db.Where("usuario_id = ? AND vmid_proxmox = ?", usuario, caso.vmid).First(&permiso).Error; err != nil {
+			t.Fatalf("no se autoasignó el permiso para %s: %v", caso.accion, err)
+		}
+		if permiso.NivelAcceso != ports.NivelAccesoFullAccess {
+			t.Fatalf("nivel de acceso = %q", permiso.NivelAcceso)
+		}
+	}
+}
+
+func TestCreacionNoAsignaPermisoSinExitstatusOK(t *testing.T) {
+	db, usuario, _ := baseRF08(t)
+	repo, ctx := postgres.NewTareaRepository(db), context.Background()
+
+	casos := []struct {
+		nombre     string
+		estado     string
+		exitstatus string
+	}{
+		{"fallida", ports.TareaFailed, "unable to create VM"},
+		{"con advertencias", ports.TareaCompleted, "WARNINGS: 1"},
+	}
+	for i, caso := range casos {
+		t.Run(caso.nombre, func(t *testing.T) {
+			tarea := nuevaTareaRF08(usuario, ports.AccionProxmoxCrearVM)
+			tarea.InstanciaID = strconv.Itoa(220 + i)
+			if err := repo.Crear(ctx, tarea, services.NewAuditService(nil).PrepararAuditoriaTarea(tarea, nil, time.Now())); err != nil {
+				t.Fatal(err)
+			}
+			cierre := map[string]any{"exitstatus": caso.exitstatus, "motivo": ports.MotivoProxmoxError}
+			if err := repo.ActualizarEstado(ctx, tarea.ID, caso.estado, cierre, services.NewAuditService(nil).PrepararAuditoriaTarea(tarea, cierre, time.Now())); err != nil {
+				t.Fatal(err)
+			}
+			var cantidad int64
+			db.Model(&domain.PermisoInstancia{}).Where("usuario_id = ? AND vmid_proxmox = ?", usuario, tarea.InstanciaID).Count(&cantidad)
+			if cantidad != 0 {
+				t.Fatalf("se creó un permiso para una creación no exitosa")
+			}
+		})
+	}
+}
+
+func TestCreacionHaceRollbackSiNoPuedeAsignarPermiso(t *testing.T) {
+	db, usuario, _ := baseRF08(t)
+	repo, ctx := postgres.NewTareaRepository(db), context.Background()
+	tarea := nuevaTareaRF08(usuario, ports.AccionProxmoxCrearVM)
+	if err := repo.Crear(ctx, tarea, services.NewAuditService(nil).PrepararAuditoriaTarea(tarea, nil, time.Now())); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec("DROP TABLE permisos_instancia").Error; err != nil {
+		t.Fatal(err)
+	}
+	cierre := map[string]any{"exitstatus": "OK", "motivo": nil, "error": nil}
+	if err := repo.ActualizarEstado(ctx, tarea.ID, ports.TareaCompleted, cierre, services.NewAuditService(nil).PrepararAuditoriaTarea(tarea, cierre, time.Now())); err == nil {
+		t.Fatal("el cierre debía fallar si no se puede autoasignar el permiso")
+	}
+
+	var persistida domain.TareaAsincrona
+	if err := db.First(&persistida, "id = ?", tarea.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if persistida.Estado != ports.TareaRunning {
+		t.Fatalf("el rollback no dejó la tarea RUNNING: %s", persistida.Estado)
+	}
+	var auditorias int64
+	db.Model(&domain.Auditoria{}).Where("instancia_id = ?", tarea.InstanciaID).Count(&auditorias)
+	if auditorias != 1 {
+		t.Fatalf("el rollback dejó auditoría final: total=%d", auditorias)
 	}
 }

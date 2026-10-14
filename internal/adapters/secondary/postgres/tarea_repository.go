@@ -38,6 +38,9 @@ func (r *TareaRepository) Crear(ctx context.Context, tarea *domain.TareaAsincron
 }
 
 // ActualizarEstado guarda el estado final de la tarea y sus metadatos (JSONB).
+// Para una creación que terminó con exitstatus OK, la misma transacción otorga
+// FULL_ACCESS al usuario creador. Así nunca queda una tarea COMPLETED sin su
+// permiso, ni se publica TASK_FINISHED antes de que el inventario sea visible.
 func (r *TareaRepository) ActualizarEstado(ctx context.Context, id uuid.UUID, estado string, metadatos map[string]any, auditoria ports.RegistrarAuditoriaInput) error {
 	if estado != ports.TareaCompleted && estado != ports.TareaFailed {
 		return fmt.Errorf("estado de cierre inválido: %s", estado)
@@ -53,6 +56,18 @@ func (r *TareaRepository) ActualizarEstado(ctx context.Context, id uuid.UUID, es
 		if metadatos == nil {
 			metadatos = map[string]any{}
 		}
+		if debeAsignarPermisoCreacion(tarea, estado, metadatos) {
+			vmid, err := strconv.Atoi(tarea.InstanciaID)
+			if err != nil {
+				return fmt.Errorf("VMID reservado inválido en tarea de creación %s: %w", tarea.ID, err)
+			}
+			permiso := domain.PermisoInstancia{
+				UsuarioID: tarea.UsuarioID, VmidProxmox: vmid, NivelAcceso: ports.NivelAccesoFullAccess,
+			}
+			if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&permiso).Error; err != nil {
+				return fmt.Errorf("error al autoasignar permiso de la instancia %d: %w", vmid, err)
+			}
+		}
 		if err := NewAuditRepository(tx).Registrar(ctx, auditoria); err != nil {
 			return err
 		}
@@ -62,6 +77,12 @@ func (r *TareaRepository) ActualizarEstado(ctx context.Context, id uuid.UUID, es
 		}
 		return tx.Model(&tarea).Updates(map[string]any{"estado": estado, "metadatos": string(crudo)}).Error
 	})
+}
+
+func debeAsignarPermisoCreacion(tarea domain.TareaAsincrona, estado string, metadatos map[string]any) bool {
+	_, esCreacion := ports.TipoRecursoCreacion(tarea.Accion)
+	exitstatus, _ := metadatos["exitstatus"].(string)
+	return esCreacion && estado == ports.TareaCompleted && exitstatus == "OK"
 }
 
 // BuscarTareasActivasPorVmids devuelve un mapa vmid → tarea en curso para todas
