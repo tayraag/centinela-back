@@ -1358,30 +1358,77 @@ Los del front no nos pidieron ninguna contraseña para LXC. Pero el gurú vio el
 
 &nbsp;
 
-**Respuesta de Validación y Creación**&nbsp;
+**Respuesta de validación y creación (operativo)**&nbsp;
 
-&nbsp;
+`POST /api/instances` requiere autenticación y rol `ADMIN`. Un `OPERATOR`
+recibe `403 INSUFFICIENT_PERMISSIONS` y la solicitud no llega a Proxmox.
 
-Al recibir el POST, el backend valida internamente que los recursos (CPU/RAM) sigan existiendo en Proxmox. Si los recursos se agotaron milisegundos antes, devuelve un `409 Conflict` o `400 Bad Request` con un error claro (ej. _"Recursos insuficientes en el nodo pve1"_). Si los recursos están disponibles y se dispara la orden, como crear una máquina toma tiempo, el backend captura el UPID de Proxmox, lo transforma en un ID interno seguro, y devuelve la **Respuesta Exitosa Unificada (202 Accepted)**:
+Los indicadores que el wizard muestra durante la selección provienen de
+`GET /api/node/status`, cuya lectura puede salir de Redis durante un máximo de
+10 segundos. El frontend no escribe en Redis: el backend administra e invalida
+las claves de capacidad.
 
-&nbsp;
+Inmediatamente antes de crear, el backend toma un lock distribuido y consulta
+la foto compartida `aprovisionamiento:capacidad:{node}` en Redis. Si no existe
+o venció, lee desde Proxmox el estado del nodo, las instancias ya asignadas y
+los storages, y guarda la nueva foto durante 10 segundos. Dentro de esa misma
+sección crítica valida:
+
+- vCPU solicitadas contra las disponibles en el nodo;
+- RAM solicitada contra la capacidad todavía no comprometida;
+- disco solicitado contra `avail` del storage;
+- que el storage esté activo, habilitado y soporte `images` para VM o `rootdir`
+  para LXC.
+
+Antes de enviar el `POST` a Proxmox se registra una reserva temporal de CPU,
+RAM y disco. Las solicitudes siguientes descuentan también esas reservas, no
+solo la foto de Proxmox, evitando que dos creaciones simultáneas aprueben el
+mismo remanente. La reserva se libera cuando el worker cierra la tarea, tanto
+si termina `COMPLETED` como `FAILED`; además vence automáticamente luego de 15
+minutos para recuperarse de una caída del proceso. Con Redis la coordinación se
+comparte entre todas las réplicas; en modo degradado solo cubre el proceso local.
+
+Si la validación aprueba, el backend obtiene el siguiente VMID libre mediante
+`GET /cluster/nextid`, envía `POST /nodes/{node}/qemu` o
+`POST /nodes/{node}/lxc`, registra el UPID en `tareas_asincronas` y responde
+`202 Accepted` con el contrato real:
 
 ```json
 {
-  "taskId": "task-uuid-8888",
-  "status": "ACCEPTED",
-  "message": "Operación iniciada en segundo plano."
+  "upid": "UPID:pve1:00000001:00000002:00000003:qmcreate:120:centinela-api@pve!backend-token:",
+  "tareaId": "3f2504e0-4f89-11d3-9a0c-0305e82c3301"
 }
 ```
 
-&nbsp;
+Al aceptar la orden, el backend invalida `node:status:current` y
+`aprovisionamiento:capacidad:{node}`. El worker vuelve a invalidarlas al cerrar
+la tarea, porque durante el procesamiento pudo haberse cacheado una lectura
+intermedia. Así, la próxima consulta reconstruye las claves desde Proxmox y el
+frontend recibe la información actualizada. No se vacía Redis completo: se
+preservan sesiones, tickets SSE y datos ajenos al inventario/capacidad.
 
-Si los recursos se agotan en el proceso, el sistema debe rechazar la solicitud de quien llegue tarde, interceptando el código **HTTP 409 Conflicto**
+El resultado definitivo llega mediante `TASK_FINISHED`, con
+`detalles.accion: "CREATE"` y `recursoId` igual al VMID. Si Proxmox finaliza
+con `OK` o `WARNINGS`, el mismo commit que cierra la tarea registra al creador
+con `FULL_ACCESS`; el evento se publica después de ese commit.
+
+Si CPU, RAM o disco ya no alcanzan, o el storage dejó de estar disponible, se
+rechaza antes de crear con **HTTP 409 Conflict**:
 
 ```json
 {
   "errorCode": "RESOURCE_QUOTA_EXCEEDED",
-  "message": "Los recursos del nodo han sido ocupados por otra operación. No hay RAM o CPU suficiente para aprovisionar esta instancia."
+  "message": "Los recursos solicitados ya no están disponibles en el nodo o almacenamiento seleccionado."
+}
+```
+
+Si el backend no puede mantener de forma segura el lock o la reserva compartida,
+no envía la orden a Proxmox y responde **HTTP 503 Service Unavailable**:
+
+```json
+{
+  "errorCode": "PROVISIONING_COORDINATION_UNAVAILABLE",
+  "message": "No se pudo reservar la capacidad de forma segura. Intente nuevamente."
 }
 ```
 

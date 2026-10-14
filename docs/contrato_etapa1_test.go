@@ -92,7 +92,7 @@ func TestContratoEtapa1(t *testing.T) {
 	}
 	const activeTaskDef = "http.ActiveTaskResponse"
 	verificarObjetoRequerido(t, definitions, activeTaskDef, []string{"tareaId", "action", "status"})
-	verificarEnum(t, definitions, activeTaskDef, "action", "START", "STOP", "SHUTDOWN", "REBOOT", "DELETE")
+	verificarEnum(t, definitions, activeTaskDef, "action", "START", "STOP", "SHUTDOWN", "REBOOT", "DELETE", "CREATE")
 	verificarEnum(t, definitions, activeTaskDef, "status", ports.TareaRunning)
 
 	// ==========================================================
@@ -118,6 +118,23 @@ func TestContratoEtapa1(t *testing.T) {
 	}
 	if requeridosDe(t, objeto(t, definitions, acceptedDef))["tareaId"] {
 		t.Error("tareaId no debe ser obligatorio: se omite cuando no se puede registrar la tarea")
+	}
+
+	// Aprovisionamiento: solo ADMIN, reserva de cuotas y errores específicos.
+	creacion := objeto(t, objeto(t, paths, "/instances"), "post")
+	verificarBearer(t, creacion)
+	verificarRespuesta(t, creacion, "202", acceptedDef)
+	descripcionCreacion := cadena(t, creacion, "description")
+	for _, esperado := range []string{"ADMIN ONLY", "reserva", "CPU", "RAM", "disco", "TASK_FINISHED", "CREATE", "FULL_ACCESS"} {
+		if !strings.Contains(descripcionCreacion, esperado) {
+			t.Errorf("POST /instances debe documentar %q: %q", esperado, descripcionCreacion)
+		}
+	}
+	if r409 := descripcionRespuesta(t, paths, "/instances", "post", "409"); !strings.Contains(r409, "RESOURCE_QUOTA_EXCEEDED") {
+		t.Errorf("POST /instances 409 debe documentar RESOURCE_QUOTA_EXCEEDED: %q", r409)
+	}
+	if r503 := descripcionRespuesta(t, paths, "/instances", "post", "503"); !strings.Contains(r503, "PROVISIONING_COORDINATION_UNAVAILABLE") {
+		t.Errorf("POST /instances 503 debe documentar PROVISIONING_COORDINATION_UNAVAILABLE: %q", r503)
 	}
 
 	// Los ocho pares error/status observados en las acciones aceptadas.
@@ -469,6 +486,7 @@ func TestContratoEtapa1(t *testing.T) {
 		`"action": "START"`, `"status": "RUNNING"`,
 		"usagePercent", "instancesSummary", "fetchedAt", "nivelAcceso", "activeTask",
 		// T02 — acciones aceptadas.
+		"POST /api/instances", "RESOURCE_QUOTA_EXCEEDED", "PROVISIONING_COORDINATION_UNAVAILABLE",
 		"POST /api/instances/:vmid/start", "POST /api/instances/:vmid/stop",
 		"202", "upid", "tareaId", "pause",
 		// T02 — los ocho pares error/status.

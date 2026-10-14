@@ -133,6 +133,29 @@ inventario sigue respondiendo y `activeTask` queda en `null`; si falla Proxmox o
 la consulta de permisos, se usa el sobre de error `{ "errorCode", "message" }`
 ya vigente.
 
+## Aprovisionamiento — operativo, solo ADMIN
+
+`POST /api/instances` crea de forma asíncrona una VM o un LXC. Solo lo puede
+invocar un `ADMIN`; un `OPERATOR` recibe `403 INSUFFICIENT_PERMISSIONS`.
+
+Antes de llamar a Proxmox, el backend toma un lock distribuido, valida la
+capacidad disponible de vCPU, RAM y disco y registra una reserva temporal. Las
+solicitudes concurrentes descuentan esas reservas para no aprobar dos veces el
+mismo remanente. Si la capacidad no alcanza responde
+`409 RESOURCE_QUOTA_EXCEEDED`; si no puede mantener la coordinación compartida,
+responde `503 PROVISIONING_COORDINATION_UNAVAILABLE` sin crear la instancia.
+La validación consulta primero la foto compartida
+`aprovisionamiento:capacidad:{node}` en Redis; ante ausencia o vencimiento lee
+Proxmox y la conserva 10 segundos. Una orden aceptada invalida esa clave y
+`node:status:current`; el worker repite la invalidación al cerrar la tarea para
+que la siguiente lectura refleje el estado definitivo. No se vacía Redis
+completo, porque también contiene sesiones y tickets SSE.
+
+Si Proxmox acepta la orden, responde `202 AccionAceptadaResponse`. Al terminar,
+el worker libera la reserva y publica `TASK_FINISHED` con `accion: "CREATE"` y
+el VMID en `recursoId`. Un resultado `OK` o `WARNINGS` asigna atómicamente
+`FULL_ACCESS` al usuario creador antes de publicar el evento.
+
 ## Acciones aceptadas — operativo
 
 Las acciones de energía sobre una instancia son `POST` y responden `202 Accepted`.

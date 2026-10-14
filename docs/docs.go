@@ -1506,7 +1506,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "ADMIN ONLY. Reserva el siguiente VMID libre y comienza el aprovisionamiento asíncrono. El resultado llega por TASK_FINISHED con accion CREATE; al completar correctamente (OK o WARNINGS), el creador recibe FULL_ACCESS.",
+                "description": "ADMIN ONLY. Bajo lock distribuido consulta la capacidad cacheada en Redis (o Proxmox si falta), valida y reserva CPU, RAM y disco, invalida la caché al aceptar la orden y comienza el aprovisionamiento asíncrono. El resultado llega por TASK_FINISHED con accion CREATE; al completar correctamente (OK o WARNINGS), el creador recibe FULL_ACCESS y se vuelve a invalidar la capacidad.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1553,8 +1553,20 @@ const docTemplate = `{
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
                     },
+                    "409": {
+                        "description": "RESOURCE_QUOTA_EXCEEDED",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
                     "502": {
                         "description": "PROXMOX_UNAVAILABLE",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "PROVISIONING_COORDINATION_UNAVAILABLE",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -2292,7 +2304,8 @@ const docTemplate = `{
                         "STOP",
                         "SHUTDOWN",
                         "REBOOT",
-                        "DELETE"
+                        "DELETE",
+                        "CREATE"
                     ],
                     "example": "START"
                 },
