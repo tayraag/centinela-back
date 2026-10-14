@@ -2501,7 +2501,8 @@
                         "STOP",
                         "SHUTDOWN",
                         "REBOOT",
-                        "DELETE"
+                        "DELETE",
+                        "CREATE"
                     ],
                     "example": "START"
                 },
@@ -2687,7 +2688,8 @@
                         "STOP",
                         "SHUTDOWN",
                         "REBOOT",
-                        "DELETE"
+                        "DELETE",
+                        "CREATE"
                     ],
                     "example": "STOP"
                 },
@@ -2740,7 +2742,8 @@
                         "STOP",
                         "SHUTDOWN",
                         "REBOOT",
-                        "DELETE"
+                        "DELETE",
+                        "CREATE"
                     ],
                     "example": "START"
                 },

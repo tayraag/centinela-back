@@ -399,7 +399,7 @@ aplican valen `null`, nunca se omiten:
 | Campo        | Tipo             | Valor                                                  |
 |--------------|------------------|--------------------------------------------------------|
 | `tareaId`    | string           | El `tareaId` del `202`                                 |
-| `accion`     | enum             | `START`, `STOP`, `SHUTDOWN`, `REBOOT` o `DELETE`       |
+| `accion`     | enum             | `START`, `STOP`, `SHUTDOWN`, `REBOOT`, `DELETE` o `CREATE` |
 | `estado`     | enum             | `COMPLETED` o `FAILED`                                 |
 | `exitstatus` | string o `null`  | Lo que informó Proxmox; `null` si no la cerró          |
 | `motivo`     | enum o `null`    | `null` salvo con `estado` `FAILED`                     |

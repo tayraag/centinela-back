@@ -83,10 +83,10 @@ Como se consulta en vivo, **si un admin le quita un permiso a un operador, deja 
 
 ## TASK_FINISHED: de dónde sale
 
-1. Una acción de energía (`POST /api/instances/:vmid/start`, `/stop` o `/status/{action}`) o un borrado (`DELETE /api/instances/:vmid`, solo ADMIN) se dispara en Proxmox y responde `202 { "upid": "...", "tareaId": "..." }`.
+1. Una acción de energía (`POST /api/instances/:vmid/start`, `/stop` o `/status/{action}`), un borrado (`DELETE /api/instances/:vmid`, solo ADMIN) o una orden de aprovisionamiento se dispara en Proxmox y responde `202 { "upid": "...", "tareaId": "..." }`.
 2. La tarea se registra en `tareas_asincronas` con estado `RUNNING` y entra al **pool de seguimiento**. Mientras está así, `GET /api/instances` la muestra en `activeTask: { tareaId, action, status: "RUNNING" }`.
 3. Los workers del pool le preguntan a Proxmox cómo va (`GET /nodes/{node}/tasks/{upid}/status`) cada 1 s.
-4. Cuando termina, se guarda `COMPLETED` o `FAILED`, se audita el resultado (mismo código de acción que el registro `PENDING`: `START`, `STOP`, `SHUTDOWN`, `REBOOT`, `DELETE`, con `EXITO` o `FALLA`) y se publica `TASK_FINISHED` con el mismo `tareaId`, así el front puede asociarlo a la acción que disparó.
+4. Cuando termina, se guarda `COMPLETED` o `FAILED`, se audita el resultado y se publica `TASK_FINISHED` con el mismo `tareaId`, así el front puede asociarlo a la acción que disparó. En una creación con `exitstatus: "OK"`, el mismo commit asigna `FULL_ACCESS` al creador antes de publicar el evento.
 
 | Resultado | `severidad` | `mensaje` | `detalles` |
 | --------- | ----------- | --------- | ---------- |
@@ -94,7 +94,7 @@ Como se consulta en vivo, **si un admin le quita un permiso a un operador, deja 
 | Error de Proxmox | `WARNING` | `La tarea de apagado falló` | `estado: FAILED`, `motivo: PROXMOX_ERROR`, `exitstatus` y `error` con el mensaje de Proxmox |
 | Vencida | `WARNING` | `La tarea de encendido falló` | `estado: FAILED`, `motivo: TIMEOUT`, `exitstatus: null`, `error` explicando que venció |
 
-`detalles` lleva siempre las seis claves (`tareaId`, `accion` en mayúsculas, `estado`, `exitstatus`, `motivo`, `error`), con `null` en las que no aplican. Una tarea vence si Proxmox no la da por terminada en 10 minutos (desde que se creó), o si al arrancar la API ya tenía más de 3 minutos y Proxmox no la había terminado (ver abajo). En los dos casos `error` dice `Excedido el límite máximo de ejecución de N minutos`. El UPID **no** viaja al front.
+`detalles` lleva siempre las seis claves (`tareaId`, `accion`, `estado`, `exitstatus`, `motivo`, `error`), con `null` en las que no aplican. `accion` usa mayúsculas para las operaciones existentes y `CREATE` para aprovisionamiento. Una tarea vence si Proxmox no la da por terminada en 10 minutos (desde que se creó), o si al arrancar la API ya tenía más de 3 minutos y Proxmox no la había terminado (ver abajo). En los dos casos `error` dice `Excedido el límite máximo de ejecución de N minutos`. El UPID **no** viaja al front.
 
 ### El pool de seguimiento (`internal/core/services/seguimiento_tareas.go`)
 

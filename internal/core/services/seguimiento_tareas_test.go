@@ -253,7 +253,7 @@ func TestSeguimiento_CreacionNormalizaEventoYConservaContexto(t *testing.T) {
 			if ev.RecursoTipo != caso.recursoTipo || ev.RecursoID != "110" {
 				t.Fatalf("recurso de creación incorrecto: %+v", ev)
 			}
-			if ev.Detalles["accion"] != "create" || ev.Detalles["estado"] != ports.TareaCompleted {
+			if ev.Detalles["accion"] != "CREATE" || ev.Detalles["estado"] != ports.TareaCompleted {
 				t.Fatalf("detalles de creación incorrectos: %+v", ev.Detalles)
 			}
 			if ev.Mensaje != "La tarea de creación finalizó correctamente" {

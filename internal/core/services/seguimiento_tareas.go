@@ -92,7 +92,7 @@ func (r ResultadoTarea) metadatos() map[string]any {
 func (r ResultadoTarea) Detalles(tarea *domain.TareaAsincrona) map[string]any {
 	accion := strings.ToUpper(tarea.Accion)
 	if _, creacion := ports.TipoRecursoCreacion(tarea.Accion); creacion {
-		accion = "create"
+		accion = "CREATE"
 	}
 	return map[string]any{
 		"tareaId": tarea.ID.String(), "accion": accion, "estado": r.Estado,

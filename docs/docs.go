@@ -2508,7 +2508,8 @@ const docTemplate = `{
                         "STOP",
                         "SHUTDOWN",
                         "REBOOT",
-                        "DELETE"
+                        "DELETE",
+                        "CREATE"
                     ],
                     "example": "START"
                 },
@@ -2694,7 +2695,8 @@ const docTemplate = `{
                         "STOP",
                         "SHUTDOWN",
                         "REBOOT",
-                        "DELETE"
+                        "DELETE",
+                        "CREATE"
                     ],
                     "example": "STOP"
                 },
@@ -2747,7 +2749,8 @@ const docTemplate = `{
                         "STOP",
                         "SHUTDOWN",
                         "REBOOT",
-                        "DELETE"
+                        "DELETE",
+                        "CREATE"
                     ],
                     "example": "START"
                 },

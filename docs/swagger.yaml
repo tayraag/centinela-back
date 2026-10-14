@@ -234,6 +234,7 @@ definitions:
         - SHUTDOWN
         - REBOOT
         - DELETE
+        - CREATE
         example: START
         type: string
       error:
@@ -367,6 +368,7 @@ definitions:
         - SHUTDOWN
         - REBOOT
         - DELETE
+        - CREATE
         example: STOP
         type: string
       error:
@@ -408,6 +410,7 @@ definitions:
         - SHUTDOWN
         - REBOOT
         - DELETE
+        - CREATE
         example: START
         type: string
       error:

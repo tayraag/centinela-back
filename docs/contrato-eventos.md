@@ -75,7 +75,8 @@ No es un campo propio del evento: viaja dentro de `detalles` en los eventos
 ### Detalles de `TASK_FINISHED`
 
 `detalles` trae siempre las seis claves; las que no aplican van en `null`:
-`tareaId`, `accion` (`START`, `STOP`, `SHUTDOWN`, `REBOOT` o `DELETE`), `estado`
+`tareaId`, `accion` (`START`, `STOP`, `SHUTDOWN`, `REBOOT`, `DELETE` o `CREATE`
+para aprovisionamiento), `estado`
 (`COMPLETED` o `FAILED`), `exitstatus` (lo que informó Proxmox, o `null`),
 `motivo` y `error`. `motivo` solo tiene valor si `estado` es `FAILED`:
 
