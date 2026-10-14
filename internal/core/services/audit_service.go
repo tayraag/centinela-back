@@ -151,6 +151,7 @@ func (s *auditServiceImpl) PrepararAuditoriaTarea(t *domain.TareaAsincrona, cier
 	acciones := map[string]string{
 		"start": ports.AccionIniciarVM, "stop": ports.AccionDetenerVM,
 		"shutdown": ports.AccionApagarVM, "reboot": ports.AccionReiniciarVM, "delete": ports.AccionEliminarVM,
+		ports.AccionProxmoxCrearVM: ports.AccionCrearVM, ports.AccionProxmoxCrearLXC: ports.AccionCrearLXC,
 	}
 	accion := acciones[strings.ToLower(t.Accion)]
 	if accion == "" {

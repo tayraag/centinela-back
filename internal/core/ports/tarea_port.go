@@ -2,11 +2,35 @@ package ports
 
 import (
 	"context"
+	"strings"
 
 	"el-centinela/internal/core/domain"
 
 	"github.com/google/uuid"
 )
+
+// Operaciones de aprovisionamiento que Proxmox incluye en el UPID. Se
+// mantienen separadas de los códigos de auditoría (CREAR_VM/CREAR_LXC), pero
+// ambas formas son aceptadas por TipoRecursoCreacion para que las tareas
+// sobrevivan a reinicios aunque hayan sido registradas por versiones distintas.
+const (
+	AccionProxmoxCrearVM  = "qmcreate"
+	AccionProxmoxCrearLXC = "vzcreate"
+)
+
+// TipoRecursoCreacion reconoce una acción de aprovisionamiento y devuelve el
+// tipo de recurso del contrato de eventos. Acepta tanto el código de dominio
+// como el nombre de la operación que viene dentro del UPID de Proxmox.
+func TipoRecursoCreacion(accion string) (string, bool) {
+	switch strings.ToLower(strings.TrimSpace(accion)) {
+	case strings.ToLower(AccionCrearVM), AccionProxmoxCrearVM:
+		return RecursoVM, true
+	case strings.ToLower(AccionCrearLXC), AccionProxmoxCrearLXC:
+		return RecursoLXC, true
+	default:
+		return "", false
+	}
+}
 
 // TareaRepository es el puerto de persistencia de tareas y su auditoría asociada.
 // El servicio construye el registro de auditoría; el adaptador garantiza que

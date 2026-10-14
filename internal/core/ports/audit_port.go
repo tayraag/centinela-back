@@ -18,9 +18,9 @@ type FiltrosAuditoria struct {
 	UsuarioID   *uuid.UUID // Filtrar por usuario específico
 	Accion      string     // Ej: "LOGIN", "CREAR_USUARIO", "INICIAR_VM"
 	InstanciaID string     // ID de la instancia Proxmox afectada
-	Resultado string  // "SUCCESS" | "FAILED" | "PENDIENTE" | "" (todos)
-	Desde     *time.Time // Rango temporal: desde (inclusive)
-	Hasta     *time.Time // Rango temporal: hasta (inclusive)
+	Resultado   string     // "SUCCESS" | "FAILED" | "PENDIENTE" | "" (todos)
+	Desde       *time.Time // Rango temporal: desde (inclusive)
+	Hasta       *time.Time // Rango temporal: hasta (inclusive)
 }
 
 // OpcionesAuditoria define paginación y ordenamiento para el listado.
@@ -94,6 +94,8 @@ const (
 
 // Acciones de auditoría sobre instancias (códigos solicitados por RF-08).
 const (
+	AccionCrearVM     = "CREAR_VM"
+	AccionCrearLXC    = "CREAR_LXC"
 	AccionIniciarVM   = "INICIAR_VM"
 	AccionDetenerVM   = "DETENER_VM"
 	AccionReiniciarVM = "REINICIAR_VM"

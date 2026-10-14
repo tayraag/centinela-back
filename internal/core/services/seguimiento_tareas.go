@@ -90,8 +90,12 @@ func (r ResultadoTarea) metadatos() map[string]any {
 // del TASK_FINISHED: siempre las seis claves, con null cuando no aplican.
 // El vocabulario SSE es independiente de los códigos de auditoría RF-08.
 func (r ResultadoTarea) Detalles(tarea *domain.TareaAsincrona) map[string]any {
+	accion := strings.ToUpper(tarea.Accion)
+	if _, creacion := ports.TipoRecursoCreacion(tarea.Accion); creacion {
+		accion = "create"
+	}
 	return map[string]any{
-		"tareaId": tarea.ID.String(), "accion": strings.ToUpper(tarea.Accion), "estado": r.Estado,
+		"tareaId": tarea.ID.String(), "accion": accion, "estado": r.Estado,
 		"exitstatus": nulo(r.ExitStatus), "motivo": nulo(r.Motivo), "error": nulo(r.Error),
 	}
 }
@@ -369,6 +373,12 @@ func (p *PoolSeguimiento) resolverRecurso(ctx context.Context, t *TareaSeguimien
 	if t.recursoTipo != "" {
 		return
 	}
+	// Durante el aprovisionamiento la instancia puede no ser consultable aún.
+	// La acción de creación ya contiene el tipo y es una fuente más confiable.
+	if tipo, creacion := ports.TipoRecursoCreacion(t.Tarea.Accion); creacion {
+		t.recursoTipo = tipo
+		return
+	}
 	if t.Tarea.Metadatos != nil {
 		var meta map[string]any
 		if err := json.Unmarshal([]byte(*t.Tarea.Metadatos), &meta); err == nil {
@@ -499,6 +509,9 @@ func (p *PoolSeguimiento) reconciliar() {
 // EventoTareaFinalizada arma el TASK_FINISHED de docs/contrato-eventos.md.
 func EventoTareaFinalizada(tarea *domain.TareaAsincrona, recursoTipo string, r ResultadoTarea) ports.RealtimeEvent {
 	nombre := nombresAccion[tarea.Accion]
+	if _, creacion := ports.TipoRecursoCreacion(tarea.Accion); creacion {
+		nombre = "creación"
+	}
 	if nombre == "" {
 		nombre = tarea.Accion
 	}

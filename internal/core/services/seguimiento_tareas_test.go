@@ -234,6 +234,42 @@ func TestSeguimiento_BorradoUsaAccionDelete(t *testing.T) {
 	}
 }
 
+func TestSeguimiento_CreacionNormalizaEventoYConservaContexto(t *testing.T) {
+	casos := []struct {
+		nombre      string
+		accion      string
+		tipoProxmox string
+		recursoTipo string
+	}{
+		{"código de dominio VM", ports.AccionCrearVM, ports.TipoInstanciaQemu, ports.RecursoVM},
+		{"operación UPID VM", ports.AccionProxmoxCrearVM, ports.TipoInstanciaQemu, ports.RecursoVM},
+		{"código de dominio LXC", ports.AccionCrearLXC, ports.TipoInstanciaLXC, ports.RecursoLXC},
+		{"operación UPID LXC", ports.AccionProxmoxCrearLXC, ports.TipoInstanciaLXC, ports.RecursoLXC},
+	}
+	for _, caso := range casos {
+		t.Run(caso.nombre, func(t *testing.T) {
+			id, repo, ev := seguirTarea(t, &proxmoxTareas{exitStatus: "OK", tipo: caso.tipoProxmox}, caso.accion)
+
+			if ev.RecursoTipo != caso.recursoTipo || ev.RecursoID != "110" {
+				t.Fatalf("recurso de creación incorrecto: %+v", ev)
+			}
+			if ev.Detalles["accion"] != "create" || ev.Detalles["estado"] != ports.TareaCompleted {
+				t.Fatalf("detalles de creación incorrectos: %+v", ev.Detalles)
+			}
+			if ev.Mensaje != "La tarea de creación finalizó correctamente" {
+				t.Fatalf("mensaje de creación incorrecto: %q", ev.Mensaje)
+			}
+
+			repo.mu.Lock()
+			persistida := *repo.tareas[id]
+			repo.mu.Unlock()
+			if persistida.UsuarioID == uuid.Nil || persistida.InstanciaID != "110" {
+				t.Fatalf("la tarea no conservó creador y VMID reservado: %+v", persistida)
+			}
+		})
+	}
+}
+
 func TestSeguimiento_ReintentaSiProxmoxNoResponde(t *testing.T) {
 	id, repo, _ := seguirTarea(t, &proxmoxTareas{fallasRed: 3, exitStatus: "OK", tipo: "qemu"}, "start")
 	if repo.estado(id) != ports.TareaCompleted {
