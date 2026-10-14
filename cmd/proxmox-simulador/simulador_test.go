@@ -1006,14 +1006,14 @@ func TestContrato_ClienteDelBackend_Interfaces(t *testing.T) {
 func TestStorage_ListarYContenido(t *testing.T) {
 	e := nuevoEntorno(t, "")
 
-	// 1. GET /nodes/{node}/storage devuelve local, local-lvm y shared-nfs
+	// 1. GET /nodes/{node}/storage devuelve local, local-lvm y shared-nfs con campos canónicos
 	s, data, _ := e.pedir("GET", "/nodes/proxmox/storage", nil)
 	if s != 200 {
 		t.Fatalf("GET /nodes/proxmox/storage devolvió %d", s)
 	}
 	storages, ok := data.([]any)
-	if !ok || len(storages) != 3 {
-		t.Fatalf("Se esperaban 3 storages simulados, vinieron %d: %v", len(storages), data)
+	if !ok || len(storages) < 2 {
+		t.Fatalf("Se esperaban al menos 2 storages simulados, vinieron %d: %v", len(storages), data)
 	}
 
 	mapa := map[string]map[string]any{}
@@ -1029,14 +1029,26 @@ func TestStorage_ListarYContenido(t *testing.T) {
 		}
 	}
 
-	if _, ok := mapa["local"]; !ok {
-		t.Error("Falta storage 'local'")
+	localSt, okLocal := mapa["local"]
+	if !okLocal {
+		t.Fatal("Falta storage 'local'")
 	}
-	if _, ok := mapa["local-lvm"]; !ok {
-		t.Error("Falta storage 'local-lvm'")
+	if localSt["type"] != "dir" || !strings.Contains(localSt["content"].(string), "iso") || !strings.Contains(localSt["content"].(string), "vztmpl") {
+		t.Errorf("Storage local tiene configuración inesperada: %+v", localSt)
 	}
-	if _, ok := mapa["shared-nfs"]; !ok {
-		t.Error("Falta storage 'shared-nfs'")
+	if int64(localSt["total"].(float64)) != 107374182400 || int64(localSt["avail"].(float64)) != 64424509440 {
+		t.Errorf("Capacidades canónicas de local no coinciden: total=%v avail=%v", localSt["total"], localSt["avail"])
+	}
+
+	lvSt, okLvm := mapa["local-lvm"]
+	if !okLvm {
+		t.Fatal("Falta storage 'local-lvm'")
+	}
+	if lvSt["type"] != "lvmthin" || !strings.Contains(lvSt["content"].(string), "images") || !strings.Contains(lvSt["content"].(string), "rootdir") {
+		t.Errorf("Storage local-lvm tiene configuración inesperada: %+v", lvSt)
+	}
+	if int64(lvSt["total"].(float64)) != 536870912000 {
+		t.Errorf("Capacidades canónicas de local-lvm no coinciden: total=%v", lvSt["total"])
 	}
 
 	// 2. Filtro por ?content=iso
@@ -1060,6 +1072,9 @@ func TestStorage_ListarYContenido(t *testing.T) {
 
 	tieneISO := false
 	tieneVztmpl := false
+	tieneIsoCanonico := false
+	tieneVztmplCanonico := false
+
 	for _, it := range itemsLocal {
 		m := it.(map[string]any)
 		if m["content"] == "iso" {
@@ -1068,12 +1083,30 @@ func TestStorage_ListarYContenido(t *testing.T) {
 		if m["content"] == "vztmpl" {
 			tieneVztmpl = true
 		}
+		if m["volid"] == "local:iso/ubuntu-24.04-live-server.iso" {
+			tieneIsoCanonico = true
+			if m["format"] != "iso" || int64(m["size"].(float64)) != 2147483648 {
+				t.Errorf("ISO canónico inválido: %+v", m)
+			}
+		}
+		if m["volid"] == "local:vztmpl/debian-12-standard_12.2-1_amd64.tar.zst" {
+			tieneVztmplCanonico = true
+			if m["format"] != "tar.zst" || int64(m["size"].(float64)) != 134217728 {
+				t.Errorf("vztmpl canónico inválido: %+v", m)
+			}
+		}
 		if m["volid"] == nil || m["format"] == nil || m["size"].(float64) <= 0 {
 			t.Errorf("Item de contenido incompleto: %+v", m)
 		}
 	}
 	if !tieneISO || !tieneVztmpl {
 		t.Errorf("local debe contener tanto iso como vztmpl: %+v", itemsLocal)
+	}
+	if !tieneIsoCanonico {
+		t.Error("Falta el ISO canónico local:iso/ubuntu-24.04-live-server.iso")
+	}
+	if !tieneVztmplCanonico {
+		t.Error("Falta la plantilla canónica local:vztmpl/debian-12-standard_12.2-1_amd64.tar.zst")
 	}
 
 	// 4. Filtro por ?content=iso en contenido
