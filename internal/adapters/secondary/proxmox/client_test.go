@@ -582,3 +582,171 @@ func TestClient_ObtenerContenidoStorage(t *testing.T) {
 		t.Errorf("Contenido inesperado: %+v", items)
 	}
 }
+
+func TestClient_ObtenerMetricasRRD(t *testing.T) {
+	t.Run("consumo y parseo correcto de VM (qemu) con campos nulos", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Header.Get("Authorization") != "PVEAPIToken="+tokenIDValido+"="+tokenSecretValido {
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			if r.URL.Path != "/api2/json/nodes/pve1/qemu/100/rrddata" {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			if r.URL.Query().Get("timeframe") != "hour" {
+				t.Errorf("timeframe esperado 'hour', recibido %q", r.URL.Query().Get("timeframe"))
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": []map[string]any{
+					{
+						"time":      1787092500,
+						"cpu":       0.017948,
+						"maxcpu":    1,
+						"mem":       241901568,
+						"maxmem":    2147483648,
+						"netin":     1024.5,
+						"netout":    2048.2,
+						"diskread":  512.0,
+						"diskwrite": 256.0,
+					},
+					{
+						// Punto temporal con VM apagada: sin cpu, mem ni red (valores null/ausentes)
+						"time":    1787092560,
+						"maxcpu":  1,
+						"maxmem":  2147483648,
+						"maxdisk": 10737418240,
+						"disk":    0,
+					},
+				},
+			})
+		}))
+		defer server.Close()
+
+		client := proxmox.NewClient(server.URL, "pve1", tokenIDValido, tokenSecretValido, nil)
+		puntos, err := client.ObtenerMetricasRRD(context.Background(), "pve1", "qemu", 100, "hour")
+		if err != nil {
+			t.Fatalf("ObtenerMetricasRRD falló: %v", err)
+		}
+
+		if len(puntos) != 2 {
+			t.Fatalf("Se esperaban 2 puntos, se obtuvieron %d", len(puntos))
+		}
+
+		// Punto 1: con valores
+		p1 := puntos[0]
+		if p1.Timestamp != 1787092500 {
+			t.Errorf("Timestamp inesperado: %d", p1.Timestamp)
+		}
+		if p1.CPUPercent != 0.017948 {
+			t.Errorf("CPUPercent inesperado: %f", p1.CPUPercent)
+		}
+		if p1.RAMUsedBytes != 241901568 || p1.RAMTotalBytes != 2147483648 {
+			t.Errorf("RAM incorrecta: used=%d total=%d", p1.RAMUsedBytes, p1.RAMTotalBytes)
+		}
+		if p1.NetInBps != 1024 || p1.NetOutBps != 2048 {
+			t.Errorf("Net Bps incorrecto: in=%d out=%d", p1.NetInBps, p1.NetOutBps)
+		}
+		if p1.DiskReadBps != 512 || p1.DiskWriteBps != 256 {
+			t.Errorf("Disk Bps incorrecto: read=%d write=%d", p1.DiskReadBps, p1.DiskWriteBps)
+		}
+
+		// Punto 2: valores nulos deben normalizarse a 0
+		p2 := puntos[1]
+		if p2.Timestamp != 1787092560 {
+			t.Errorf("Timestamp inesperado: %d", p2.Timestamp)
+		}
+		if p2.CPUPercent != 0.0 {
+			t.Errorf("CPUPercent con nulo debe ser 0.0, recibido %f", p2.CPUPercent)
+		}
+		if p2.RAMUsedBytes != 0 {
+			t.Errorf("RAMUsedBytes debe ser 0, recibido %d", p2.RAMUsedBytes)
+		}
+		if p2.RAMTotalBytes != 2147483648 {
+			t.Errorf("RAMTotalBytes debe ser 2147483648, recibido %d", p2.RAMTotalBytes)
+		}
+		if p2.NetInBps != 0 || p2.NetOutBps != 0 {
+			t.Errorf("Net Bps debe ser 0, recibido in=%d out=%d", p2.NetInBps, p2.NetOutBps)
+		}
+		if p2.DiskReadBps != 0 || p2.DiskWriteBps != 0 {
+			t.Errorf("Disk Bps debe ser 0, recibido read=%d write=%d", p2.DiskReadBps, p2.DiskWriteBps)
+		}
+	})
+
+	t.Run("consumo y parseo correcto de LXC con múltiples timeframes", func(t *testing.T) {
+		timeframes := []string{"hour", "day", "week", "month", "year"}
+		for _, tf := range timeframes {
+			t.Run(tf, func(t *testing.T) {
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.URL.Path != "/api2/json/nodes/pve1/lxc/201/rrddata" {
+						w.WriteHeader(http.StatusNotFound)
+						return
+					}
+					if r.URL.Query().Get("timeframe") != tf {
+						t.Errorf("timeframe esperado %q, recibido %q", tf, r.URL.Query().Get("timeframe"))
+					}
+					w.Header().Set("Content-Type", "application/json")
+					_ = json.NewEncoder(w).Encode(map[string]any{
+						"data": []map[string]any{
+							{
+								"time":      1787093340,
+								"cpu":       0.005,
+								"maxcpu":    1,
+								"mem":       21046067,
+								"maxmem":    1073741824,
+								"netin":     50,
+								"netout":    100,
+								"diskread":  0,
+								"diskwrite": 12,
+							},
+						},
+					})
+				}))
+				defer server.Close()
+
+				client := proxmox.NewClient(server.URL, "pve1", tokenIDValido, tokenSecretValido, nil)
+				puntos, err := client.ObtenerMetricasRRD(context.Background(), "pve1", "lxc", 201, tf)
+				if err != nil {
+					t.Fatalf("ObtenerMetricasRRD falló para timeframe %s: %v", tf, err)
+				}
+				if len(puntos) != 1 {
+					t.Fatalf("Se esperaba 1 punto, vinieron %d", len(puntos))
+				}
+				if puntos[0].RAMTotalBytes != 1073741824 || puntos[0].RAMUsedBytes != 21046067 {
+					t.Errorf("RAM de LXC incorrecta: %+v", puntos[0])
+				}
+			})
+		}
+	})
+
+	t.Run("acepta alias 'vm' normalizándolo a qemu", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/api2/json/nodes/pve1/qemu/110/rrddata" {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": []map[string]any{},
+			})
+		}))
+		defer server.Close()
+
+		client := proxmox.NewClient(server.URL, "pve1", tokenIDValido, tokenSecretValido, nil)
+		_, err := client.ObtenerMetricasRRD(context.Background(), "pve1", "vm", 110, "")
+		if err != nil {
+			t.Fatalf("ObtenerMetricasRRD con 'vm' falló: %v", err)
+		}
+	})
+
+	t.Run("rechaza tipo desconocido", func(t *testing.T) {
+		client := proxmox.NewClient("http://127.0.0.1:8006", "pve1", tokenIDValido, tokenSecretValido, nil)
+		_, err := client.ObtenerMetricasRRD(context.Background(), "pve1", "invalido", 110, "hour")
+		if err == nil {
+			t.Fatal("Se esperaba error por tipo desconocido, pero fue nil")
+		}
+	})
+}
+

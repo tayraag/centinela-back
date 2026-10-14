@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"el-centinela/internal/core/domain"
 	"el-centinela/internal/core/ports"
 )
 
@@ -656,3 +657,101 @@ func (c *Client) ObtenerContenidoStorage(ctx context.Context, node, storage stri
 	}
 	return parsed.Data, nil
 }
+
+// puntoRRDProxmox representa el formato crudo devuelto por Proxmox VE en /rrddata.
+type puntoRRDProxmox struct {
+	Time      int64    `json:"time"`
+	CPU       *float64 `json:"cpu"`
+	MaxCPU    *float64 `json:"maxcpu"`
+	Mem       *float64 `json:"mem"`
+	MaxMem    *float64 `json:"maxmem"`
+	NetIn     *float64 `json:"netin"`
+	NetOut    *float64 `json:"netout"`
+	DiskRead  *float64 `json:"diskread"`
+	DiskWrite *float64 `json:"diskwrite"`
+}
+
+// ObtenerMetricasRRD consulta la serie temporal histórica de métricas de una VM o contenedor.
+func (c *Client) ObtenerMetricasRRD(ctx context.Context, nodo, tipo string, vmid int, timeframe string) ([]domain.PuntoMetricaDTO, error) {
+	tipoPVE := strings.ToLower(strings.TrimSpace(tipo))
+	if tipoPVE == "vm" {
+		tipoPVE = ports.TipoInstanciaQemu
+	}
+	if tipoPVE != ports.TipoInstanciaQemu && tipoPVE != ports.TipoInstanciaLXC {
+		return nil, fmt.Errorf("tipo de instancia desconocido %q", tipo)
+	}
+	if timeframe == "" {
+		timeframe = "hour"
+	}
+
+	path := fmt.Sprintf("/api2/json/nodes/%s/%s/%d/rrddata?timeframe=%s",
+		url.PathEscape(nodo),
+		url.PathEscape(tipoPVE),
+		vmid,
+		url.QueryEscape(timeframe),
+	)
+
+	raw, err := c.doRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var parsed struct {
+		Data []puntoRRDProxmox `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return nil, fmt.Errorf("%w: respuesta de rrddata inválida: %v", ports.ErrProxmoxNoDisponible, err)
+	}
+
+	resultado := make([]domain.PuntoMetricaDTO, len(parsed.Data))
+	for i, p := range parsed.Data {
+		var cpuVal float64
+		if p.CPU != nil {
+			cpuVal = *p.CPU
+		}
+
+		var ramUsed int64
+		if p.Mem != nil {
+			ramUsed = int64(*p.Mem)
+		}
+
+		var ramTotal int64
+		if p.MaxMem != nil {
+			ramTotal = int64(*p.MaxMem)
+		}
+
+		var netIn int64
+		if p.NetIn != nil {
+			netIn = int64(*p.NetIn)
+		}
+
+		var netOut int64
+		if p.NetOut != nil {
+			netOut = int64(*p.NetOut)
+		}
+
+		var diskRead int64
+		if p.DiskRead != nil {
+			diskRead = int64(*p.DiskRead)
+		}
+
+		var diskWrite int64
+		if p.DiskWrite != nil {
+			diskWrite = int64(*p.DiskWrite)
+		}
+
+		resultado[i] = domain.PuntoMetricaDTO{
+			Timestamp:     p.Time,
+			CPUPercent:    cpuVal,
+			RAMUsedBytes:  ramUsed,
+			RAMTotalBytes: ramTotal,
+			NetInBps:      netIn,
+			NetOutBps:     netOut,
+			DiskReadBps:   diskRead,
+			DiskWriteBps:  diskWrite,
+		}
+	}
+
+	return resultado, nil
+}
+

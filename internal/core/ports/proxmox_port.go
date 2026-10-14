@@ -3,6 +3,8 @@ package ports
 import (
 	"context"
 	"errors"
+
+	"el-centinela/internal/core/domain"
 )
 
 // ==========================================
@@ -140,6 +142,9 @@ type ProxmoxPort interface {
 
 	// ObtenerContenidoStorage consulta GET /nodes/{node}/storage/{storage}/content.
 	ObtenerContenidoStorage(ctx context.Context, node, storage string) ([]StorageContentDTO, error)
+
+	// ObtenerMetricasRRD consulta GET /nodes/{node}/{tipo}/{vmid}/rrddata?timeframe={timeframe}.
+	ObtenerMetricasRRD(ctx context.Context, nodo, tipo string, vmid int, timeframe string) ([]domain.PuntoMetricaDTO, error)
 }
 
 // StorageDTO representa un almacenamiento tal como lo informa Proxmox en /nodes/{node}/storage.
