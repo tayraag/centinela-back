@@ -315,18 +315,22 @@ curl -X GET http://localhost:8080/api/auth/2fa/qr -H "Authorization: Bearer <JWT
 Ingresá el código de 6 dígitos que muestra tu app autenticadora (ejemplo: `123456`):
 
 ```bash
-curl -X POST http://localhost:8080/api/auth/2fa/verify -H "Authorization: Bearer <JWT_TEMPORAL>" -H "Content-Type: application/json" -d "{\"codigo\":\"123456\"}"
+curl -i -X POST http://localhost:8080/api/auth/2fa/verify -H "Authorization: Bearer <JWT_TEMPORAL>" -H "Content-Type: application/json" -d "{\"codigo\":\"123456\"}"
 ```
 
-**Respuesta esperada:**
+**Respuesta esperada:** el `accessToken` viaja en el cuerpo y el refresh token **en una cookie** (no en el JSON):
 
-```json
+```
+HTTP/1.1 200 OK
+Set-Cookie: centinela_refresh=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...; Path=/api/auth; Max-Age=604800; HttpOnly; Secure; SameSite=Strict
+
 {
   "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-  "refreshToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
   "expiresIn": 28800
 }
 ```
+
+> La cookie es `HttpOnly`: el JavaScript del front no puede leerla (protege contra XSS) y el navegador la manda sola en `/api/auth/refresh` y `/api/auth/logout`. Con curl hay que copiar su valor y mandarlo a mano con `-H "Cookie: centinela_refresh=<valor>"`.
 
 **Logs en el servidor:**
 
@@ -335,10 +339,10 @@ curl -X POST http://localhost:8080/api/auth/2fa/verify -H "Authorization: Bearer
 [2FA] totp verify attempt | user=juan@empresa.com | codigo=123456
 [2FA] first link confirmed | user=juan@empresa.com
 [AUTH] tokens issued | user=juan@empresa.com | access_jti=xyz... | refresh_jti=uvw... | access_ttl=8h0m0s
-✅ 200 | 103ms | resp: {"accessToken":"eyJ…[jwt]","expiresIn":28800,"refreshToken":"eyJ…[jwt]"}
+✅ 200 | 103ms | resp: {"accessToken":"eyJ…[jwt]","expiresIn":28800}
 ```
 
-> 📋 **Copiá el `accessToken` y el `refreshToken`** para usarlos en peticiones protegidas.
+> 📋 **Copiá el `accessToken`** (del cuerpo) **y el valor de la cookie `centinela_refresh`** (del header `Set-Cookie`) para usarlos en los pasos siguientes.
 
 ---
 
@@ -362,27 +366,30 @@ curl -X POST http://localhost:8080/api/auth/2fa/verify -H "Authorization: Bearer
 
 ### 7.5 Renovar access token con refresh token
 
+El refresh token se manda en la cookie, no en el body:
+
 ```bash
-curl -X POST http://localhost:8080/api/auth/refresh -H "Content-Type: application/json" -d "{\"refreshToken\":\"<REFRESH_TOKEN>\"}"
+curl -i -X POST http://localhost:8080/api/auth/refresh -H "Cookie: centinela_refresh=<REFRESH_TOKEN>"
 ```
 
-**Respuesta esperada:**
+**Respuesta esperada:** un `accessToken` nuevo en el cuerpo y la cookie `centinela_refresh` renovada en `Set-Cookie` (usá la nueva de ahí en adelante):
 
 ```json
 {
   "accessToken": "eyJ... (nuevo)",
-  "refreshToken": "eyJ... (mismo)",
   "expiresIn": 28800
 }
 ```
 
+Sin la cookie responde `401 REFRESH_COOKIE_MISSING`; con una vencida o de una sesión cerrada, `401 REFRESH_FAILED`.
+
 **Logs en el servidor:**
 
 ```
-→ POST /api/auth/refresh | body: {"refreshToken":"eyJ…[jwt]"}
+→ POST /api/auth/refresh
 [AUTH] refresh attempt
 [AUTH] refresh ok | user=juan@empresa.com | new_access_jti=aaa...
-✅ 200 | 4ms | resp: {"accessToken":"eyJ…[jwt]","expiresIn":28800,"refreshToken":"eyJ…[jwt]"}
+✅ 200 | 4ms | resp: {"accessToken":"eyJ…[jwt]","expiresIn":28800}
 ```
 
 ## 8. Casos de error (verificar comportamiento)
@@ -552,11 +559,11 @@ centinela-back/
 
 ### Prerequisito: obtener un access token
 
-Seguí los pasos 7.1 → 7.3 del SETUP para obtener un `accessToken` y un `refreshToken`. Guardalos en variables:
+Seguí los pasos 7.1 → 7.3 del SETUP para obtener el `accessToken` (cuerpo de la respuesta) y el refresh token (valor de la cookie `centinela_refresh` del header `Set-Cookie`). Guardalos en variables:
 
 ```powershell
 $ACCESS = "<pegar accessToken aquí>"
-$REFRESH = "<pegar refreshToken aquí>"
+$REFRESH = "<pegar el valor de la cookie centinela_refresh aquí>"
 ```
 
 ---
@@ -767,15 +774,15 @@ curl.exe -s -X PUT http://localhost:8080/api/account/password -H "Content-Type: 
 
 ### 12.11 Cerrar sesión (logout)
 
-> `logout` cuelga de `/api/auth/logout`, requiere el header `Authorization: Bearer $ACCESS` para identificar al usuario autenticado e invalida la sesión asociada (y limpia la cookie HTTP-Only `centinela_refresh`).
+> `logout` cuelga de `/api/auth/logout` y necesita **las dos cosas**: el header `Authorization: Bearer $ACCESS` y la cookie `centinela_refresh` (es la que identifica la sesión a cerrar). El navegador manda la cookie solo; con curl hay que pasarla a mano.
 
 ```powershell
-curl.exe -s -i -X POST http://localhost:8080/api/auth/logout -H "Authorization: Bearer $ACCESS"
+curl.exe -s -i -X POST http://localhost:8080/api/auth/logout -H "Authorization: Bearer $ACCESS" -H "Cookie: centinela_refresh=$REFRESH"
 ```
 
-**Respuesta esperada: `HTTP/1.1 204 No Content`**
+**Respuesta esperada: `HTTP/1.1 204 No Content`** (y un `Set-Cookie` que borra `centinela_refresh`).
 
-> Invalida la sesión activa. Si se reintenta el mismo request con el token revocado, responde `401` con `errorCode: TOKEN_REVOKED` (sesión inválida o ya cerrada).
+> Sin la cookie responde `401 REFRESH_COOKIE_MISSING`. Si se reintenta después del logout, responde `401 TOKEN_REVOKED`: la sesión ya está cerrada.
 
 ---
 

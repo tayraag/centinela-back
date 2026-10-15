@@ -91,7 +91,7 @@ centinela-back/
 │   │   │       ├── auth_handler.go       # Endpoints de autenticación (/api/auth/*) y ws-ticket
 │   │   │       ├── user_handler.go       # Endpoints de gestión de usuarios ADMIN (/api/admin/users/*)
 │   │   │       ├── node_handler.go       # Endpoints de telemetría, storages y templates del nodo (/api/node/*)
-│   │   │       ├── instance_handler.go   # Endpoints de inventario, ciclo de vida y telemetría RRD (/api/instances/*)
+│   │   │       ├── instance_handler.go   # Endpoints de inventario y ciclo de vida (/api/instances/*)
 │   │   │       ├── ws_metrics_handler.go # Canal WebSocket de telemetría en vivo (/api/ws/instances/:vmid/metrics)
 │   │   │       ├── events_handler.go     # Canal de eventos SSE (/api/events)
 │   │   │       ├── account_handler.go    # Endpoints de perfil propio (/api/account/*)
