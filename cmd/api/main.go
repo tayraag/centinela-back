@@ -156,7 +156,7 @@ func main() {
 					var meta map[string]any
 					if json.Unmarshal([]byte(*tarea.Metadatos), &meta) == nil {
 						if reservaID, _ := meta["reserva_id"].(string); reservaID != "" {
-							if err := aprovisionamientoService.LiberarReserva(ctx, reservaID); err != nil {
+							if err := aprovisionamientoService.FinalizarReserva(ctx, reservaID, r); err != nil {
 								log.Printf("[APROVISIONAMIENTO] no se pudo liberar la reserva %s: %v", reservaID, err)
 							}
 						}
@@ -171,7 +171,7 @@ func main() {
 		})
 	seguimientoTareas.Iniciar(ctx)
 	instanceHandler := httpHandlers.NewInstanceHandler(proxmoxClient, userRepo, seguimientoTareas, tareaRepo, auditService,
-		services.NewInventarioService(proxmoxClient), aprovisionamientoService)
+		services.NewInventarioService(proxmoxClient), aprovisionadorSeguro(kvStore, aprovisionamientoService))
 	eventsHandler := httpHandlers.NewEventsHandler(eventosService)
 	nodoNombre := valorODefecto(os.Getenv("PROXMOX_NODE"), "proxmox")
 	nodeHandler := httpHandlers.NewNodeHandler(services.NewNodoService(proxmoxClient, kvStore, nodoNombre), proxmoxClient, nodoNombre)
@@ -451,4 +451,18 @@ func valorODefecto(v, defecto string) string {
 		return defecto
 	}
 	return v
+}
+
+// Keep login and read-only features available in degraded mode, not creation.
+func aprovisionadorSeguro(store ports.KeyValueStore, creador ports.AprovisionamientoPort) ports.AprovisionamientoPort {
+	if _, compartido := store.(*redis.KVStore); !compartido {
+		return aprovisionamientoNoDisponible{}
+	}
+	return creador
+}
+
+type aprovisionamientoNoDisponible struct{}
+
+func (aprovisionamientoNoDisponible) AprovisionarInstancia(context.Context, ports.CrearInstanciaProxmoxInput) (*ports.ResultadoAprovisionamiento, error) {
+	return nil, ports.ErrCoordinacionAprovisionamiento
 }
