@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"el-centinela/internal/core/domain"
 	"el-centinela/internal/core/ports"
 )
 
@@ -656,3 +657,194 @@ func (c *Client) ObtenerContenidoStorage(ctx context.Context, node, storage stri
 	}
 	return parsed.Data, nil
 }
+
+// puntoRRDProxmox representa el formato crudo devuelto por Proxmox VE en /rrddata.
+type puntoRRDProxmox struct {
+	Time      int64    `json:"time"`
+	CPU       *float64 `json:"cpu"`
+	MaxCPU    *float64 `json:"maxcpu"`
+	Mem       *float64 `json:"mem"`
+	MaxMem    *float64 `json:"maxmem"`
+	NetIn     *float64 `json:"netin"`
+	NetOut    *float64 `json:"netout"`
+	DiskRead  *float64 `json:"diskread"`
+	DiskWrite *float64 `json:"diskwrite"`
+}
+
+// ObtenerMetricasRRD consulta la serie temporal histórica de métricas de una VM o contenedor.
+func (c *Client) ObtenerMetricasRRD(ctx context.Context, nodo, tipo string, vmid int, timeframe string) ([]domain.PuntoMetricaDTO, error) {
+	tipoPVE := strings.ToLower(strings.TrimSpace(tipo))
+	if tipoPVE == "vm" {
+		tipoPVE = ports.TipoInstanciaQemu
+	}
+	if tipoPVE != ports.TipoInstanciaQemu && tipoPVE != ports.TipoInstanciaLXC {
+		return nil, fmt.Errorf("tipo de instancia desconocido %q", tipo)
+	}
+	if timeframe == "" {
+		timeframe = "hour"
+	}
+
+	path := fmt.Sprintf("/api2/json/nodes/%s/%s/%d/rrddata?timeframe=%s",
+		url.PathEscape(nodo),
+		url.PathEscape(tipoPVE),
+		vmid,
+		url.QueryEscape(timeframe),
+	)
+
+	raw, err := c.doRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var parsed struct {
+		Data []puntoRRDProxmox `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return nil, fmt.Errorf("%w: respuesta de rrddata inválida: %v", ports.ErrProxmoxNoDisponible, err)
+	}
+
+	resultado := make([]domain.PuntoMetricaDTO, len(parsed.Data))
+	for i, p := range parsed.Data {
+		var cpuVal float64
+		if p.CPU != nil {
+			cpuVal = *p.CPU
+		}
+
+		var ramUsed int64
+		if p.Mem != nil {
+			ramUsed = int64(*p.Mem)
+		}
+
+		var ramTotal int64
+		if p.MaxMem != nil {
+			ramTotal = int64(*p.MaxMem)
+		}
+
+		var netIn int64
+		if p.NetIn != nil {
+			netIn = int64(*p.NetIn)
+		}
+
+		var netOut int64
+		if p.NetOut != nil {
+			netOut = int64(*p.NetOut)
+		}
+
+		var diskRead int64
+		if p.DiskRead != nil {
+			diskRead = int64(*p.DiskRead)
+		}
+
+		var diskWrite int64
+		if p.DiskWrite != nil {
+			diskWrite = int64(*p.DiskWrite)
+		}
+
+		resultado[i] = domain.PuntoMetricaDTO{
+			Timestamp:     p.Time,
+			CPUPercent:    cpuVal,
+			RAMUsedBytes:  ramUsed,
+			RAMTotalBytes: ramTotal,
+			NetInBps:      netIn,
+			NetOutBps:     netOut,
+			DiskReadBps:   diskRead,
+			DiskWriteBps:  diskWrite,
+		}
+	}
+
+	return resultado, nil
+}
+
+// estadoActualProxmox representa el cuerpo crudo de /status/current.
+type estadoActualProxmox struct {
+	Vmid      int      `json:"vmid"`
+	Status    string   `json:"status"`
+	Cpus      int      `json:"cpus"`
+	CPU       *float64 `json:"cpu"`
+	Mem       *int64   `json:"mem"`
+	MaxMem    *int64   `json:"maxmem"`
+	Disk      *int64   `json:"disk"`
+	MaxDisk   *int64   `json:"maxdisk"`
+	NetIn     *int64   `json:"netin"`
+	NetOut    *int64   `json:"netout"`
+	DiskRead  *int64   `json:"diskread"`
+	DiskWrite *int64   `json:"diskwrite"`
+	Uptime    *int64   `json:"uptime"`
+}
+
+// ObtenerEstadoActual consulta /nodes/{node}/{tipo}/{vmid}/status/current.
+func (c *Client) ObtenerEstadoActual(ctx context.Context, nodo, tipo string, vmid int) (*domain.MetricasEnVivoDTO, error) {
+	tipoPVE := strings.ToLower(strings.TrimSpace(tipo))
+	if tipoPVE == "vm" {
+		tipoPVE = ports.TipoInstanciaQemu
+	}
+	if tipoPVE != ports.TipoInstanciaQemu && tipoPVE != ports.TipoInstanciaLXC {
+		return nil, fmt.Errorf("tipo de instancia desconocido %q", tipo)
+	}
+
+	path := fmt.Sprintf("/api2/json/nodes/%s/%s/%d/status/current", url.PathEscape(nodo), url.PathEscape(tipoPVE), vmid)
+	raw, err := c.doRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var parsed struct {
+		Data estadoActualProxmox `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return nil, fmt.Errorf("%w: respuesta de status/current inválida: %v", ports.ErrProxmoxNoDisponible, err)
+	}
+
+	d := parsed.Data
+	var cpuVal float64
+	if d.CPU != nil {
+		cpuVal = *d.CPU
+	}
+	var memVal, maxMemVal, diskVal, maxDiskVal, netInVal, netOutVal, readVal, writeVal, upVal int64
+	if d.Mem != nil {
+		memVal = *d.Mem
+	}
+	if d.MaxMem != nil {
+		maxMemVal = *d.MaxMem
+	}
+	if d.Disk != nil {
+		diskVal = *d.Disk
+	}
+	if d.MaxDisk != nil {
+		maxDiskVal = *d.MaxDisk
+	}
+	if d.NetIn != nil {
+		netInVal = *d.NetIn
+	}
+	if d.NetOut != nil {
+		netOutVal = *d.NetOut
+	}
+	if d.DiskRead != nil {
+		readVal = *d.DiskRead
+	}
+	if d.DiskWrite != nil {
+		writeVal = *d.DiskWrite
+	}
+	if d.Uptime != nil {
+		upVal = *d.Uptime
+	}
+
+	return &domain.MetricasEnVivoDTO{
+		Timestamp: time.Now().Unix(),
+		VMID:      vmid,
+		Status:    d.Status,
+		CPU:       cpuVal,
+		CPUs:      d.Cpus,
+		Mem:       memVal,
+		MaxMem:    maxMemVal,
+		Disk:      diskVal,
+		MaxDisk:   maxDiskVal,
+		NetIn:     netInVal,
+		NetOut:    netOutVal,
+		DiskRead:  readVal,
+		DiskWrite: writeVal,
+		Uptime:    upVal,
+	}, nil
+}
+
+

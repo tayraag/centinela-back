@@ -30,17 +30,21 @@ type storageContentItem struct {
 
 // storagesDisponibles devuelve el catálogo de storages simulados para el nodo.
 func (s *Simulador) storagesDisponibles() []storageInfo {
-	// Disco LVM usado dinámico según instancias
-	lvmUsado := s.discoLVMUsado()
-	lvmTotal := int64(151636672512) // ~141 GB
+	localTotal := int64(107374182400) // 100 GB
+	localUsado := int64(42949672960)  // 40 GB
+	localAvail := int64(64424509440)  // 60 GB
+
+	lvmTotal := int64(536870912000) // 500 GB
+	lvmUsado := int64(214748364800) // 200 GB
+	// Considerar disco dinámico usado si supera la base
+	discoDinamico := s.discoLVMUsado()
+	if discoDinamico > lvmUsado {
+		lvmUsado = discoDinamico
+	}
 	lvmAvail := lvmTotal - lvmUsado
 	if lvmAvail < 0 {
 		lvmAvail = 0
 	}
-
-	localTotal := int64(72722055168) // ~67 GB
-	localUsado := int64(5477761024)  // ~5 GB
-	localAvail := localTotal - localUsado
 
 	nfsTotal := int64(1099511627776) // ~1 TB
 	nfsUsado := int64(214748364800)  // ~200 GB
@@ -87,25 +91,25 @@ func (s *Simulador) storagesDisponibles() []storageInfo {
 var catalogoContenidos = map[string][]storageContentItem{
 	"local": {
 		{
-			Volid:   "local:iso/debian-13.6.0-amd64-netinst.iso",
+			Volid:   "local:iso/ubuntu-24.04-live-server.iso",
 			Content: "iso",
 			Format:  "iso",
-			Size:    791674880, // ~755 MB
-			CTime:   1786823000,
-		},
-		{
-			Volid:   "local:iso/ubuntu-24.04-live-server-amd64.iso",
-			Content: "iso",
-			Format:  "iso",
-			Size:    2080374784, // ~1.9 GB
+			Size:    2147483648, // 2 GB
 			CTime:   1786823100,
 		},
 		{
 			Volid:   "local:vztmpl/debian-12-standard_12.2-1_amd64.tar.zst",
 			Content: "vztmpl",
 			Format:  "tar.zst",
-			Size:    128450560, // ~122 MB
+			Size:    134217728, // 128 MB
 			CTime:   1786823200,
+		},
+		{
+			Volid:   "local:iso/debian-13.6.0-amd64-netinst.iso",
+			Content: "iso",
+			Format:  "iso",
+			Size:    791674880, // ~755 MB
+			CTime:   1786823000,
 		},
 		{
 			Volid:   "local:vztmpl/ubuntu-22.04-standard_22.04-1_amd64.tar.zst",

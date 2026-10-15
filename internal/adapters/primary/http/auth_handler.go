@@ -5,21 +5,24 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"el-centinela/internal/adapters/primary/http/middleware"
 	"el-centinela/internal/core/ports"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 // AuthHandler maneja los endpoints HTTP del flujo de autenticación y 2FA.
 type AuthHandler struct {
 	service ports.AuthService
+	kv      ports.KeyValueStore
 }
 
-// NewAuthHandler crea un nuevo AuthHandler con el servicio de autenticación inyectado.
-func NewAuthHandler(service ports.AuthService) *AuthHandler {
-	return &AuthHandler{service: service}
+// NewAuthHandler crea un nuevo AuthHandler con el servicio de autenticación y el almacén efímero inyectados.
+func NewAuthHandler(service ports.AuthService, kv ports.KeyValueStore) *AuthHandler {
+	return &AuthHandler{service: service, kv: kv}
 }
 
 // setRefreshCookie encapsula la lógica para emitir o borrar la cookie segura del refresh token.
@@ -319,3 +322,54 @@ func responderErrorAutenticacion(c *gin.Context, err error, codigo string) {
 	}
 	SendError(c, http.StatusUnauthorized, codigo, err.Error())
 }
+
+// ==========================================
+// POST /api/auth/ws-ticket
+// ==========================================
+
+// WsTicketResponse proyecta la respuesta del ticket efímero de WebSocket.
+type WsTicketResponse struct {
+	Ticket    string `json:"ticket"`
+	ExpiresIn int    `json:"expiresIn"`
+}
+
+// EmitirWsTicket genera un ticket efímero de un solo uso para abrir conexiones WebSocket de métricas.
+//
+// @Summary      Generar ticket efímero para WebSocket
+// @Description  Genera un UUID criptográfico de un solo uso con TTL de 30 segundos almacenado en Redis bajo la clave `ws:ticket:<uuid>`. Permite autenticar el handshake de WebSocket sin exponer el JWT en los query parameters.
+// @Tags         Autenticación
+// @Produce      json
+// @Security     BearerAuth
+// @Success      200 {object} WsTicketResponse "Ticket efímero válido por 30 segundos"
+// @Failure      401 {object} ErrorResponse "MISSING_TOKEN | INVALID_TOKEN | TOKEN_REVOKED"
+// @Failure      500 {object} ErrorResponse "INTERNAL_ERROR"
+// @Router       /auth/ws-ticket [post]
+func (h *AuthHandler) EmitirWsTicket(c *gin.Context) {
+	userIDVal, exists := c.Get(middleware.ContextKeyUserID)
+	if !exists {
+		SendError(c, http.StatusUnauthorized, "MISSING_TOKEN", "No se pudo identificar al usuario autenticado.")
+		return
+	}
+	userIDStr, ok := userIDVal.(string)
+	if !ok || userIDStr == "" {
+		SendError(c, http.StatusUnauthorized, "INVALID_TOKEN", "Identificador de usuario inválido.")
+		return
+	}
+
+	ticket := uuid.New().String()
+	clave := "ws:ticket:" + ticket
+	ttl := 30 * time.Second
+
+	if h.kv != nil {
+		if err := h.kv.Set(c.Request.Context(), clave, userIDStr, ttl); err != nil {
+			SendError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Error al generar ticket de WebSocket.")
+			return
+		}
+	}
+
+	c.JSON(http.StatusOK, WsTicketResponse{
+		Ticket:    ticket,
+		ExpiresIn: 30,
+	})
+}
+

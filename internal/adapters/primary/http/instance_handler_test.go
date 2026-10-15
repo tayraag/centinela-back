@@ -129,6 +129,14 @@ func (m *mockProxmoxPort) ObtenerContenidoStorage(ctx context.Context, node, sto
 	return nil, nil
 }
 
+func (m *mockProxmoxPort) ObtenerMetricasRRD(ctx context.Context, nodo, tipo string, vmid int, timeframe string) ([]domain.PuntoMetricaDTO, error) {
+	return nil, nil
+}
+
+func (m *mockProxmoxPort) ObtenerEstadoActual(ctx context.Context, nodo, tipo string, vmid int) (*domain.MetricasEnVivoDTO, error) {
+	return nil, nil
+}
+
 // inventarioNulo implementa ports.InventarioService sin resolver ninguna IP.
 type inventarioNulo struct{}
 

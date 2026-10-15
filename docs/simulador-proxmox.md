@@ -135,6 +135,8 @@ Todos bajo `/api2/json`, con el formato de Proxmox (`{"data": ...}`).
 | BAC-24B | `DELETE /nodes/{node}/{tipo}/{vmid}` | Borrar una instancia **apagada**: devuelve un UPID (`qmdestroy` / `vzdestroy`). Mientras corre la tarea queda con `lock: destroyed`; al terminar desaparece del inventario. Las administradas por HA (la 100) necesitan `?purge=1`. |
 | Inventario | `GET /nodes/{node}/lxc/{vmid}/interfaces` | IPs del contenedor: `lo` y `eth0`, con `hwaddr`, `inet`, `inet6` e `ip-addresses`. **Apagado: `200` con `{"data": null}`**, no es un error. Contrastado con Proxmox VE 9.2.2. |
 | Inventario | `GET /nodes/{node}/qemu/{vmid}/agent/network-get-interfaces` | IPs de una VM según el **QEMU Guest Agent**: `{"data": {"result": [...]}}` con `name`, `hardware-address`, `ip-addresses` y `statistics`. |
+| RF-07 | `GET /nodes/{node}/storage` | Catálogo de almacenamiento del nodo (`local`, `local-lvm`, `shared-nfs`) con tipos, capacidades canónicas y flags de contenido. |
+| RF-07 | `GET /nodes/{node}/storage/{storage}/content` | Catálogo de contenidos del storage: plantillas LXC (`vztmpl`) e imágenes ISO (`iso`), con soporte de filtrado por `?content=...`. |
 
 Cualquier otra ruta responde `501 Method '...' not implemented`, como Proxmox.
 
@@ -247,6 +249,8 @@ TOKEN='Authorization: PVEAPIToken=centinela-api@pve!backend-token=<secreto>'
 SIM=http://localhost:8081/api2/json
 
 curl -s -H "$TOKEN" "$SIM/cluster/resources?type=vm"                       # inventario
+curl -s -H "$TOKEN" "$SIM/nodes/proxmox/storage"                           # storages del nodo
+curl -s -H "$TOKEN" "$SIM/nodes/proxmox/storage/local/content?content=iso"  # ISOs disponibles
 curl -s -H "$TOKEN" -X POST "$SIM/nodes/proxmox/qemu/110/status/start"     # encender (devuelve UPID)
 curl -s -H "$TOKEN" "$SIM/nodes/proxmox/tasks/<UPID>/status"               # ver cómo va la tarea
 curl -s -H "$TOKEN" "$SIM/nodes/proxmox/lxc/101/rrddata?timeframe=hour"    # métricas
@@ -262,7 +266,7 @@ Conviene tenerlo presente para no llevarse sorpresas al pasar al servidor:
 - **No hay permisos por recurso.** Si el token es correcto, puede hacer todo. El token real de mínimo privilegio puede responder `403 Permission check failed` en operaciones para las que no tiene permiso. El backend ya lo maneja: lo loguea con 🔑 y responde `502`.
 - **No persiste nada:** al reiniciarlo vuelve al inventario inicial.
 - **Las métricas son generadas**, no medidas. El historial de `rrddata` es aproximado: solo recuerda el último encendido y el último apagado.
-- **No hay consola, VNC, backups, migraciones, firewall ni storage real.** Crear una VM no instala nada; solo la agrega al inventario.
+- **No hay consola, VNC, backups, migraciones ni firewall real.** El almacenamiento y contenido (`/storage` y `/storage/{storage}/content`) ofrecen catálogos simulados canónicos (plantillas Debian/Ubuntu e imágenes ISO) para validar aprovisionamiento, pero crear una VM no instala un SO real ni escribe en disco físico; solo la agrega al inventario y reserva espacio LVM simulado.
 - **Un solo nodo.**
 - **Validaciones parciales:** valida lo que usamos (VMID, memoria, cores, nombres de snapshot, formato de disco, `ostemplate`), no todo el esquema de Proxmox.
 - **`DELETE` y el guest agent de qemu no tienen captura real.** Su formato (y sus mensajes de error) sigue la documentación de Proxmox VE y de QEMU. `lxc/{vmid}/interfaces` sí está contrastado contra Proxmox VE 9.2.2. Cuando alguien tenga acceso al Proxmox real, conviene capturar las respuestas que faltan en `API proxmox respuestas/` y ajustar el simulador si difieren.

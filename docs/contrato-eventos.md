@@ -134,9 +134,10 @@ Si falla, `severidad` es `WARNING` y `detalles` queda, por ejemplo:
 }
 ```
 
-## Swagger
+## Swagger / OpenAPI
 
-`swag` no está instalado en esta máquina, así que el esquema todavía no aparece
-en Swagger. El struct `RealtimeEvent` ya lleva las anotaciones `@name` y
-`@Description`, por lo que al correr `swag init` el esquema se incluirá
-automáticamente. No editar `docs/docs.go` ni `swagger.json` a mano.
+Los esquemas y rutas del canal SSE se encuentran completamente documentados y disponibles en la Swagger UI (`/swagger/index.html`):
+- `POST /api/events/ticket`: Emisión de ticket de un solo uso (30 s) protegido por JWT.
+- `GET /api/events`: Stream SSE autenticado por ticket query param, emitiendo `http.SSEEventPayload` con el sobre del evento.
+- Modelos `http.TaskSuccess` y `http.TaskFailed` representando la forma concreta del campo `detalles` para el evento `TASK_FINISHED` (con sus 6 claves garantizadas).
+

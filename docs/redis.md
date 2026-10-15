@@ -65,6 +65,7 @@ miServicio := services.NewMiServicio(kvStore)
 | `node:status:current` | JSON del estado normalizado del nodo | 10 s | Caché de `GET /api/node/status`: mientras existe no se consulta Proxmox. |
 | `node:status:last_known` | el mismo JSON | **sin TTL** | Última lectura buena del nodo: se devuelve con `stale: true` si Proxmox no responde. Ver `docs/contrato-etapa1.md`. |
 | `ws_ticket:<uuid>` | JSON: `usuario_id`, `sesion_id` | 30 s | Ticket de un solo uso para abrir `GET /api/events`. Se consume con `GetDel`. Ver [eventos-tiempo-real.md](eventos-tiempo-real.md). |
+| `ws:ticket:<uuid>` | `usuario_id` | 30 s | Ticket de un solo uso para abrir el WebSocket de métricas (`GET /api/ws/instances/:vmid/metrics`). Se consume con `GetDel`. |
 
 **Canal Pub/Sub:** `centinela:events` lleva los eventos para los clientes (por ejemplo, `TASK_FINISHED`) y los avisos de control (`LOGOUT`, `SESSIONS_REVOKED`) que cortan los streams.
 
