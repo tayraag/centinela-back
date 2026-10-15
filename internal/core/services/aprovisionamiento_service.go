@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -18,7 +19,6 @@ const (
 	claveReservas                 = "aprovisionamiento:reservas"
 	claveCacheEstadoNodo          = "node:status:current"
 	ttlLockAprovisionamiento      = time.Minute
-	ttlReservaAprovisionamiento   = 15 * time.Minute
 	ttlCapacidadAprovisionamiento = 10 * time.Second
 	bytesPorGiB                   = int64(1024 * 1024 * 1024)
 )
@@ -31,6 +31,7 @@ type capacidadAprovisionamiento struct {
 
 type reservaAprovisionamiento struct {
 	ID         string    `json:"id"`
+	VMID       int       `json:"vmid,omitempty"`
 	Nodo       string    `json:"nodo"`
 	StorageID  string    `json:"storageId"`
 	Compartido bool      `json:"compartido"`
@@ -78,7 +79,6 @@ func (s *AprovisionamientoService) AprovisionarInstancia(ctx context.Context, in
 		ID: uuid.NewString(), Nodo: input.Nodo, StorageID: input.StorageID,
 		Compartido: storage.Shared == 1, Memoria: int64(input.MemoriaMB) * 1024 * 1024,
 		Disco: int64(input.DiscoGB) * bytesPorGiB, Cores: input.Cores,
-		Vence: s.ahora().Add(ttlReservaAprovisionamiento),
 	}
 	reservas = append(reservas, reserva)
 	if err := s.guardarReservas(ctx, reservas); err != nil {
@@ -87,8 +87,17 @@ func (s *AprovisionamientoService) AprovisionarInstancia(ctx context.Context, in
 
 	resultado, err := s.creador.AprovisionarInstancia(ctx, input)
 	if err != nil {
-		_ = s.guardarReservas(ctx, quitarReserva(reservas, reserva.ID))
+		// A transport error does not prove the remote operation was rejected.
+		// Keep capacity reserved until reconciliation confirms its disposition.
+		s.invalidarCacheCapacidad(context.WithoutCancel(ctx), input.Nodo)
+		log.Printf("[APROVISIONAMIENTO] reserva %s retenida en nodo %s: resultado remoto sin confirmar", reserva.ID, reserva.Nodo)
 		return nil, err
+	}
+	reservas[len(reservas)-1].VMID = resultado.VMID
+	// Failure to attach the VMID leaves the original conservative reservation.
+	// Still return the accepted UPID so the HTTP layer can persist its tracking.
+	if err := s.guardarReservas(context.WithoutCancel(ctx), reservas); err != nil {
+		log.Printf("[APROVISIONAMIENTO] reserva %s conservada sin asociar VMID %d: %v", reserva.ID, resultado.VMID, err)
 	}
 	resultado.ReservaID = reserva.ID
 	// Al aceptar una creación se invalidan solamente las fotos de capacidad;
@@ -132,8 +141,18 @@ func (s *AprovisionamientoService) validarCapacidad(ctx context.Context, input p
 	var coresReservados int
 	for _, reserva := range reservas {
 		if reserva.Nodo == input.Nodo {
-			memoriaReservada += reserva.Memoria
-			coresReservados += reserva.Cores
+			var memoriaVisible int64
+			var coresVisibles int
+			for _, instancia := range capacidad.Instancias {
+				if reserva.VMID != 0 && instancia.Vmid == reserva.VMID && instancia.Nodo == reserva.Nodo {
+					memoriaVisible = instancia.MaxMem
+					coresVisibles = instancia.MaxCpu
+					break
+				}
+			}
+			// Only subtract the part not already represented by the inventory.
+			memoriaReservada += max(int64(0), reserva.Memoria-memoriaVisible)
+			coresReservados += max(0, reserva.Cores-coresVisibles)
 		}
 		if reserva.StorageID == input.StorageID && (storage.Shared == 1 || reserva.Nodo == input.Nodo) {
 			discoReservado += reserva.Disco
@@ -188,8 +207,17 @@ func (s *AprovisionamientoService) obtenerCapacidad(ctx context.Context, nodo st
 	return capacidad, nil
 }
 
-// LiberarReserva se llama cuando el worker cierra la tarea. Si Redis no está
-// disponible, el TTL sigue evitando que la reserva quede retenida para siempre.
+// FinalizarReserva releases capacity only after confirmed successful completion.
+// Failed or timed-out jobs may still own partially created resources.
+func (s *AprovisionamientoService) FinalizarReserva(ctx context.Context, reservaID string, resultado ResultadoTarea) error {
+	if resultado.Estado != ports.TareaCompleted {
+		return nil
+	}
+	return s.LiberarReserva(ctx, reservaID)
+}
+
+// LiberarReserva requires a confirmed disposition of the committed resources.
+// Unknown results must be reconciled instead of expiring automatically.
 func (s *AprovisionamientoService) LiberarReserva(ctx context.Context, reservaID string) error {
 	if strings.TrimSpace(reservaID) == "" {
 		return nil
@@ -247,7 +275,7 @@ func (s *AprovisionamientoService) guardarReservas(ctx context.Context, reservas
 		}
 		return nil
 	}
-	if err := s.store.Set(ctx, claveReservas, reservas, ttlReservaAprovisionamiento); err != nil {
+	if err := s.store.Set(ctx, claveReservas, reservas, 0); err != nil {
 		return fmt.Errorf("%w: %v", ports.ErrCoordinacionAprovisionamiento, err)
 	}
 	return nil
@@ -256,9 +284,8 @@ func (s *AprovisionamientoService) guardarReservas(ctx context.Context, reservas
 func reservasVigentes(reservas []reservaAprovisionamiento, ahora time.Time) []reservaAprovisionamiento {
 	vigentes := reservas[:0]
 	for _, reserva := range reservas {
-		if ahora.Before(reserva.Vence) {
-			vigentes = append(vigentes, reserva)
-		}
+		// Legacy expiry timestamps do not establish that remote work stopped.
+		vigentes = append(vigentes, reserva)
 	}
 	return vigentes
 }

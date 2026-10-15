@@ -2,12 +2,31 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"log"
 	"strings"
 	"testing"
 
 	"el-centinela/internal/adapters/secondary/email"
+	"el-centinela/internal/adapters/secondary/memoria"
+	redisstore "el-centinela/internal/adapters/secondary/redis"
+	"el-centinela/internal/core/ports"
 )
+
+func TestAprovisionadorSeguroRechazaFallbackLocal(t *testing.T) {
+	provider := aprovisionadorSeguro(memoria.Nuevo(), nil)
+	if result, err := provider.AprovisionarInstancia(context.Background(), ports.CrearInstanciaProxmoxInput{}); result != nil || !errors.Is(err, ports.ErrCoordinacionAprovisionamiento) {
+		t.Fatalf("fallback result=%v err=%v; expected coordination refusal", result, err)
+	}
+	// Selection must retain the real provider with Redis, not silently disable it.
+	store := redisstore.Nuevo(redisstore.Config{Addr: "127.0.0.1:1"})
+	t.Cleanup(func() { _ = store.Close() })
+	want := aprovisionamientoNoDisponible{}
+	if got := aprovisionadorSeguro(store, want); got != want {
+		t.Fatalf("shared backend changed provider: %T", got)
+	}
+}
 
 func TestInicializarServicioEmail(t *testing.T) {
 	tests := []struct {
