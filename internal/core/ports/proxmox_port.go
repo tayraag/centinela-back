@@ -192,13 +192,15 @@ type DireccionIP struct {
 // normalizar (bytes y fracciones). La normalización a GB y porcentajes la hace
 // el servicio de estado del nodo.
 type NodeStatusDTO struct {
-	CPU        float64 // uso de CPU: fracción [0,1] sobre CPUs
-	CPUs       int     // hilos lógicos (cpuinfo.cpus): sobre estos se calcula CPU
-	MemTotal   int64   // bytes
-	MemUsada   int64   // bytes
-	DiscoTotal int64   // bytes del rootfs del nodo
-	DiscoUsado int64   // bytes del rootfs del nodo
-	UptimeSegs int64
+	CPU             float64 // uso de CPU: fracción [0,1] sobre CPUs
+	CPUs            int     // hilos lógicos (cpuinfo.cpus): sobre estos se calcula CPU
+	PhysicalCores   int     // núcleos físicos totales (cpuinfo.cores ya suma todos los sockets)
+	MemTotal        int64   // bytes
+	MemUsada        int64   // bytes
+	DiscoTotal      int64   // bytes del rootfs del nodo
+	DiscoUsado      int64   // bytes del rootfs del nodo
+	DiscoDisponible int64   // bytes asignables del rootfs (rootfs.avail)
+	UptimeSegs      int64
 }
 
 // EstadoTareaDTO es el estado de una tarea asíncrona de Proxmox.

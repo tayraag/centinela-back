@@ -27,11 +27,20 @@ type ResumenInstanciasNode struct {
 	LXC ResumenEstadoInstancias `json:"lxc" binding:"required"`
 }
 
+// CuotaAsignableNode documenta los límites seguros para crear instancias.
+type CuotaAsignableNode struct {
+	MaxCPUCores     int   `json:"maxCpuCores" binding:"required" minimum:"0" example:"8"`
+	FreeRamMB       int64 `json:"freeRamMb" binding:"required" minimum:"0" example:"14336"`
+	FreeStorageGB   int64 `json:"freeStorageGb" binding:"required" minimum:"0" example:"280"`
+	HeadroomPercent int   `json:"headroomPercent" binding:"required" enums:"15" example:"15"`
+}
+
 // EstadoNodeResponse es el contrato objetivo del endpoint planificado de estado del nodo.
 type EstadoNodeResponse struct {
 	CPU              MetricaCPUNode        `json:"cpu" binding:"required"`
 	RAM              MetricaCapacidadNode  `json:"ram" binding:"required"`
 	Storage          MetricaCapacidadNode  `json:"storage" binding:"required"`
+	Allocatable      CuotaAsignableNode    `json:"allocatable" binding:"required"`
 	UptimeSeconds    int64                 `json:"uptimeSeconds" binding:"required" minimum:"0" example:"86400"`
 	InstancesSummary ResumenInstanciasNode `json:"instancesSummary" binding:"required"`
 	Stale            bool                  `json:"stale" binding:"required" example:"false"`

@@ -36,12 +36,22 @@ type ResumenInstancias struct {
 	LXC ResumenEstado `json:"lxc"`
 }
 
+// CuotaAsignable contiene los recursos que el asistente puede ofrecer para
+// nuevas instancias. FreeRamMb excluye siempre el headroom del hipervisor.
+type CuotaAsignable struct {
+	MaxCPUCores     int   `json:"maxCpuCores"`
+	FreeRamMB       int64 `json:"freeRamMb"`
+	FreeStorageGB   int64 `json:"freeStorageGb"`
+	HeadroomPercent int   `json:"headroomPercent"`
+}
+
 // EstadoNodo es la lectura normalizada del nodo. Es lo que se guarda en Redis
 // (node:status:current y node:status:last_known).
 type EstadoNodo struct {
 	CPU              MetricaCPU        `json:"cpu"`
 	RAM              MetricaCapacidad  `json:"ram"`
 	Storage          MetricaCapacidad  `json:"storage"`
+	Allocatable      CuotaAsignable    `json:"allocatable"`
 	UptimeSeconds    int64             `json:"uptimeSeconds"`
 	InstancesSummary ResumenInstancias `json:"instancesSummary"`
 	FetchedAt        time.Time         `json:"fetchedAt"` // cuándo se leyó de Proxmox

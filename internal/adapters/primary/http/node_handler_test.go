@@ -41,6 +41,7 @@ func TestEstadoNodo_RespetaElContrato(t *testing.T) {
 		CPU:              ports.MetricaCPU{UsagePercent: 3.77, Cores: 12},
 		RAM:              ports.MetricaCapacidad{UsedGb: 2.53, TotalGb: 15.3, UsagePercent: 16.57},
 		Storage:          ports.MetricaCapacidad{UsedGb: 5.1, TotalGb: 67.73, UsagePercent: 7.53},
+		Allocatable:      ports.CuotaAsignable{MaxCPUCores: 6, FreeRamMB: 10717, FreeStorageGB: 59, HeadroomPercent: 15},
 		UptimeSeconds:    199252,
 		InstancesSummary: ports.ResumenInstancias{VMs: ports.ResumenEstado{Running: 1, Total: 1}},
 		FetchedAt:        time.Date(2026, 10, 5, 12, 0, 0, 0, time.FixedZone("ART", -3*3600)),
@@ -51,7 +52,7 @@ func TestEstadoNodo_RespetaElContrato(t *testing.T) {
 			t.Fatalf("status %d", status)
 		}
 		// Exactamente las claves del contrato (docs/contrato-etapa1.md), ni más ni menos.
-		esperadas := map[string]bool{"cpu": true, "ram": true, "storage": true, "uptimeSeconds": true, "instancesSummary": true, "stale": true, "fetchedAt": true}
+		esperadas := map[string]bool{"cpu": true, "ram": true, "storage": true, "allocatable": true, "uptimeSeconds": true, "instancesSummary": true, "stale": true, "fetchedAt": true}
 		for k := range cuerpo {
 			if !esperadas[k] {
 				t.Errorf("Clave fuera del contrato: %q", k)
@@ -70,6 +71,10 @@ func TestEstadoNodo_RespetaElContrato(t *testing.T) {
 		ram := cuerpo["ram"].(map[string]any)
 		if ram["usedGb"] != 2.53 || ram["totalGb"] != 15.3 || ram["usagePercent"] != 16.57 {
 			t.Errorf("ram: %v", ram)
+		}
+		allocatable := cuerpo["allocatable"].(map[string]any)
+		if allocatable["maxCpuCores"] != float64(6) || allocatable["freeRamMb"] != float64(10717) || allocatable["freeStorageGb"] != float64(59) || allocatable["headroomPercent"] != float64(15) {
+			t.Errorf("allocatable: %v", allocatable)
 		}
 		vms := cuerpo["instancesSummary"].(map[string]any)["vms"].(map[string]any)
 		for _, k := range []string{"running", "stopped", "paused", "total"} {

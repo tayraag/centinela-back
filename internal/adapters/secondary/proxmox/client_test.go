@@ -544,6 +544,30 @@ func TestClient_ObtenerStorages(t *testing.T) {
 	}
 }
 
+func TestClient_ObtenerEstadoNodo_ConservaStorageDisponible(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api2/json/nodes/pve1/status" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{"cpu":0.25,"uptime":100,"cpuinfo":{"cpus":24,"cores":6,"sockets":2},"memory":{"total":17179869184,"used":4294967296},"rootfs":{"total":536870912000,"used":214748364800,"avail":300647710720}}}`))
+	}))
+	defer server.Close()
+
+	client := proxmox.NewClient(server.URL, "pve1", tokenIDValido, tokenSecretValido, nil)
+	estado, err := client.ObtenerEstadoNodo(context.Background(), "pve1")
+	if err != nil {
+		t.Fatalf("ObtenerEstadoNodo falló: %v", err)
+	}
+	if estado.DiscoDisponible != 300647710720 {
+		t.Errorf("DiscoDisponible = %d, se esperaba rootfs.avail", estado.DiscoDisponible)
+	}
+	if estado.CPUs != 24 || estado.PhysicalCores != 6 {
+		t.Errorf("CPU lógico/físico = %d/%d, se esperaba 24/6; cpuinfo.cores ya incluye ambos sockets", estado.CPUs, estado.PhysicalCores)
+	}
+}
+
 func TestClient_ObtenerContenidoStorage(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "PVEAPIToken="+tokenIDValido+"="+tokenSecretValido {
@@ -790,5 +814,3 @@ func TestClient_ObtenerEstadoActual(t *testing.T) {
 		t.Errorf("Memoria incorrecta: %+v", m)
 	}
 }
-
-

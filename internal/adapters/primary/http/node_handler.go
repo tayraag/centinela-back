@@ -34,7 +34,7 @@ func NewNodeHandler(service ports.NodoService, proxmox ports.ProxmoxPort, nodo s
 // y el resumen de instancias.
 //
 // @Summary      Consultar estado consolidado del nodo
-// @Description  OPERATIVO. Disponible para ADMIN y OPERATOR autenticados (no se filtra por permisos de instancia). La lectura se cachea en Redis 10 s (node:status:current): mientras está vigente se responde sin consultar Proxmox. Incluye también instancesSummary, que agrupa el recuento de VMs y contenedores LXC según su estado (running, stopped, paused). Si Proxmox no responde se devuelve la última lectura conocida (node:status:last_known) con `stale: true`; `fetchedAt` indica cuándo se obtuvo. Solo si no hay ninguna lectura previa responde 502 o 504. RAM y almacenamiento en GB (1024³ bytes) con 2 decimales; `storage` es el disco raíz del nodo; `cores` son los hilos lógicos sobre los que se calcula `usagePercent`.
+// @Description  OPERATIVO. Disponible para ADMIN y OPERATOR autenticados (no se filtra por permisos de instancia). La lectura se cachea en Redis 10 s (node:status:current): mientras está vigente se responde sin consultar Proxmox. Incluye `allocatable`, con núcleos físicos totales, almacenamiento disponible y RAM libre segura luego de reservar estrictamente 15% para Proxmox. Incluye también instancesSummary, que agrupa el recuento de VMs y contenedores LXC según su estado (running, stopped, paused). Si Proxmox no responde se devuelve la última lectura conocida (node:status:last_known) con `stale: true`; `fetchedAt` indica cuándo se obtuvo. Solo si no hay ninguna lectura previa responde 502 o 504. RAM y almacenamiento en GB (1024³ bytes) con 2 decimales; `storage` es el disco raíz del nodo; `cores` son los hilos lógicos sobre los que se calcula `usagePercent`.
 // @Tags         Estado del nodo
 // @Produce      json
 // @Security     BearerAuth
@@ -61,9 +61,13 @@ func aEstadoNodeResponse(e *ports.EstadoNodo, stale bool) EstadoNodeResponse {
 		return ResumenEstadoInstancias{Running: r.Running, Stopped: r.Stopped, Paused: r.Paused, Total: r.Total}
 	}
 	return EstadoNodeResponse{
-		CPU:           MetricaCPUNode{UsagePercent: e.CPU.UsagePercent, Cores: e.CPU.Cores},
-		RAM:           capacidad(e.RAM),
-		Storage:       capacidad(e.Storage),
+		CPU:     MetricaCPUNode{UsagePercent: e.CPU.UsagePercent, Cores: e.CPU.Cores},
+		RAM:     capacidad(e.RAM),
+		Storage: capacidad(e.Storage),
+		Allocatable: CuotaAsignableNode{
+			MaxCPUCores: e.Allocatable.MaxCPUCores, FreeRamMB: e.Allocatable.FreeRamMB,
+			FreeStorageGB: e.Allocatable.FreeStorageGB, HeadroomPercent: e.Allocatable.HeadroomPercent,
+		},
 		UptimeSeconds: e.UptimeSeconds,
 		InstancesSummary: ResumenInstanciasNode{
 			VMs: resumen(e.InstancesSummary.VMs),

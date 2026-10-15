@@ -23,6 +23,8 @@ const (
 	ttlEstadoNodo      = 10 * time.Second
 	pausaTrasFallaNodo = 5 * time.Second // después de una falla, no reintentar Proxmox en cada request
 	bytesPorGB         = 1024 * 1024 * 1024
+	bytesPorMB         = 1024 * 1024
+	headroomRAMPercent = 15
 	claveVuelo         = "estado-nodo"
 )
 
@@ -155,6 +157,7 @@ func normalizarEstadoNodo(crudo *ports.NodeStatusDTO, instancias []ports.Instanc
 		CPU:           ports.MetricaCPU{UsagePercent: redondear(crudo.CPU * 100), Cores: crudo.CPUs},
 		RAM:           capacidad(crudo.MemUsada, crudo.MemTotal),
 		Storage:       capacidad(crudo.DiscoUsado, crudo.DiscoTotal),
+		Allocatable:   calcularCuotaAsignable(crudo),
 		UptimeSeconds: crudo.UptimeSegs,
 		FetchedAt:     ahora.UTC().Truncate(time.Second),
 	}
@@ -174,6 +177,32 @@ func normalizarEstadoNodo(crudo *ports.NodeStatusDTO, instancias []ports.Instanc
 		resumen.Total++
 	}
 	return estado
+}
+
+// calcularCuotaAsignable reserva al menos el 15% de la RAM física para
+// Proxmox. La reserva se redondea hacia arriba al byte y las cuotas públicas
+// hacia abajo a MiB/GiB, para no anunciar capacidad que no existe.
+func calcularCuotaAsignable(crudo *ports.NodeStatusDTO) ports.CuotaAsignable {
+	totalRAM := max(int64(0), crudo.MemTotal)
+	usadaRAM := max(int64(0), crudo.MemUsada)
+	reservadaRAM := porcentajeRedondeadoHaciaArriba(totalRAM, headroomRAMPercent)
+	libreSeguraRAM := max(int64(0), totalRAM-usadaRAM-reservadaRAM)
+	storageDisponible := max(int64(0), crudo.DiscoDisponible)
+
+	return ports.CuotaAsignable{
+		MaxCPUCores:     max(0, crudo.PhysicalCores),
+		FreeRamMB:       libreSeguraRAM / bytesPorMB,
+		FreeStorageGB:   storageDisponible / bytesPorGB,
+		HeadroomPercent: headroomRAMPercent,
+	}
+}
+
+func porcentajeRedondeadoHaciaArriba(total int64, porcentaje int64) int64 {
+	if total <= 0 || porcentaje <= 0 {
+		return 0
+	}
+	// Separar cociente y resto evita desbordar total*porcentaje.
+	return (total/100)*porcentaje + (total%100*porcentaje+99)/100
 }
 
 func capacidad(usado, total int64) ports.MetricaCapacidad {

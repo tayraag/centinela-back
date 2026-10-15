@@ -492,7 +492,8 @@ type estadoNodoResponse struct {
 		CPU     float64 `json:"cpu"`
 		Uptime  int64   `json:"uptime"`
 		CPUInfo struct {
-			CPUs int `json:"cpus"`
+			CPUs  int `json:"cpus"`
+			Cores int `json:"cores"`
 		} `json:"cpuinfo"`
 		Memory struct {
 			Total int64 `json:"total"`
@@ -501,6 +502,7 @@ type estadoNodoResponse struct {
 		RootFS struct {
 			Total int64 `json:"total"`
 			Used  int64 `json:"used"`
+			Avail int64 `json:"avail"`
 		} `json:"rootfs"`
 	} `json:"data"`
 }
@@ -518,9 +520,9 @@ func (c *Client) ObtenerEstadoNodo(ctx context.Context, node string) (*ports.Nod
 	}
 	d := parsed.Data
 	return &ports.NodeStatusDTO{
-		CPU: d.CPU, CPUs: d.CPUInfo.CPUs,
+		CPU: d.CPU, CPUs: d.CPUInfo.CPUs, PhysicalCores: d.CPUInfo.Cores,
 		MemTotal: d.Memory.Total, MemUsada: d.Memory.Used,
-		DiscoTotal: d.RootFS.Total, DiscoUsado: d.RootFS.Used,
+		DiscoTotal: d.RootFS.Total, DiscoUsado: d.RootFS.Used, DiscoDisponible: d.RootFS.Avail,
 		UptimeSegs: d.Uptime,
 	}, nil
 }
@@ -846,5 +848,3 @@ func (c *Client) ObtenerEstadoActual(ctx context.Context, nodo, tipo string, vmi
 		Uptime:    upVal,
 	}, nil
 }
-
-
