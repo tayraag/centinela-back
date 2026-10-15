@@ -1278,6 +1278,30 @@ Cuando el usuario hace clic en "Crear", el frontend recolecta todo lo selecciona
 
 El front no debe mandarnos el `vmid` en el json. El backend tiene que ir a buscar el siguiente ID libre a Proxmox en el milisegundo exacto en que procesa la orden.
 
+El contrato canónico RF-07 es plano. `nodo` es opcional; el backend usa
+`PROXMOX_NODE` cuando no se envía. Para una IP estática, `red.ip` puede incluir
+el CIDR o se puede agregar `red.mascara` (por defecto `/24`). Si
+`templateOso` llega como nombre de archivo, el backend lo convierte al volumen
+`storageId:iso/...` para VM o `storageId:vztmpl/...` para LXC.
+
+```json
+{
+  "tipo": "vm",
+  "nombre": "srv-prod-01",
+  "cores": 2,
+  "ramMb": 2048,
+  "discoGb": 20,
+  "storageId": "local-lvm",
+  "templateOso": "debian-12.iso",
+  "red": {
+    "modo": "dhcp"
+  }
+}
+```
+
+Las variantes anidadas siguientes se mantienen durante la migración del
+wizard, pero las integraciones nuevas deben usar el contrato plano.
+
 Como Proxmox maneja las Máquinas Virtuales (VM) y los Contenedores (LXC) de manera distinta (el LXC exige una contraseña inicial obligatoria y no usa ISOs), el backend debe estar preparado para recibir estas dos variantes estructurales:&nbsp;
 
 &nbsp;
@@ -1398,10 +1422,16 @@ Si la validación aprueba, el backend obtiene el siguiente VMID libre mediante
 
 ```json
 {
+  "vmid": 120,
   "upid": "UPID:pve1:00000001:00000002:00000003:qmcreate:120:centinela-api@pve!backend-token:",
   "tareaId": "3f2504e0-4f89-11d3-9a0c-0305e82c3301"
 }
 ```
+
+El `202` solo se devuelve después de insertar el UPID como tarea `RUNNING` y
+su auditoría inicial. Si Proxmox aceptó la creación pero esa transacción falla,
+la API responde `500 TASK_TRACKING_UNAVAILABLE`; el frontend debe verificar el
+estado antes de reintentar para no duplicar una instancia.
 
 Al aceptar la orden, el backend invalida `node:status:current` y
 `aprovisionamiento:capacidad:{node}`. El worker vuelve a invalidarlas al cerrar

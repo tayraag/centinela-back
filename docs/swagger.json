@@ -1536,7 +1536,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "ADMIN ONLY. CuotasService usa el lock Redis `lock:instance:provisioning` con TTL de 30 s y hasta 2 s de espera. Consulta la capacidad cacheada (o Proxmox si falta), valida CPU lógica, RAM con 15% de headroom y disco contra `avail` del storage, registra una reserva temporal e invalida la caché al aceptar la orden. El resultado llega por TASK_FINISHED con accion CREATE; al completar correctamente (OK o WARNINGS), el creador recibe FULL_ACCESS y se vuelve a invalidar la capacidad.",
+                "description": "ADMIN ONLY. El contrato plano RF-07 descrito en el body es el formato canónico. Durante la migración del frontend también se acepta el payload anidado anterior con `type`, `node`, `name`, `cpu.cores`, `ram.memoryMb`, `disk.storageId/sizeGb`, `network.bridge/vlan/firewall/ipv4` y `os.templateId`; para LXC ese formato requiere `password`. CuotasService usa el lock Redis `lock:instance:provisioning` con TTL de 30 s y hasta 2 s de espera. Consulta la capacidad cacheada (o Proxmox si falta), valida CPU lógica, RAM con 15% de headroom y disco contra `avail` del storage, y registra una reserva temporal. Luego obtiene el VMID mediante `/cluster/nextid`, despacha la creación QEMU o LXC y solo responde 202 con vmid, tareaId y upid después de persistir la tarea RUNNING y su auditoría inicial. El resultado llega por TASK_FINISHED con accion CREATE; al completar correctamente (OK o WARNINGS), el creador recibe FULL_ACCESS y se vuelve a invalidar la capacidad.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1562,7 +1562,7 @@
                     "202": {
                         "description": "Accepted",
                         "schema": {
-                            "$ref": "#/definitions/http.AccionAceptadaResponse"
+                            "$ref": "#/definitions/http.CreacionAceptadaResponse"
                         }
                     },
                     "400": {
@@ -1585,6 +1585,12 @@
                     },
                     "409": {
                         "description": "RESOURCE_QUOTA_EXCEEDED",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "TASK_TRACKING_UNAVAILABLE",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -2406,77 +2412,34 @@
                 }
             }
         },
-        "http.CrearInstanciaCPURequest": {
+        "http.CreacionAceptadaResponse": {
             "type": "object",
+            "required": [
+                "tareaId",
+                "upid",
+                "vmid"
+            ],
             "properties": {
-                "cores": {
+                "tareaId": {
+                    "type": "string",
+                    "example": "0192a8b3-4f89-7e23-9a0c-0305e82c3301"
+                },
+                "upid": {
+                    "type": "string",
+                    "example": "UPID:proxmox:0008380E:0131F1BF:6A84EA54:qmcreate:115:root@pam:"
+                },
+                "vmid": {
                     "type": "integer",
-                    "example": 2
-                }
-            }
-        },
-        "http.CrearInstanciaDiscoRequest": {
-            "type": "object",
-            "properties": {
-                "format": {
-                    "type": "string",
-                    "example": "raw"
-                },
-                "sizeGb": {
-                    "type": "integer",
-                    "example": 50
-                },
-                "storageId": {
-                    "type": "string",
-                    "example": "local-lvm"
-                },
-                "thinProvisioning": {
-                    "type": "boolean",
-                    "example": true
-                }
-            }
-        },
-        "http.CrearInstanciaIPv4Request": {
-            "type": "object",
-            "properties": {
-                "address": {
-                    "type": "string",
-                    "example": "192.168.1.50"
-                },
-                "gateway": {
-                    "type": "string",
-                    "example": "192.168.1.1"
-                },
-                "mask": {
-                    "type": "string",
-                    "example": "24"
-                },
-                "type": {
-                    "type": "string",
-                    "example": "dhcp"
-                }
-            }
-        },
-        "http.CrearInstanciaOSRequest": {
-            "type": "object",
-            "properties": {
-                "templateId": {
-                    "type": "string",
-                    "example": "local:iso/debian-12.iso"
-                }
-            }
-        },
-        "http.CrearInstanciaRAMRequest": {
-            "type": "object",
-            "properties": {
-                "memoryMb": {
-                    "type": "integer",
-                    "example": 4096
+                    "minimum": 100,
+                    "example": 115
                 }
             }
         },
         "http.CrearInstanciaRedRequest": {
             "type": "object",
+            "required": [
+                "modo"
+            ],
             "properties": {
                 "bridge": {
                     "type": "string",
@@ -2486,8 +2449,27 @@
                     "type": "boolean",
                     "example": true
                 },
-                "ipv4": {
-                    "$ref": "#/definitions/http.CrearInstanciaIPv4Request"
+                "gateway": {
+                    "type": "string",
+                    "example": "192.168.1.1"
+                },
+                "ip": {
+                    "type": "string",
+                    "example": "192.168.1.50/24"
+                },
+                "mascara": {
+                    "type": "string",
+                    "example": "24"
+                },
+                "modo": {
+                    "type": "string",
+                    "enum": [
+                        "dhcp",
+                        "static",
+                        "DHCP",
+                        "STATIC"
+                    ],
+                    "example": "dhcp"
                 },
                 "vlan": {
                     "type": "integer",
@@ -2497,40 +2479,61 @@
         },
         "http.CrearInstanciaRequest": {
             "type": "object",
+            "required": [
+                "cores",
+                "discoGb",
+                "nombre",
+                "ramMb",
+                "red",
+                "storageId",
+                "templateOso",
+                "tipo"
+            ],
             "properties": {
-                "cpu": {
-                    "$ref": "#/definitions/http.CrearInstanciaCPURequest"
+                "cores": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "example": 2
                 },
-                "description": {
+                "descripcion": {
                     "type": "string",
                     "example": "Servidor web principal"
                 },
-                "disk": {
-                    "$ref": "#/definitions/http.CrearInstanciaDiscoRequest"
+                "discoGb": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "example": 20
                 },
-                "name": {
-                    "type": "string",
-                    "example": "web-server"
-                },
-                "network": {
-                    "$ref": "#/definitions/http.CrearInstanciaRedRequest"
-                },
-                "node": {
+                "nodo": {
                     "type": "string",
                     "example": "pve1"
                 },
-                "os": {
-                    "$ref": "#/definitions/http.CrearInstanciaOSRequest"
+                "nombre": {
+                    "type": "string",
+                    "example": "srv-prod-01"
                 },
                 "password": {
                     "type": "string"
                 },
-                "ram": {
-                    "$ref": "#/definitions/http.CrearInstanciaRAMRequest"
+                "ramMb": {
+                    "type": "integer",
+                    "minimum": 16,
+                    "example": 2048
                 },
-                "type": {
+                "red": {
+                    "$ref": "#/definitions/http.CrearInstanciaRedRequest"
+                },
+                "storageId": {
                     "type": "string",
-                    "example": "VM"
+                    "example": "local-lvm"
+                },
+                "templateOso": {
+                    "type": "string",
+                    "example": "local:iso/debian-12.iso"
+                },
+                "tipo": {
+                    "type": "string",
+                    "example": "vm"
                 }
             }
         },

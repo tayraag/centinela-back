@@ -152,6 +152,28 @@ ya vigente.
 `POST /api/instances` crea de forma asíncrona una VM o un LXC. Solo lo puede
 invocar un `ADMIN`; un `OPERATOR` recibe `403 INSUFFICIENT_PERMISSIONS`.
 
+El contrato RF-07 es plano; `nodo` es opcional y, si se omite, usa
+`PROXMOX_NODE`. `red.modo` acepta `dhcp` o `static`. Una IP estática puede
+incluir el prefijo CIDR en `ip` o enviarlo en `mascara` (por defecto `/24`).
+Para no cortar la migración del frontend también se acepta temporalmente el
+payload anidado anterior del wizard: `type`, `node`, `name`, `cpu.cores`,
+`ram.memoryMb`, `disk.storageId/sizeGb`,
+`network.bridge/vlan/firewall/ipv4` y `os.templateId`. En ese formato, LXC
+requiere `password`. Las integraciones nuevas deben usar el contrato plano.
+
+```json
+{
+  "tipo": "vm",
+  "nombre": "srv-prod-01",
+  "cores": 2,
+  "ramMb": 2048,
+  "discoGb": 20,
+  "storageId": "local-lvm",
+  "templateOso": "debian-12.iso",
+  "red": { "modo": "dhcp" }
+}
+```
+
 Antes de llamar a Proxmox, `CuotasService` toma el lock distribuido
 `lock:instance:provisioning` (`SET NX`, TTL 30 s), valida la capacidad
 disponible de CPU lógica, RAM y disco y registra una reserva temporal. Si otra
@@ -174,10 +196,25 @@ Proxmox y la conserva 10 segundos. Una orden aceptada invalida esa clave y
 que la siguiente lectura refleje el estado definitivo. No se vacía Redis
 completo, porque también contiene sesiones y tickets SSE.
 
-Si Proxmox acepta la orden, responde `202 AccionAceptadaResponse`. Al terminar,
-el worker libera la reserva y publica `TASK_FINISHED` con `accion: "CREATE"` y
-el VMID en `recursoId`. Un resultado `OK` o `WARNINGS` asigna atómicamente
-`FULL_ACCESS` al usuario creador antes de publicar el evento.
+Después de validar, el backend consulta `GET /cluster/nextid` y envía la orden
+a `/nodes/{node}/qemu` o `/nodes/{node}/lxc`. Solo responde `202` después de
+insertar el UPID con estado `RUNNING` en `tareas_asincronas` y su auditoría
+inicial dentro de la misma transacción:
+
+```json
+{
+  "vmid": 115,
+  "tareaId": "0192a8b3-4f89-7e23-9a0c-0305e82c3301",
+  "upid": "UPID:proxmox:0008380E:0131F1BF:6A84EA54:qmcreate:115:root@pam:"
+}
+```
+
+Si falla ese registro luego de que Proxmox aceptó la orden, devuelve
+`500 TASK_TRACKING_UNAVAILABLE` y advierte que no se debe reintentar sin
+verificar el estado. Al terminar, el worker libera la reserva y publica
+`TASK_FINISHED` con `accion: "CREATE"` y el VMID en `recursoId`. Un resultado
+`OK` o `WARNINGS` asigna atómicamente `FULL_ACCESS` al usuario creador antes de
+publicar el evento.
 
 ## Acciones aceptadas — operativo
 

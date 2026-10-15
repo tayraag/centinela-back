@@ -113,7 +113,8 @@ func TestContratoEtapa1(t *testing.T) {
 		}
 	}
 
-	// 202: upid obligatorio, tareaId opcional (se omite si el registro falla).
+	// Las acciones sobre instancias ya existentes conservan el contrato donde
+	// tareaId puede omitirse si la orden ya llegó a Proxmox y falla el registro.
 	verificarObjetoRequerido(t, definitions, acceptedDef, []string{"upid"})
 	tareaID := propiedad(t, definitions, acceptedDef, "tareaId")
 	if tipo := cadena(t, tareaID, "type"); tipo != "string" {
@@ -126,9 +127,18 @@ func TestContratoEtapa1(t *testing.T) {
 	// Aprovisionamiento: solo ADMIN, reserva de cuotas y errores específicos.
 	creacion := objeto(t, objeto(t, paths, "/instances"), "post")
 	verificarBearer(t, creacion)
-	verificarRespuesta(t, creacion, "202", acceptedDef)
+	const creacionAcceptedDef = "http.CreacionAceptadaResponse"
+	verificarRespuesta(t, creacion, "202", creacionAcceptedDef)
+	verificarObjetoRequerido(t, definitions, creacionAcceptedDef, []string{"vmid", "tareaId", "upid"})
+	verificarObjetoRequerido(t, definitions, "http.CrearInstanciaRequest", []string{
+		"tipo", "nombre", "cores", "ramMb", "discoGb", "storageId", "templateOso", "red",
+	})
 	descripcionCreacion := cadena(t, creacion, "description")
-	for _, esperado := range []string{"ADMIN ONLY", "reserva", "CPU", "RAM", "disco", "TASK_FINISHED", "CREATE", "FULL_ACCESS"} {
+	for _, esperado := range []string{
+		"ADMIN ONLY", "contrato plano RF-07", "payload anidado anterior",
+		"cpu.cores", "ram.memoryMb", "os.templateId", "reserva",
+		"CPU", "RAM", "disco", "TASK_FINISHED", "CREATE", "FULL_ACCESS",
+	} {
 		if !strings.Contains(descripcionCreacion, esperado) {
 			t.Errorf("POST /instances debe documentar %q: %q", esperado, descripcionCreacion)
 		}
@@ -138,6 +148,9 @@ func TestContratoEtapa1(t *testing.T) {
 	}
 	if r503 := descripcionRespuesta(t, paths, "/instances", "post", "503"); !strings.Contains(r503, "PROVISIONING_COORDINATION_UNAVAILABLE") {
 		t.Errorf("POST /instances 503 debe documentar PROVISIONING_COORDINATION_UNAVAILABLE: %q", r503)
+	}
+	if r500 := descripcionRespuesta(t, paths, "/instances", "post", "500"); !strings.Contains(r500, "TASK_TRACKING_UNAVAILABLE") {
+		t.Errorf("POST /instances 500 debe documentar TASK_TRACKING_UNAVAILABLE: %q", r500)
 	}
 
 	// Los ocho pares error/status observados en las acciones aceptadas.
