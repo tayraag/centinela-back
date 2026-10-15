@@ -81,7 +81,7 @@ centinela-back/
 │   │       ├── nodo_service.go             # Consolidación de estado, storages y plantillas del nodo
 │   │       ├── inventario_service.go       # Inventario de VMs/CTs filtrado por rol y permisos
 │   │       ├── seguimiento_tareas.go       # Worker pool concurrente de sondeo de UPID y push de TASK_FINISHED
-│   │       ├── aprovisionamiento_service.go# Creación coordinada de VMs/CTs con reserva de cuotas
+│   │       ├── cuotas_service.go            # Validación y reserva coordinada de cuotas para crear VMs/CTs
 │   │       ├── audit_service.go            # Registro y consulta de auditoría particionada
 │   │       └── eventos_service.go          # Despacho de eventos en tiempo real hacia Pub/Sub
 │   │
