@@ -1350,6 +1350,43 @@ const docTemplate = `{
                 }
             }
         },
+        "/auth/ws-ticket": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Genera un UUID criptográfico de un solo uso con TTL de 30 segundos almacenado en Redis bajo la clave ` + "`" + `ws:ticket:\u003cuuid\u003e` + "`" + `. Permite autenticar el handshake de WebSocket sin exponer el JWT en los query parameters.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Autenticación"
+                ],
+                "summary": "Generar ticket efímero para WebSocket",
+                "responses": {
+                    "200": {
+                        "description": "Ticket efímero emitido exitosamente",
+                        "schema": {
+                            "$ref": "#/definitions/http.WsTicketResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "No autenticado o sesión inválida",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Error interno al generar el ticket",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/events": {
             "get": {
                 "description": "Abre un stream ` + "`" + `text/event-stream` + "`" + ` autenticado con el ticket de ` + "`" + `POST /api/events/ticket` + "`" + `, que es de un solo uso y vence a los 30 s: si se conecta dos veces o después de vencer, responde 401 y hay que pedir otro. El ticket se consume con ` + "`" + `GETDEL` + "`" + ` al abrir el stream y el servidor manda ` + "`" + `Cache-Control: no-cache` + "`" + `, ` + "`" + `Connection: keep-alive` + "`" + ` y ` + "`" + `X-Accel-Buffering: no` + "`" + ` para que un proxy nginx no acumule el stream. El framing tiene cuatro formas: (1) ` + "`" + `: conectado` + "`" + ` apenas se abre, que ` + "`" + `EventSource` + "`" + ` ignora; (2) un frame ` + "`" + `id: \u003cevento.id\u003e` + "`" + ` seguido de ` + "`" + `data: \u003chttp.SSEEventPayload en JSON\u003e` + "`" + ` por cada evento, que ` + "`" + `EventSource` + "`" + ` entrega en ` + "`" + `onmessage` + "`" + `; (3) ` + "`" + `: ping` + "`" + ` cada 25 s para que ningún proxy corte la conexión por inactividad; (4) ` + "`" + `event: cierre` + "`" + ` con ` + "`" + `{\"motivo\": ...}` + "`" + ` cuando el backend corta el stream, con motivo ` + "`" + `LOGOUT` + "`" + `, ` + "`" + `SESSIONS_REVOKED` + "`" + ` o ` + "`" + `USER_INACTIVE` + "`" + `. Importante: ` + "`" + `EventSource` + "`" + ` reconecta solo con la misma URL, y el ticket ya fue consumido, por lo que hay que cerrar la fuente y abrir un stream nuevo con un ticket nuevo.",
@@ -2270,9 +2307,152 @@ const docTemplate = `{
                     }
                 }
             }
+        },
+        "/ws/instances/{vmid}/metrics": {
+            "get": {
+                "description": "Establece un canal bidireccional vía WebSocket que emite métricas instantáneas cada 2 segundos. Requiere parámetro query ` + "`" + `?ticket=\u003cuuid\u003e` + "`" + ` emitido previamente vía POST /api/auth/ws-ticket.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Telemetría"
+                ],
+                "summary": "Canal WebSocket de métricas de instancia en tiempo real",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "VMID de la instancia",
+                        "name": "vmid",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Ticket de un solo uso",
+                        "name": "ticket",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "101": {
+                        "description": "Switching Protocols a WebSocket",
+                        "schema": {
+                            "$ref": "#/definitions/domain.MetricasEnVivoDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "INVALID_VMID | BAD_REQUEST",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "WS_TICKET_MISSING | WS_TICKET_INVALID",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "INSTANCE_ACCESS_DENIED",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "INSTANCE_NOT_FOUND",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "INTERNAL_ERROR",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    }
+                }
+            }
         }
     },
     "definitions": {
+        "domain.MetricasEnVivoDTO": {
+            "type": "object",
+            "required": [
+                "cpu",
+                "cpus",
+                "disk",
+                "diskread",
+                "diskwrite",
+                "maxdisk",
+                "maxmem",
+                "mem",
+                "netin",
+                "netout",
+                "status",
+                "timestamp",
+                "uptime",
+                "vmid"
+            ],
+            "properties": {
+                "cpu": {
+                    "type": "number",
+                    "example": 0.12
+                },
+                "cpus": {
+                    "type": "integer",
+                    "example": 2
+                },
+                "disk": {
+                    "type": "integer",
+                    "example": 5368709120
+                },
+                "diskread": {
+                    "type": "integer",
+                    "example": 1048576
+                },
+                "diskwrite": {
+                    "type": "integer",
+                    "example": 2097152
+                },
+                "maxdisk": {
+                    "type": "integer",
+                    "example": 34359738368
+                },
+                "maxmem": {
+                    "type": "integer",
+                    "example": 4294967296
+                },
+                "mem": {
+                    "type": "integer",
+                    "example": 1073741824
+                },
+                "netin": {
+                    "type": "integer",
+                    "example": 10485760
+                },
+                "netout": {
+                    "type": "integer",
+                    "example": 5242880
+                },
+                "status": {
+                    "type": "string",
+                    "example": "running"
+                },
+                "timestamp": {
+                    "type": "integer",
+                    "example": 1728912345
+                },
+                "uptime": {
+                    "type": "integer",
+                    "example": 3600
+                },
+                "vmid": {
+                    "type": "integer",
+                    "example": 110
+                }
+            }
+        },
         "http.AccionAceptadaResponse": {
             "type": "object",
             "required": [
@@ -3086,6 +3266,23 @@ const docTemplate = `{
             "properties": {
                 "codigo": {
                     "type": "string"
+                }
+            }
+        },
+        "http.WsTicketResponse": {
+            "type": "object",
+            "required": [
+                "expiresIn",
+                "ticket"
+            ],
+            "properties": {
+                "expiresIn": {
+                    "type": "integer",
+                    "example": 30
+                },
+                "ticket": {
+                    "type": "string",
+                    "example": "3cb3438a-7dec-4116-b54a-369501674c92"
                 }
             }
         },

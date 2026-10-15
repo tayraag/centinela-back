@@ -1,5 +1,65 @@
 basePath: /api
 definitions:
+  domain.MetricasEnVivoDTO:
+    properties:
+      cpu:
+        example: 0.12
+        type: number
+      cpus:
+        example: 2
+        type: integer
+      disk:
+        example: 5368709120
+        type: integer
+      diskread:
+        example: 1048576
+        type: integer
+      diskwrite:
+        example: 2097152
+        type: integer
+      maxdisk:
+        example: 34359738368
+        type: integer
+      maxmem:
+        example: 4294967296
+        type: integer
+      mem:
+        example: 1073741824
+        type: integer
+      netin:
+        example: 10485760
+        type: integer
+      netout:
+        example: 5242880
+        type: integer
+      status:
+        example: running
+        type: string
+      timestamp:
+        example: 1728912345
+        type: integer
+      uptime:
+        example: 3600
+        type: integer
+      vmid:
+        example: 110
+        type: integer
+    required:
+    - cpu
+    - cpus
+    - disk
+    - diskread
+    - diskwrite
+    - maxdisk
+    - maxmem
+    - mem
+    - netin
+    - netout
+    - status
+    - timestamp
+    - uptime
+    - vmid
+    type: object
   http.AccionAceptadaResponse:
     properties:
       tareaId:
@@ -597,6 +657,18 @@ definitions:
         type: string
     required:
     - codigo
+    type: object
+  http.WsTicketResponse:
+    properties:
+      expiresIn:
+        example: 30
+        type: integer
+      ticket:
+        example: 3cb3438a-7dec-4116-b54a-369501674c92
+        type: string
+    required:
+    - expiresIn
+    - ticket
     type: object
   ports.ActividadDTO:
     properties:
@@ -1807,6 +1879,31 @@ paths:
       summary: Renovar access token
       tags:
       - Autenticación
+  /auth/ws-ticket:
+    post:
+      description: Genera un UUID criptográfico de un solo uso con TTL de 30 segundos
+        almacenado en Redis bajo la clave `ws:ticket:<uuid>`. Permite autenticar el
+        handshake de WebSocket sin exponer el JWT en los query parameters.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Ticket efímero emitido exitosamente
+          schema:
+            $ref: '#/definitions/http.WsTicketResponse'
+        "401":
+          description: No autenticado o sesión inválida
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "500":
+          description: Error interno al generar el ticket
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Generar ticket efímero para WebSocket
+      tags:
+      - Autenticación
   /events:
     get:
       description: 'Abre un stream `text/event-stream` autenticado con el ticket de
@@ -2501,6 +2598,52 @@ paths:
       summary: Listar roles disponibles
       tags:
       - Usuarios (Admin)
+  /ws/instances/{vmid}/metrics:
+    get:
+      description: 'Establece un canal bidireccional vía WebSocket que emite métricas
+        instantáneas cada 2 segundos. Requiere parámetro query `?ticket=<uuid>` emitido
+        previamente vía POST /api/auth/ws-ticket.'
+      parameters:
+      - description: VMID de la instancia
+        in: path
+        name: vmid
+        required: true
+        type: integer
+      - description: Ticket de un solo uso
+        in: query
+        name: ticket
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "101":
+          description: Switching Protocols a WebSocket
+          schema:
+            $ref: '#/definitions/domain.MetricasEnVivoDTO'
+        "400":
+          description: INVALID_VMID | BAD_REQUEST
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "401":
+          description: WS_TICKET_MISSING | WS_TICKET_INVALID
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "403":
+          description: INSTANCE_ACCESS_DENIED
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "404":
+          description: INSTANCE_NOT_FOUND
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "500":
+          description: INTERNAL_ERROR
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+      summary: Canal WebSocket de métricas de instancia en tiempo real
+      tags:
+      - Telemetría
 securityDefinitions:
   BearerAuth:
     description: 'Token de acceso definitivo. Formato: **Bearer &lt;accessToken&gt;**.
