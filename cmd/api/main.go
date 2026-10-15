@@ -135,6 +135,7 @@ func main() {
 	}
 
 	// 4. Inicializar servicios de dominio (inyección de dependencias)
+	nodoNombre := valorODefecto(os.Getenv("PROXMOX_NODE"), "proxmox")
 	auditService := services.NewAuditService(auditRepo)
 	authService := services.NewAuthService(authRepo, kvStore, emailService, auditService)
 	userService := services.NewUserService(userRepo, authRepo, kvStore, auditService, emailService)
@@ -170,10 +171,9 @@ func main() {
 			},
 		})
 	seguimientoTareas.Iniciar(ctx)
-	instanceHandler := httpHandlers.NewInstanceHandler(proxmoxClient, userRepo, seguimientoTareas, tareaRepo, auditService,
-		services.NewInventarioService(proxmoxClient), cuotasService)
+	instanceHandler := httpHandlers.NewInstanceHandlerConNodo(proxmoxClient, userRepo, seguimientoTareas, tareaRepo, auditService,
+		services.NewInventarioService(proxmoxClient), nodoNombre, cuotasService)
 	eventsHandler := httpHandlers.NewEventsHandler(eventosService)
-	nodoNombre := valorODefecto(os.Getenv("PROXMOX_NODE"), "proxmox")
 	nodeHandler := httpHandlers.NewNodeHandler(services.NewNodoService(proxmoxClient, kvStore, nodoNombre), proxmoxClient, nodoNombre)
 	wsMetricsHandler := httpHandlers.NewMetricsWSHandler(proxmoxClient, instanceRepo, authRepo, kvStore, nodoNombre)
 

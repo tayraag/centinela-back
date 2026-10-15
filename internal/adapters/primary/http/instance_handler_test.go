@@ -3,6 +3,7 @@ package http_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -150,6 +151,12 @@ type seguimientoNulo struct{}
 
 func (seguimientoNulo) Seguir(context.Context, uuid.UUID, int, string, string, ...map[string]any) (uuid.UUID, error) {
 	return uuid.New(), nil
+}
+
+type seguimientoError struct{ err error }
+
+func (s seguimientoError) Seguir(context.Context, uuid.UUID, int, string, string, ...map[string]any) (uuid.UUID, error) {
+	return uuid.Nil, s.err
 }
 
 type seguimientoCaptura struct {
@@ -300,8 +307,98 @@ func TestCrearInstancia_RegistraOrdenRealEnSeguimiento(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &respuesta); err != nil {
 		t.Fatal(err)
 	}
-	if respuesta["upid"] != upid || respuesta["tareaId"] != tareaID.String() {
+	if respuesta["vmid"] != float64(502) || respuesta["upid"] != upid || respuesta["tareaId"] != tareaID.String() {
 		t.Fatalf("respuesta asincrónica incorrecta: %v", respuesta)
+	}
+}
+
+func TestCrearInstancia_ContratoPlanoRF07CreaVMYLXC(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	casos := []struct {
+		nombre     string
+		body       string
+		tipo       string
+		templateID string
+		accion     string
+	}{
+		{
+			nombre: "VM", tipo: ports.TipoInstanciaQemu, accion: ports.AccionProxmoxCrearVM,
+			templateID: "local-lvm:iso/debian-12.iso",
+			body:       `{"tipo":"vm","nombre":"srv-prod-01","cores":2,"ramMb":2048,"discoGb":20,"storageId":"local-lvm","templateOso":"debian-12.iso","red":{"modo":"dhcp"}}`,
+		},
+		{
+			nombre: "LXC", tipo: ports.TipoInstanciaLXC, accion: ports.AccionProxmoxCrearLXC,
+			templateID: "local-lvm:vztmpl/debian-12-standard.tar.zst",
+			body:       `{"tipo":"lxc","nombre":"ct-prod-01","cores":1,"ramMb":1024,"discoGb":8,"storageId":"local-lvm","templateOso":"debian-12-standard.tar.zst","red":{"modo":"static","ip":"192.168.1.50","gateway":"192.168.1.1"}}`,
+		},
+	}
+
+	for _, caso := range casos {
+		t.Run(caso.nombre, func(t *testing.T) {
+			tareaID := uuid.New()
+			upid := "UPID:pve1:1:2:3:" + caso.accion + ":615:root@pam:"
+			px := &mockProxmoxPort{aprovRes: &ports.ResultadoAprovisionamiento{VMID: 615, UPID: upid, Accion: caso.accion}}
+			seguimiento := &seguimientoCaptura{id: tareaID}
+			handler := adaptersHttp.NewInstanceHandlerConNodo(px, &mockUserRepository{}, seguimiento, &mockTareaRepository{}, &mockAuditService{}, inventarioNulo{}, "pve1")
+			router := gin.New()
+			router.POST("/api/instances", func(c *gin.Context) {
+				c.Set(string(middleware.ContextKeyUserID), uuid.NewString())
+			}, handler.CrearInstancia)
+
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/instances", strings.NewReader(caso.body)))
+
+			if w.Code != http.StatusAccepted {
+				t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+			}
+			if px.aprovInput.Tipo != caso.tipo || px.aprovInput.Nodo != "pve1" || px.aprovInput.Bridge != "vmbr0" || px.aprovInput.TemplateID != caso.templateID {
+				t.Fatalf("input normalizado incorrecto: %+v", px.aprovInput)
+			}
+			if caso.tipo == ports.TipoInstanciaLXC && (px.aprovInput.Password != "" || px.aprovInput.IPv4Mask != "24") {
+				t.Fatalf("LXC plano debe admitir password vacío y normalizar /24: %+v", px.aprovInput)
+			}
+			var respuesta map[string]any
+			if err := json.Unmarshal(w.Body.Bytes(), &respuesta); err != nil {
+				t.Fatal(err)
+			}
+			if respuesta["vmid"] != float64(615) || respuesta["tareaId"] != tareaID.String() || respuesta["upid"] != upid {
+				t.Fatalf("respuesta 202 incompleta: %v", respuesta)
+			}
+		})
+	}
+}
+
+func TestCrearInstancia_OperatorRecibe403SinLlegarAlServicio(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	px := &mockProxmoxPort{}
+	handler := adaptersHttp.NewInstanceHandler(px, &mockUserRepository{}, seguimientoNulo{}, &mockTareaRepository{}, &mockAuditService{}, inventarioNulo{})
+	router := gin.New()
+	router.POST("/api/instances", func(c *gin.Context) {
+		c.Set(string(middleware.ContextKeyRol), "OPERATOR")
+	}, middleware.RequireRole("ADMIN"), handler.CrearInstancia)
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/instances", strings.NewReader(`{"tipo":"vm"}`)))
+
+	if w.Code != http.StatusForbidden || px.escrituras != 0 {
+		t.Fatalf("status=%d escrituras=%d body=%s", w.Code, px.escrituras, w.Body.String())
+	}
+}
+
+func TestCrearInstancia_NoResponde202SiNoRegistraElUPID(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	px := &mockProxmoxPort{aprovRes: &ports.ResultadoAprovisionamiento{VMID: 620, UPID: "UPID:pve1:qmcreate:620", Accion: ports.AccionProxmoxCrearVM}}
+	handler := adaptersHttp.NewInstanceHandlerConNodo(px, &mockUserRepository{}, seguimientoError{err: errors.New("base no disponible")}, &mockTareaRepository{}, &mockAuditService{}, inventarioNulo{}, "pve1")
+	router := gin.New()
+	router.POST("/api/instances", handler.CrearInstancia)
+	body := `{"type":"VM","node":"pve1","name":"srv","cpu":{"cores":1},"ram":{"memoryMb":512},"disk":{"storageId":"local-lvm","sizeGb":4},"network":{"bridge":"vmbr0","ipv4":{"type":"dhcp"}},"os":{"templateId":"local:iso/debian.iso"}}`
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/instances", strings.NewReader(body)))
+
+	var respuesta map[string]string
+	_ = json.Unmarshal(w.Body.Bytes(), &respuesta)
+	if w.Code != http.StatusInternalServerError || respuesta["errorCode"] != "TASK_TRACKING_UNAVAILABLE" {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
 	}
 }
 
@@ -311,7 +408,7 @@ func TestCrearInstancia_RecursosInsuficientesEs409(t *testing.T) {
 	handler := adaptersHttp.NewInstanceHandler(px, &mockUserRepository{}, seguimientoNulo{}, &mockTareaRepository{}, &mockAuditService{}, inventarioNulo{})
 	router := gin.New()
 	router.POST("/api/instances", handler.CrearInstancia)
-	body := `{"type":"VM","node":"pve1","name":"web","cpu":{"cores":2},"ram":{"memoryMb":4096},"disk":{"storageId":"local-lvm","sizeGb":50},"network":{"bridge":"vmbr0","ipv4":{"type":"dhcp"}},"os":{"templateId":"local:iso/debian.iso"}}`
+	body := `{"tipo":"vm","nombre":"web","cores":2,"ramMb":4096,"discoGb":50,"storageId":"local-lvm","templateOso":"debian.iso","red":{"modo":"dhcp"}}`
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/instances", strings.NewReader(body)))
 

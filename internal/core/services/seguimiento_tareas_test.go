@@ -74,9 +74,10 @@ func (p *proxmoxTareas) ObtenerEstadoActual(context.Context, string, string, int
 }
 
 type tareasEnMemoria struct {
-	mu     sync.Mutex
-	tareas map[uuid.UUID]*domain.TareaAsincrona
-	audit  *auditoriaGrabadora
+	mu               sync.Mutex
+	tareas           map[uuid.UUID]*domain.TareaAsincrona
+	audit            *auditoriaGrabadora
+	auditoriaInicial ports.RegistrarAuditoriaInput
 }
 
 func (r *tareasEnMemoria) Crear(_ context.Context, t *domain.TareaAsincrona, auditoria ports.RegistrarAuditoriaInput) error {
@@ -84,6 +85,7 @@ func (r *tareasEnMemoria) Crear(_ context.Context, t *domain.TareaAsincrona, aud
 	defer r.mu.Unlock()
 	copia := *t
 	r.tareas[t.ID] = &copia
+	r.auditoriaInicial = auditoria
 	return nil
 }
 func (r *tareasEnMemoria) ActualizarEstado(_ context.Context, id uuid.UUID, estado string, metadatos map[string]any, auditoria ports.RegistrarAuditoriaInput) error {
@@ -131,6 +133,32 @@ func (r *tareasEnMemoria) estado(id uuid.UUID) string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.tareas[id].Estado
+}
+
+func TestSeguimiento_RegistraCreacionRunningConUPIDYAuditoriaInicial(t *testing.T) {
+	repo := &tareasEnMemoria{tareas: map[uuid.UUID]*domain.TareaAsincrona{}}
+	pool := services.NewSeguimientoTareas(&proxmoxTareas{}, repo, services.NewAuditService(nil), services.ConfigSeguimiento{})
+	usuarioID := uuid.New()
+	upid := "UPID:pve1:00000001:00000002:00000003:qmcreate:115:root@pam:"
+
+	tareaID, err := pool.Seguir(context.Background(), usuarioID, 115, ports.AccionProxmoxCrearVM, upid, map[string]any{
+		"instanciaNombre": "srv-prod-01",
+		"resource_type":   ports.TipoInstanciaQemu,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	repo.mu.Lock()
+	tarea := *repo.tareas[tareaID]
+	auditoria := repo.auditoriaInicial
+	repo.mu.Unlock()
+	if tarea.Estado != ports.TareaRunning || tarea.UpidProxmox != upid || tarea.InstanciaID != "115" || tarea.UsuarioID != usuarioID {
+		t.Fatalf("tarea inicial incorrecta: %+v", tarea)
+	}
+	if auditoria.Accion != ports.AccionCrearVM || auditoria.Resultado != ports.ResultadoPendiente || auditoria.InstanciaID != "115" || auditoria.InstanciaNombre != "srv-prod-01" {
+		t.Fatalf("auditoría inicial incorrecta: %+v", auditoria)
+	}
 }
 
 // publicadorFalso captura los eventos publicados.

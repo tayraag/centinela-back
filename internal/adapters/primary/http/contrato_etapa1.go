@@ -59,6 +59,14 @@ type AccionAceptadaResponse struct {
 	TareaID *string `json:"tareaId,omitempty" example:"3f2504e0-4f89-11d3-9a0c-0305e82c3301"`
 }
 
+// CreacionAceptadaResponse confirma que Proxmox aceptó la creación y que su
+// UPID quedó registrado como tarea RUNNING antes de devolver HTTP 202.
+type CreacionAceptadaResponse struct {
+	VMID    int    `json:"vmid" binding:"required" minimum:"100" example:"115"`
+	TareaID string `json:"tareaId" binding:"required" example:"0192a8b3-4f89-7e23-9a0c-0305e82c3301"`
+	Upid    string `json:"upid" binding:"required" example:"UPID:proxmox:0008380E:0131F1BF:6A84EA54:qmcreate:115:root@pam:"`
+}
+
 // InstanciaInventarioResponse documenta cada elemento del inventario operativo.
 type InstanciaInventarioResponse struct {
 	ID          int                 `json:"id" binding:"required" example:"110"`

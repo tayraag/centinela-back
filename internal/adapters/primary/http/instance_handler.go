@@ -1,6 +1,7 @@
 package http
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -14,6 +15,7 @@ import (
 	"el-centinela/internal/core/ports"
 
 	"github.com/gin-gonic/gin"
+	"github.com/gin-gonic/gin/binding"
 )
 
 // ==========================================
@@ -31,6 +33,7 @@ import (
 type InstanceHandler struct {
 	proxmox           ports.ProxmoxPort
 	aprovisionamiento ports.AprovisionamientoPort
+	nodoPorDefecto    string
 	userRepo          ports.UserRepository
 	seguimiento       ports.SeguimientoTareas
 	inventario        ports.InventarioService // resuelve las IPs del listado
@@ -38,52 +41,82 @@ type InstanceHandler struct {
 	audit             ports.AuditService
 }
 
-type CrearInstanciaCPURequest struct {
+type crearInstanciaCPUWizardRequest struct {
 	Cores int `json:"cores" example:"2"`
 }
 
-type CrearInstanciaRAMRequest struct {
+type crearInstanciaRAMWizardRequest struct {
 	MemoryMB int `json:"memoryMb" example:"4096"`
 }
 
-type CrearInstanciaDiscoRequest struct {
+type crearInstanciaDiscoWizardRequest struct {
 	StorageID        string `json:"storageId" example:"local-lvm"`
 	SizeGB           int    `json:"sizeGb" example:"50"`
 	Format           string `json:"format,omitempty" example:"raw"`
 	ThinProvisioning bool   `json:"thinProvisioning,omitempty" example:"true"`
 }
 
-type CrearInstanciaIPv4Request struct {
+type crearInstanciaIPv4WizardRequest struct {
 	Type    string `json:"type" example:"dhcp"`
 	Address string `json:"address,omitempty" example:"192.168.1.50"`
 	Mask    string `json:"mask,omitempty" example:"24"`
 	Gateway string `json:"gateway,omitempty" example:"192.168.1.1"`
 }
 
-type CrearInstanciaRedRequest struct {
-	Bridge   string                    `json:"bridge" example:"vmbr0"`
-	VLAN     *int                      `json:"vlan,omitempty" example:"100"`
-	Firewall bool                      `json:"firewall" example:"true"`
-	IPv4     CrearInstanciaIPv4Request `json:"ipv4"`
+type crearInstanciaRedWizardRequest struct {
+	Bridge   string                          `json:"bridge" example:"vmbr0"`
+	VLAN     *int                            `json:"vlan,omitempty" example:"100"`
+	Firewall bool                            `json:"firewall" example:"true"`
+	IPv4     crearInstanciaIPv4WizardRequest `json:"ipv4"`
 }
 
-type CrearInstanciaOSRequest struct {
+type crearInstanciaOSWizardRequest struct {
 	TemplateID string `json:"templateId" example:"local:iso/debian-12.iso"`
 }
 
-// CrearInstanciaRequest es el resumen final del wizard de aprovisionamiento.
-// type acepta VM o LXC; password solo es obligatorio para LXC.
+// CrearInstanciaRedRequest representa la red del contrato RF-07. Para una IP
+// estática se acepta ip con CIDR (192.168.1.50/24) o mascara por separado; si
+// se omite la máscara se usa /24. Bridge mantiene vmbr0 como valor por defecto.
+type CrearInstanciaRedRequest struct {
+	Modo     string `json:"modo" binding:"required,oneof=dhcp static DHCP STATIC" example:"dhcp"`
+	IP       string `json:"ip,omitempty" example:"192.168.1.50/24"`
+	Gateway  string `json:"gateway,omitempty" example:"192.168.1.1"`
+	Mascara  string `json:"mascara,omitempty" example:"24"`
+	Bridge   string `json:"bridge,omitempty" example:"vmbr0"`
+	VLAN     *int   `json:"vlan,omitempty" example:"100"`
+	Firewall bool   `json:"firewall,omitempty" example:"true"`
+}
+
+// CrearInstanciaRequest es el contrato unificado RF-07. nodo, password y los
+// ajustes avanzados de red son opcionales; el backend usa el nodo configurado
+// y vmbr0 cuando no se informan.
 type CrearInstanciaRequest struct {
-	Type        string                     `json:"type" example:"VM"`
-	Node        string                     `json:"node" example:"pve1"`
-	Name        string                     `json:"name" example:"web-server"`
-	Description string                     `json:"description,omitempty" example:"Servidor web principal"`
-	Password    string                     `json:"password,omitempty"`
-	CPU         CrearInstanciaCPURequest   `json:"cpu"`
-	RAM         CrearInstanciaRAMRequest   `json:"ram"`
-	Disk        CrearInstanciaDiscoRequest `json:"disk"`
-	Network     CrearInstanciaRedRequest   `json:"network"`
-	OS          CrearInstanciaOSRequest    `json:"os"`
+	Tipo        string                   `json:"tipo" binding:"required" example:"vm"`
+	Nodo        string                   `json:"nodo,omitempty" example:"pve1"`
+	Nombre      string                   `json:"nombre" binding:"required" example:"srv-prod-01"`
+	Descripcion string                   `json:"descripcion,omitempty" example:"Servidor web principal"`
+	Password    string                   `json:"password,omitempty"`
+	Cores       int                      `json:"cores" binding:"required,min=1" example:"2"`
+	RAMMB       int                      `json:"ramMb" binding:"required,min=16" example:"2048"`
+	DiscoGB     int                      `json:"discoGb" binding:"required,min=1" example:"20"`
+	StorageID   string                   `json:"storageId" binding:"required" example:"local-lvm"`
+	TemplateOS  string                   `json:"templateOso" binding:"required" example:"local:iso/debian-12.iso"`
+	Red         CrearInstanciaRedRequest `json:"red" binding:"required"`
+}
+
+// crearInstanciaWizardPayload conserva temporalmente el contrato anidado que
+// ya consume el frontend. No se expone en Swagger como contrato nuevo.
+type crearInstanciaWizardPayload struct {
+	Type        string                           `json:"type"`
+	Node        string                           `json:"node"`
+	Name        string                           `json:"name"`
+	Description string                           `json:"description,omitempty"`
+	Password    string                           `json:"password,omitempty"`
+	CPU         crearInstanciaCPUWizardRequest   `json:"cpu"`
+	RAM         crearInstanciaRAMWizardRequest   `json:"ram"`
+	Disk        crearInstanciaDiscoWizardRequest `json:"disk"`
+	Network     crearInstanciaRedWizardRequest   `json:"network"`
+	OS          crearInstanciaOSWizardRequest    `json:"os"`
 }
 
 // NewInstanceHandler crea un nuevo InstanceHandler.
@@ -98,6 +131,21 @@ func NewInstanceHandler(
 	inventario ports.InventarioService,
 	aprovisionamiento ...ports.AprovisionamientoPort,
 ) *InstanceHandler {
+	return NewInstanceHandlerConNodo(proxmox, userRepo, seguimiento, tareas, audit, inventario, "proxmox", aprovisionamiento...)
+}
+
+// NewInstanceHandlerConNodo permite que el contrato RF-07 omita nodo sin
+// acoplar el handler a variables de entorno. main inyecta PROXMOX_NODE.
+func NewInstanceHandlerConNodo(
+	proxmox ports.ProxmoxPort,
+	userRepo ports.UserRepository,
+	seguimiento ports.SeguimientoTareas,
+	tareas ports.TareaRepository,
+	audit ports.AuditService,
+	inventario ports.InventarioService,
+	nodoPorDefecto string,
+	aprovisionamiento ...ports.AprovisionamientoPort,
+) *InstanceHandler {
 	var provisionador ports.AprovisionamientoPort
 	if len(aprovisionamiento) > 0 {
 		provisionador = aprovisionamiento[0]
@@ -108,6 +156,7 @@ func NewInstanceHandler(
 		inventario:        inventario,
 		proxmox:           proxmox,
 		aprovisionamiento: provisionador,
+		nodoPorDefecto:    strings.TrimSpace(nodoPorDefecto),
 		userRepo:          userRepo,
 		seguimiento:       seguimiento,
 		tareas:            tareas,
@@ -242,81 +291,172 @@ func mapearErrorProxmox(c *gin.Context, err error) {
 	}
 }
 
-func normalizarCreacion(req CrearInstanciaRequest) (ports.CrearInstanciaProxmoxInput, error) {
-	tipo := strings.ToUpper(strings.TrimSpace(req.Type))
-	tipoProxmox := ports.TipoInstanciaQemu
-	if tipo == "LXC" {
-		tipoProxmox = ports.TipoInstanciaLXC
-	} else if tipo != "VM" {
-		return ports.CrearInstanciaProxmoxInput{}, fmt.Errorf("type debe ser VM o LXC")
+func normalizarCreacionPlana(req CrearInstanciaRequest, nodoPorDefecto string) (ports.CrearInstanciaProxmoxInput, error) {
+	tipo, err := normalizarTipoInstancia(req.Tipo)
+	if err != nil {
+		return ports.CrearInstanciaProxmoxInput{}, err
 	}
-	if strings.TrimSpace(req.Node) == "" || strings.TrimSpace(req.Name) == "" {
-		return ports.CrearInstanciaProxmoxInput{}, fmt.Errorf("node y name son obligatorios")
+	nodo := strings.TrimSpace(req.Nodo)
+	if nodo == "" {
+		nodo = strings.TrimSpace(nodoPorDefecto)
 	}
-	if req.CPU.Cores < 1 || req.RAM.MemoryMB < 16 {
-		return ports.CrearInstanciaProxmoxInput{}, fmt.Errorf("cpu.cores debe ser al menos 1 y ram.memoryMb al menos 16")
+	bridge := strings.TrimSpace(req.Red.Bridge)
+	if bridge == "" {
+		bridge = "vmbr0"
 	}
-	if strings.TrimSpace(req.Disk.StorageID) == "" || req.Disk.SizeGB < 1 {
-		return ports.CrearInstanciaProxmoxInput{}, fmt.Errorf("disk.storageId es obligatorio y disk.sizeGb debe ser al menos 1")
+	address, mask := separarIPv4YMascara(req.Red.IP, req.Red.Mascara)
+	templateID := strings.TrimSpace(req.TemplateOS)
+	if templateID != "" && !strings.Contains(templateID, ":") {
+		carpeta := "iso"
+		if tipo == ports.TipoInstanciaLXC {
+			carpeta = "vztmpl"
+		}
+		templateID = fmt.Sprintf("%s:%s/%s", strings.TrimSpace(req.StorageID), carpeta, templateID)
 	}
-	if strings.TrimSpace(req.Network.Bridge) == "" || strings.TrimSpace(req.OS.TemplateID) == "" {
-		return ports.CrearInstanciaProxmoxInput{}, fmt.Errorf("network.bridge y os.templateId son obligatorios")
+	return validarCreacionNormalizada(ports.CrearInstanciaProxmoxInput{
+		Tipo: tipo, Nodo: nodo, Nombre: req.Nombre, Descripcion: req.Descripcion, Password: req.Password,
+		Cores: req.Cores, MemoriaMB: req.RAMMB, StorageID: req.StorageID, DiscoGB: req.DiscoGB,
+		TemplateID: templateID, Bridge: bridge, VLAN: req.Red.VLAN, Firewall: req.Red.Firewall,
+		IPv4Tipo: req.Red.Modo, IPv4Address: address, IPv4Mask: mask, IPv4Gateway: req.Red.Gateway,
+	}, false)
+}
+
+func normalizarCreacionWizard(req crearInstanciaWizardPayload) (ports.CrearInstanciaProxmoxInput, error) {
+	tipo, err := normalizarTipoInstancia(req.Type)
+	if err != nil {
+		return ports.CrearInstanciaProxmoxInput{}, err
 	}
-	if req.Network.VLAN != nil && (*req.Network.VLAN < 1 || *req.Network.VLAN > 4094) {
-		return ports.CrearInstanciaProxmoxInput{}, fmt.Errorf("network.vlan debe estar entre 1 y 4094")
+	return validarCreacionNormalizada(ports.CrearInstanciaProxmoxInput{
+		Tipo: tipo, Nodo: req.Node, Nombre: req.Name, Descripcion: req.Description, Password: req.Password,
+		Cores: req.CPU.Cores, MemoriaMB: req.RAM.MemoryMB, StorageID: req.Disk.StorageID, DiscoGB: req.Disk.SizeGB,
+		TemplateID: req.OS.TemplateID, Bridge: req.Network.Bridge, VLAN: req.Network.VLAN, Firewall: req.Network.Firewall,
+		IPv4Tipo: req.Network.IPv4.Type, IPv4Address: req.Network.IPv4.Address,
+		IPv4Mask: req.Network.IPv4.Mask, IPv4Gateway: req.Network.IPv4.Gateway,
+	}, true)
+}
+
+func normalizarTipoInstancia(tipo string) (string, error) {
+	switch strings.ToUpper(strings.TrimSpace(tipo)) {
+	case "VM":
+		return ports.TipoInstanciaQemu, nil
+	case "LXC":
+		return ports.TipoInstanciaLXC, nil
+	default:
+		return "", fmt.Errorf("tipo debe ser VM o LXC")
 	}
-	ipv4Tipo := strings.ToLower(strings.TrimSpace(req.Network.IPv4.Type))
-	if ipv4Tipo != "dhcp" && ipv4Tipo != "static" {
-		return ports.CrearInstanciaProxmoxInput{}, fmt.Errorf("network.ipv4.type debe ser dhcp o static")
+}
+
+func validarCreacionNormalizada(input ports.CrearInstanciaProxmoxInput, exigirPasswordLXC bool) (ports.CrearInstanciaProxmoxInput, error) {
+	input.Nodo = strings.TrimSpace(input.Nodo)
+	input.Nombre = strings.TrimSpace(input.Nombre)
+	input.Descripcion = strings.TrimSpace(input.Descripcion)
+	input.StorageID = strings.TrimSpace(input.StorageID)
+	input.TemplateID = strings.TrimSpace(input.TemplateID)
+	input.Bridge = strings.TrimSpace(input.Bridge)
+	input.IPv4Tipo = strings.ToLower(strings.TrimSpace(input.IPv4Tipo))
+	input.IPv4Address = strings.TrimSpace(input.IPv4Address)
+	input.IPv4Mask = strings.TrimSpace(input.IPv4Mask)
+	input.IPv4Gateway = strings.TrimSpace(input.IPv4Gateway)
+
+	if input.Nodo == "" || input.Nombre == "" {
+		return ports.CrearInstanciaProxmoxInput{}, fmt.Errorf("nodo y nombre son obligatorios")
 	}
-	if ipv4Tipo == "static" {
-		mask, err := strconv.Atoi(req.Network.IPv4.Mask)
-		if net.ParseIP(req.Network.IPv4.Address) == nil || net.ParseIP(req.Network.IPv4.Gateway) == nil || err != nil || mask < 0 || mask > 32 {
-			return ports.CrearInstanciaProxmoxInput{}, fmt.Errorf("network.ipv4 estática requiere address, mask IPv4 (0-32) y gateway válidos")
+	if input.Cores < 1 || input.MemoriaMB < 16 {
+		return ports.CrearInstanciaProxmoxInput{}, fmt.Errorf("cores debe ser al menos 1 y la RAM al menos 16 MiB")
+	}
+	if input.StorageID == "" || input.DiscoGB < 1 {
+		return ports.CrearInstanciaProxmoxInput{}, fmt.Errorf("storageId es obligatorio y discoGb debe ser al menos 1")
+	}
+	if input.Bridge == "" || input.TemplateID == "" {
+		return ports.CrearInstanciaProxmoxInput{}, fmt.Errorf("bridge y template son obligatorios")
+	}
+	if input.VLAN != nil && (*input.VLAN < 1 || *input.VLAN > 4094) {
+		return ports.CrearInstanciaProxmoxInput{}, fmt.Errorf("vlan debe estar entre 1 y 4094")
+	}
+	if input.IPv4Tipo != "dhcp" && input.IPv4Tipo != "static" {
+		return ports.CrearInstanciaProxmoxInput{}, fmt.Errorf("el modo de red debe ser dhcp o static")
+	}
+	if input.IPv4Tipo == "static" {
+		mask, err := strconv.Atoi(input.IPv4Mask)
+		if net.ParseIP(input.IPv4Address) == nil || net.ParseIP(input.IPv4Gateway) == nil || err != nil || mask < 0 || mask > 32 {
+			return ports.CrearInstanciaProxmoxInput{}, fmt.Errorf("la red estática requiere IP, máscara IPv4 (0-32) y gateway válidos")
 		}
 	}
-	if tipoProxmox == ports.TipoInstanciaLXC && strings.TrimSpace(req.Password) == "" {
+	if exigirPasswordLXC && input.Tipo == ports.TipoInstanciaLXC && strings.TrimSpace(input.Password) == "" {
 		return ports.CrearInstanciaProxmoxInput{}, fmt.Errorf("password es obligatorio para LXC")
 	}
+	return input, nil
+}
 
-	return ports.CrearInstanciaProxmoxInput{
-		Tipo: tipoProxmox, Nodo: strings.TrimSpace(req.Node), Nombre: strings.TrimSpace(req.Name),
-		Descripcion: strings.TrimSpace(req.Description), Password: req.Password,
-		Cores: req.CPU.Cores, MemoriaMB: req.RAM.MemoryMB,
-		StorageID: strings.TrimSpace(req.Disk.StorageID), DiscoGB: req.Disk.SizeGB,
-		TemplateID: strings.TrimSpace(req.OS.TemplateID), Bridge: strings.TrimSpace(req.Network.Bridge),
-		VLAN: req.Network.VLAN, Firewall: req.Network.Firewall, IPv4Tipo: ipv4Tipo,
-		IPv4Address: strings.TrimSpace(req.Network.IPv4.Address), IPv4Mask: strings.TrimSpace(req.Network.IPv4.Mask),
-		IPv4Gateway: strings.TrimSpace(req.Network.IPv4.Gateway),
-	}, nil
+func separarIPv4YMascara(ip, mascara string) (string, string) {
+	ip = strings.TrimSpace(ip)
+	mascara = strings.TrimSpace(mascara)
+	if host, red, err := net.ParseCIDR(ip); err == nil && host.To4() != nil {
+		unos, bits := red.Mask.Size()
+		if bits == 32 {
+			return host.String(), strconv.Itoa(unos)
+		}
+	}
+	if mascara == "" && net.ParseIP(ip) != nil {
+		mascara = "24"
+	}
+	return ip, mascara
+}
+
+func esContratoPlanoCreacion(campos map[string]json.RawMessage) bool {
+	for _, campo := range []string{"tipo", "nombre", "cores", "ramMb", "discoGb", "storageId", "templateOso", "red"} {
+		if _, existe := campos[campo]; existe {
+			return true
+		}
+	}
+	return false
 }
 
 // CrearInstancia reserva el siguiente VMID en Proxmox, dispara qmcreate o
 // vzcreate y registra inmediatamente el UPID con el usuario autenticado.
 //
 // @Summary      Crear una VM o contenedor
-// @Description  ADMIN ONLY. CuotasService usa el lock Redis `lock:instance:provisioning` con TTL de 30 s y hasta 2 s de espera. Consulta la capacidad cacheada (o Proxmox si falta), valida CPU lógica, RAM con 15% de headroom y disco contra `avail` del storage, registra una reserva temporal e invalida la caché al aceptar la orden. El resultado llega por TASK_FINISHED con accion CREATE; al completar correctamente (OK o WARNINGS), el creador recibe FULL_ACCESS y se vuelve a invalidar la capacidad.
+// @Description  ADMIN ONLY. El contrato plano RF-07 descrito en el body es el formato canónico. Durante la migración del frontend también se acepta el payload anidado anterior con `type`, `node`, `name`, `cpu.cores`, `ram.memoryMb`, `disk.storageId/sizeGb`, `network.bridge/vlan/firewall/ipv4` y `os.templateId`; para LXC ese formato requiere `password`. CuotasService usa el lock Redis `lock:instance:provisioning` con TTL de 30 s y hasta 2 s de espera. Consulta la capacidad cacheada (o Proxmox si falta), valida CPU lógica, RAM con 15% de headroom y disco contra `avail` del storage, y registra una reserva temporal. Luego obtiene el VMID mediante `/cluster/nextid`, despacha la creación QEMU o LXC y solo responde 202 con vmid, tareaId y upid después de persistir la tarea RUNNING y su auditoría inicial. El resultado llega por TASK_FINISHED con accion CREATE; al completar correctamente (OK o WARNINGS), el creador recibe FULL_ACCESS y se vuelve a invalidar la capacidad.
 // @Tags         Instancias Proxmox
 // @Accept       json
 // @Produce      json
 // @Security     BearerAuth
 // @Param        body body CrearInstanciaRequest true "Configuración de la instancia"
-// @Success      202 {object} AccionAceptadaResponse
+// @Success      202 {object} CreacionAceptadaResponse
 // @Failure      400 {object} ErrorResponse "INVALID_REQUEST"
 // @Failure      401 {object} ErrorResponse "MISSING_TOKEN | INVALID_TOKEN | TOKEN_REVOKED"
 // @Failure      403 {object} ErrorResponse "WRONG_TOKEN_TYPE | 2FA_REQUIRED | INSUFFICIENT_PERMISSIONS"
 // @Failure      409 {object} ErrorResponse "RESOURCE_QUOTA_EXCEEDED"
+// @Failure      500 {object} ErrorResponse "TASK_TRACKING_UNAVAILABLE"
 // @Failure      502 {object} ErrorResponse "PROXMOX_UNAVAILABLE"
 // @Failure      503 {object} ErrorResponse "PROVISIONING_COORDINATION_UNAVAILABLE"
 // @Failure      504 {object} ErrorResponse "PROXMOX_TIMEOUT"
 // @Router       /instances [post]
 func (h *InstanceHandler) CrearInstancia(c *gin.Context) {
-	var req CrearInstanciaRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
+	var campos map[string]json.RawMessage
+	if err := c.ShouldBindBodyWith(&campos, binding.JSON); err != nil {
 		SendError(c, http.StatusBadRequest, "INVALID_REQUEST", "El cuerpo de la solicitud no es un JSON válido.")
 		return
 	}
-	input, err := normalizarCreacion(req)
+	var (
+		input ports.CrearInstanciaProxmoxInput
+		err   error
+	)
+	if esContratoPlanoCreacion(campos) {
+		var plano CrearInstanciaRequest
+		if err := c.ShouldBindBodyWith(&plano, binding.JSON); err != nil {
+			SendError(c, http.StatusBadRequest, "INVALID_REQUEST", "El cuerpo no cumple el esquema de creación de instancias.")
+			return
+		}
+		input, err = normalizarCreacionPlana(plano, h.nodoPorDefecto)
+	} else {
+		var legado crearInstanciaWizardPayload
+		if err := c.ShouldBindBodyWith(&legado, binding.JSON); err != nil {
+			SendError(c, http.StatusBadRequest, "INVALID_REQUEST", "El cuerpo de la solicitud no es un JSON válido.")
+			return
+		}
+		input, err = normalizarCreacionWizard(legado)
+	}
 	if err != nil {
 		SendError(c, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
 		return
@@ -330,11 +470,18 @@ func (h *InstanceHandler) CrearInstancia(c *gin.Context) {
 		mapearErrorProxmox(c, err)
 		return
 	}
-	h.responderTarea(c, resultado.VMID, resultado.Accion, resultado.UPID, map[string]any{
+	metadatos := map[string]any{
 		"instanciaNombre": input.Nombre,
 		"resource_type":   input.Tipo,
 		"reserva_id":      resultado.ReservaID,
-	})
+	}
+	tareaID, err := h.seguimiento.Seguir(c.Request.Context(), extraerUserID(c), resultado.VMID, resultado.Accion, resultado.UPID, metadatos)
+	if err != nil {
+		log.Printf("[TAREAS] Proxmox aceptó la creación %s de %d pero no se pudo registrar su seguimiento: %v", resultado.UPID, resultado.VMID, err)
+		SendError(c, http.StatusInternalServerError, "TASK_TRACKING_UNAVAILABLE", "Proxmox aceptó la creación, pero no se pudo registrar su seguimiento. Verifique el estado antes de reintentar.")
+		return
+	}
+	c.JSON(http.StatusAccepted, CreacionAceptadaResponse{VMID: resultado.VMID, TareaID: tareaID.String(), Upid: resultado.UPID})
 }
 
 // ==========================================

@@ -160,24 +160,26 @@ func TestClient_ObtenerInstancia_VmidInexistente(t *testing.T) {
 
 func TestClient_AprovisionarInstancia_ReservaVMIDYEnviaConfiguracion(t *testing.T) {
 	casos := []struct {
-		nombre string
-		input  ports.CrearInstanciaProxmoxInput
-		path   string
-		accion string
-		upid   string
-		campos map[string]string
+		nombre   string
+		input    ports.CrearInstanciaProxmoxInput
+		path     string
+		accion   string
+		upid     string
+		campos   map[string]string
+		ausentes []string
 	}{
 		{
 			nombre: "VM", path: "/api2/json/nodes/pve1/qemu", accion: ports.AccionProxmoxCrearVM,
 			upid:   "UPID:pve1:1:2:3:qmcreate:501:root@pam:",
-			input:  ports.CrearInstanciaProxmoxInput{Tipo: ports.TipoInstanciaQemu, Nodo: "pve1", Nombre: "web", Cores: 2, MemoriaMB: 4096, StorageID: "local-lvm", DiscoGB: 30, TemplateID: "local:iso/debian.iso", Bridge: "vmbr0", Firewall: true},
-			campos: map[string]string{"name": "web", "scsi0": "local-lvm:30", "ide2": "local:iso/debian.iso,media=cdrom", "net0": "virtio,bridge=vmbr0,firewall=1"},
+			input:  ports.CrearInstanciaProxmoxInput{Tipo: ports.TipoInstanciaQemu, Nodo: "pve1", Nombre: "web", Cores: 2, MemoriaMB: 4096, StorageID: "local-lvm", DiscoGB: 30, TemplateID: "local:iso/debian.iso", Bridge: "vmbr0", Firewall: true, IPv4Tipo: "dhcp"},
+			campos: map[string]string{"name": "web", "scsi0": "local-lvm:30", "ide2": "local:iso/debian.iso,media=cdrom", "boot": "order=ide2;scsi0", "net0": "virtio,bridge=vmbr0,firewall=1", "ipconfig0": "ip=dhcp"},
 		},
 		{
 			nombre: "LXC", path: "/api2/json/nodes/pve1/lxc", accion: ports.AccionProxmoxCrearLXC,
-			upid:   "UPID:pve1:1:2:3:vzcreate:501:root@pam:",
-			input:  ports.CrearInstanciaProxmoxInput{Tipo: ports.TipoInstanciaLXC, Nodo: "pve1", Nombre: "cache", Password: "secreta", Cores: 1, MemoriaMB: 1024, StorageID: "local-lvm", DiscoGB: 10, TemplateID: "local:vztmpl/debian.tar.zst", Bridge: "vmbr0", IPv4Tipo: "static", IPv4Address: "192.168.1.50", IPv4Mask: "24", IPv4Gateway: "192.168.1.1"},
-			campos: map[string]string{"hostname": "cache", "password": "secreta", "rootfs": "local-lvm:10", "ostemplate": "local:vztmpl/debian.tar.zst", "net0": "name=eth0,bridge=vmbr0,firewall=0,ip=192.168.1.50/24,gw=192.168.1.1"},
+			upid:     "UPID:pve1:1:2:3:vzcreate:501:root@pam:",
+			input:    ports.CrearInstanciaProxmoxInput{Tipo: ports.TipoInstanciaLXC, Nodo: "pve1", Nombre: "cache", Cores: 1, MemoriaMB: 1024, StorageID: "local-lvm", DiscoGB: 10, TemplateID: "local:vztmpl/debian.tar.zst", Bridge: "vmbr0", IPv4Tipo: "static", IPv4Address: "192.168.1.50", IPv4Mask: "24", IPv4Gateway: "192.168.1.1"},
+			campos:   map[string]string{"hostname": "cache", "rootfs": "local-lvm:10", "ostemplate": "local:vztmpl/debian.tar.zst", "net0": "name=eth0,bridge=vmbr0,firewall=0,ip=192.168.1.50/24,gw=192.168.1.1"},
+			ausentes: []string{"password"},
 		},
 	}
 	for _, caso := range casos {
@@ -196,6 +198,11 @@ func TestClient_AprovisionarInstancia_ReservaVMIDYEnviaConfiguracion(t *testing.
 					for clave, esperado := range caso.campos {
 						if recibido := r.Form.Get(clave); recibido != esperado {
 							t.Errorf("%s = %q, se esperaba %q", clave, recibido, esperado)
+						}
+					}
+					for _, clave := range caso.ausentes {
+						if _, presente := r.Form[clave]; presente {
+							t.Errorf("%s no debe enviarse cuando no fue informado: %v", clave, r.Form[clave])
 						}
 					}
 					if r.Form.Get("vmid") != "501" || r.Form.Get("cores") != fmt.Sprint(caso.input.Cores) || r.Form.Get("memory") != fmt.Sprint(caso.input.MemoriaMB) {

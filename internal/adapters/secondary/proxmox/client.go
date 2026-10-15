@@ -231,7 +231,9 @@ func parametrosCreacion(vmid int, input ports.CrearInstanciaProxmoxInput) url.Va
 
 	if strings.EqualFold(input.Tipo, ports.TipoInstanciaLXC) {
 		params.Set("hostname", input.Nombre)
-		params.Set("password", input.Password)
+		if input.Password != "" {
+			params.Set("password", input.Password)
+		}
 		params.Set("ostemplate", input.TemplateID)
 		params.Set("rootfs", fmt.Sprintf("%s:%d", input.StorageID, input.DiscoGB))
 		net0 := fmt.Sprintf("name=eth0,bridge=%s,firewall=%s", input.Bridge, firewall)
@@ -251,11 +253,17 @@ func parametrosCreacion(vmid int, input ports.CrearInstanciaProxmoxInput) url.Va
 	params.Set("scsi0", fmt.Sprintf("%s:%d", input.StorageID, input.DiscoGB))
 	params.Set("scsihw", "virtio-scsi-pci")
 	params.Set("ide2", input.TemplateID+",media=cdrom")
+	params.Set("boot", "order=ide2;scsi0")
 	net0 := fmt.Sprintf("virtio,bridge=%s,firewall=%s", input.Bridge, firewall)
 	if input.VLAN != nil {
 		net0 += ",tag=" + strconv.Itoa(*input.VLAN)
 	}
 	params.Set("net0", net0)
+	if input.IPv4Tipo == "static" {
+		params.Set("ipconfig0", fmt.Sprintf("ip=%s/%s,gw=%s", input.IPv4Address, input.IPv4Mask, input.IPv4Gateway))
+	} else if input.IPv4Tipo == "dhcp" {
+		params.Set("ipconfig0", "ip=dhcp")
+	}
 	return params
 }
 
