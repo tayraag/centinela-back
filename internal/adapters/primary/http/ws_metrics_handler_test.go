@@ -149,7 +149,8 @@ func TestMetricsWS_HandshakeYStreaming(t *testing.T) {
 		},
 	}
 
-	wsHandler := adaptersHttp.NewMetricsWSHandler(proxmoxMock, services.NewMetricasVivoService(kv, authRepo, instanceRepo, 0), "proxmox")
+	wsHandler := adaptersHttp.NewMetricsWSHandler(proxmoxMock, services.NewMetricasVivoService(kv, authRepo, instanceRepo, 0), "proxmox",
+		map[string]struct{}{}, adaptersHttp.LimitesWSPorDefecto)
 
 	r := gin.New()
 	r.GET("/api/ws/instances/:vmid/metrics", wsHandler.StreamMetrics)

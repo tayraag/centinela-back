@@ -9,6 +9,24 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// OrigenesPermitidos lee ALLOWED_ORIGINS (lista separada por comas, por
+// ejemplo https://centinela.tail6bb3f3.ts.net,http://localhost:5173). Si no
+// está definida, solo se permite el dominio de producción de Tailscale. La usan
+// el CORS y el control de origen del WebSocket de métricas.
+func OrigenesPermitidos() map[string]struct{} {
+	allowed := make(map[string]struct{})
+	for _, origin := range strings.Split(os.Getenv("ALLOWED_ORIGINS"), ",") {
+		if trimmed := strings.TrimSpace(origin); trimmed != "" {
+			allowed[trimmed] = struct{}{}
+		}
+	}
+	// Valor por defecto si la variable no está definida: solo producción.
+	if len(allowed) == 0 {
+		allowed["https://centinela.tail6bb3f3.ts.net"] = struct{}{}
+	}
+	return allowed
+}
+
 // CORS aplica la política de Cross-Origin Resource Sharing.
 //
 // Orígenes permitidos: se leen de la variable de entorno ALLOWED_ORIGINS
@@ -25,26 +43,7 @@ import (
 // Las peticiones OPTIONS (preflight) se responden con 204 No Content
 // y se corta la cadena de handlers para no llegar al handler de negocio.
 func CORS() gin.HandlerFunc {
-	// Leer orígenes permitidos desde el entorno.
-	// Ejemplo en .env:
-	//   ALLOWED_ORIGINS=https://centinela.tail6bb3f3.ts.net,http://localhost:5173
-	rawEnv := os.Getenv("ALLOWED_ORIGINS")
-
-	allowed := make(map[string]struct{})
-
-	if rawEnv != "" {
-		for _, origin := range strings.Split(rawEnv, ",") {
-			trimmed := strings.TrimSpace(origin)
-			if trimmed != "" {
-				allowed[trimmed] = struct{}{}
-			}
-		}
-	}
-
-	// Valor por defecto si la variable no está definida: solo producción.
-	if len(allowed) == 0 {
-		allowed["https://centinela.tail6bb3f3.ts.net"] = struct{}{}
-	}
+	allowed := OrigenesPermitidos()
 
 	return func(c *gin.Context) {
 		origin := c.GetHeader("Origin")

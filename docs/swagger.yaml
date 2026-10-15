@@ -2589,7 +2589,13 @@ paths:
         suspensión o reset de credenciales), `USER_INACTIVE` (suspendido o eliminado),
         `INSTANCE_ACCESS_DENIED` (le quitaron el permiso sobre la instancia) o `EVENTS_UNAVAILABLE`
         (se perdió el canal de avisos; reconectar con un ticket nuevo). Al apagarse
-        el servidor cierra con 1001.'
+        el servidor cierra con 1001; si la instancia deja de existir, con 1000 e `INSTANCE_NOT_FOUND`.
+        Cada mensaje es un JSON de métricas; si Proxmox falla en un intervalo, el
+        mensaje no trae métricas sino `{"timestamp","vmid","status":"unavailable","error":{"errorCode":"PROXMOX_UNAVAILABLE|PROXMOX_TIMEOUT","message"}}`
+        y la conexión sigue. Solo acepta el Origin del front (ALLOWED_ORIGINS), hasta
+        10 conexiones simultáneas por usuario y mensajes del cliente de hasta 512
+        bytes; el servidor manda un ping cada 25 s y libera la conexión si no tiene
+        respuesta en 60 s.'
       parameters:
       - description: Identificador de instancia (VMID)
         in: path
@@ -2613,16 +2619,33 @@ paths:
           schema:
             $ref: '#/definitions/http.ErrorResponse'
         "403":
-          description: INSTANCE_ACCESS_DENIED | USER_INACTIVE
+          description: ORIGIN_NOT_ALLOWED — el Origin no es el del front | INSTANCE_ACCESS_DENIED
+            | USER_INACTIVE
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "404":
+          description: INSTANCE_NOT_FOUND
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "429":
+          description: TOO_MANY_CONNECTIONS — el usuario ya tiene 10 WebSockets abiertos
           schema:
             $ref: '#/definitions/http.ErrorResponse'
         "500":
           description: INTERNAL_ERROR — no se pudo comprobar el acceso
           schema:
             $ref: '#/definitions/http.ErrorResponse'
+        "502":
+          description: PROXMOX_UNAVAILABLE
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
         "503":
           description: EVENTS_UNAVAILABLE — no se pudo abrir el canal de avisos de
             corte
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "504":
+          description: PROXMOX_TIMEOUT
           schema:
             $ref: '#/definitions/http.ErrorResponse'
       summary: Canal WebSocket de métricas de instancia en tiempo real
