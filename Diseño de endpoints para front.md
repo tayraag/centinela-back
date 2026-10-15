@@ -1368,14 +1368,17 @@ Los indicadores que el wizard muestra durante la selección provienen de
 10 segundos. El frontend no escribe en Redis: el backend administra e invalida
 las claves de capacidad.
 
-Inmediatamente antes de crear, el backend toma un lock distribuido y consulta
-la foto compartida `aprovisionamiento:capacidad:{node}` en Redis. Si no existe
+Inmediatamente antes de crear, `CuotasService` toma el lock distribuido
+`lock:instance:provisioning` mediante `SET NX` con TTL de 30 segundos. Si está
+ocupado, reintenta durante un máximo de 2 segundos. Luego consulta la foto
+compartida `aprovisionamiento:capacidad:{node}` en Redis. Si no existe
 o venció, lee desde Proxmox el estado del nodo, las instancias ya asignadas y
 los storages, y guarda la nueva foto durante 10 segundos. Dentro de esa misma
 sección crítica valida:
 
 - vCPU solicitadas contra las disponibles en el nodo;
-- RAM solicitada contra la capacidad todavía no comprometida;
+- RAM solicitada contra la capacidad todavía no comprometida, después de
+  reservar estrictamente el 15% de la RAM física para Proxmox;
 - disco solicitado contra `avail` del storage;
 - que el storage esté activo, habilitado y soporte `images` para VM o `rootdir`
   para LXC.
@@ -1418,7 +1421,7 @@ rechaza antes de crear con **HTTP 409 Conflict**:
 ```json
 {
   "errorCode": "RESOURCE_QUOTA_EXCEEDED",
-  "message": "Los recursos solicitados ya no están disponibles en el nodo o almacenamiento seleccionado."
+  "message": "Los recursos solicitados superan la capacidad disponible en el nodo físico o storage seleccionado."
 }
 ```
 

@@ -1536,7 +1536,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "ADMIN ONLY. Bajo lock distribuido consulta la capacidad cacheada en Redis (o Proxmox si falta), valida y reserva CPU, RAM y disco, invalida la caché al aceptar la orden y comienza el aprovisionamiento asíncrono. El resultado llega por TASK_FINISHED con accion CREATE; al completar correctamente (OK o WARNINGS), el creador recibe FULL_ACCESS y se vuelve a invalidar la capacidad.",
+                "description": "ADMIN ONLY. CuotasService usa el lock Redis `lock:instance:provisioning` con TTL de 30 s y hasta 2 s de espera. Consulta la capacidad cacheada (o Proxmox si falta), valida CPU lógica, RAM con 15% de headroom y disco contra `avail` del storage, registra una reserva temporal e invalida la caché al aceptar la orden. El resultado llega por TASK_FINISHED con accion CREATE; al completar correctamente (OK o WARNINGS), el creador recibe FULL_ACCESS y se vuelve a invalidar la capacidad.",
                 "consumes": [
                     "application/json"
                 ],

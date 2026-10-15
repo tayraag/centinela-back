@@ -64,6 +64,8 @@ miServicio := services.NewMiServicio(kvStore)
 | `auth:session:<session_id>` | JSON: `sesion_id`, `usuario_id`, `jti_access`, `jti_refresh`, `fecha_expiracion` | vida del refresh (30 días) | Réplica de `sesiones_activas` para validar cada request. PostgreSQL sigue siendo la fuente de verdad. |
 | `node:status:current` | JSON del estado normalizado del nodo | 10 s | Caché de `GET /api/node/status`: mientras existe no se consulta Proxmox. |
 | `node:status:last_known` | el mismo JSON | **sin TTL** | Última lectura buena del nodo: se devuelve con `stale: true` si Proxmox no responde. Ver `docs/contrato-etapa1.md`. |
+| `lock:instance:provisioning` | UUID del request dueño del lock | 30 s | `CuotasService`: serializa la validación, reserva y creación para impedir overbooking. Se adquiere con `SET NX` y se libera mediante Lua comparando el UUID. |
+| `aprovisionamiento:reservas` | JSON de CPU, RAM y disco aceptados pero todavía no consolidados en Proxmox | 15 min | `CuotasService`: descuenta solicitudes en curso de las validaciones posteriores; el worker elimina cada reserva al finalizar la tarea. |
 | `ws_ticket:<uuid>` | JSON: `usuario_id`, `sesion_id` | 30 s | Ticket de un solo uso para abrir `GET /api/events`. Se consume con `GetDel`. Ver [eventos-tiempo-real.md](eventos-tiempo-real.md). |
 
 **Canal Pub/Sub:** `centinela:events` lleva los eventos para los clientes (por ejemplo, `TASK_FINISHED`) y los avisos de control (`LOGOUT`, `SESSIONS_REVOKED`) que cortan los streams.

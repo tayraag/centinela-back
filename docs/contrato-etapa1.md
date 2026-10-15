@@ -152,10 +152,19 @@ ya vigente.
 `POST /api/instances` crea de forma asíncrona una VM o un LXC. Solo lo puede
 invocar un `ADMIN`; un `OPERATOR` recibe `403 INSUFFICIENT_PERMISSIONS`.
 
-Antes de llamar a Proxmox, el backend toma un lock distribuido, valida la
-capacidad disponible de vCPU, RAM y disco y registra una reserva temporal. Las
-solicitudes concurrentes descuentan esas reservas para no aprobar dos veces el
-mismo remanente. Si la capacidad no alcanza responde
+Antes de llamar a Proxmox, `CuotasService` toma el lock distribuido
+`lock:instance:provisioning` (`SET NX`, TTL 30 s), valida la capacidad
+disponible de CPU lógica, RAM y disco y registra una reserva temporal. Si otra
+creación posee el lock, espera y reintenta durante un máximo de 2 s. El lock se
+libera mediante comparación atómica de su UUID para no borrar el de otro
+request si el anterior venció.
+
+La RAM asignable descuenta el mayor valor entre el consumo actual y la RAM ya
+configurada en las instancias, reserva además el 15% de la RAM física para
+Proxmox y descuenta las solicitudes aceptadas aún no consolidadas. La CPU usa
+los procesadores lógicos de `cpuinfo.cpus`; el disco usa `avail` del storage
+seleccionado. Las solicitudes concurrentes descuentan sus reservas para no
+aprobar dos veces el mismo remanente. Si la capacidad no alcanza responde
 `409 RESOURCE_QUOTA_EXCEEDED`; si no puede mantener la coordinación compartida,
 responde `503 PROVISIONING_COORDINATION_UNAVAILABLE` sin crear la instancia.
 La validación consulta primero la foto compartida
