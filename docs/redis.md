@@ -67,6 +67,7 @@ miServicio := services.NewMiServicio(kvStore)
 | `lock:instance:provisioning` | UUID del request dueño del lock | 30 s | `CuotasService`: serializa la validación, reserva y creación para impedir overbooking. Se adquiere con `SET NX` y se libera mediante Lua comparando el UUID. |
 | `aprovisionamiento:reservas` | JSON de CPU, RAM y disco aceptados pero todavía no consolidados en Proxmox | 15 min | `CuotasService`: descuenta solicitudes en curso de las validaciones posteriores; el worker elimina cada reserva al finalizar la tarea. |
 | `ws_ticket:<uuid>` | JSON: `usuario_id`, `sesion_id` | 30 s | Ticket de un solo uso para abrir `GET /api/events`. Se consume con `GetDel`. Ver [eventos-tiempo-real.md](eventos-tiempo-real.md). |
+| `ws:ticket:<uuid>` | `usuario_id` | 30 s | Ticket de un solo uso para abrir el WebSocket de métricas (`GET /api/ws/instances/:vmid/metrics`). Se consume con `GetDel`. |
 
 **Canal Pub/Sub:** `centinela:events` lleva los eventos para los clientes (por ejemplo, `TASK_FINISHED`) y los avisos de control (`LOGOUT`, `SESSIONS_REVOKED`) que cortan los streams.
 
