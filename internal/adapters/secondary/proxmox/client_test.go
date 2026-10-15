@@ -694,11 +694,12 @@ func TestClient_ObtenerMetricasRRD(t *testing.T) {
 		if p1.Timestamp != 1787092500 {
 			t.Errorf("Timestamp inesperado: %d", p1.Timestamp)
 		}
-		if p1.CPUPercent != 0.017948 {
-			t.Errorf("CPUPercent inesperado: %f", p1.CPUPercent)
+		// Proxmox informa 0.017948 (fracción): sale en porcentaje con 2 decimales.
+		if p1.CPUPercent == nil || *p1.CPUPercent != 1.79 {
+			t.Errorf("CPUPercent inesperado: %v", p1.CPUPercent)
 		}
-		if p1.RAMUsedBytes != 241901568 || p1.RAMTotalBytes != 2147483648 {
-			t.Errorf("RAM incorrecta: used=%d total=%d", p1.RAMUsedBytes, p1.RAMTotalBytes)
+		if p1.RAMUsedBytes == nil || *p1.RAMUsedBytes != 241901568 || p1.RAMTotalBytes != 2147483648 {
+			t.Errorf("RAM incorrecta: used=%v total=%d", p1.RAMUsedBytes, p1.RAMTotalBytes)
 		}
 		if p1.NetInBps != 1024 || p1.NetOutBps != 2048 {
 			t.Errorf("Net Bps incorrecto: in=%d out=%d", p1.NetInBps, p1.NetOutBps)
@@ -707,16 +708,16 @@ func TestClient_ObtenerMetricasRRD(t *testing.T) {
 			t.Errorf("Disk Bps incorrecto: read=%d write=%d", p1.DiskReadBps, p1.DiskWriteBps)
 		}
 
-		// Punto 2: valores nulos deben normalizarse a 0
+		// Punto 2: sin dato de CPU ni RAM (instancia apagada) quedan en null, no en 0
 		p2 := puntos[1]
 		if p2.Timestamp != 1787092560 {
 			t.Errorf("Timestamp inesperado: %d", p2.Timestamp)
 		}
-		if p2.CPUPercent != 0.0 {
-			t.Errorf("CPUPercent con nulo debe ser 0.0, recibido %f", p2.CPUPercent)
+		if p2.CPUPercent != nil {
+			t.Errorf("CPUPercent sin dato debe ser null, recibido %v", *p2.CPUPercent)
 		}
-		if p2.RAMUsedBytes != 0 {
-			t.Errorf("RAMUsedBytes debe ser 0, recibido %d", p2.RAMUsedBytes)
+		if p2.RAMUsedBytes != nil {
+			t.Errorf("RAMUsedBytes sin dato debe ser null, recibido %v", *p2.RAMUsedBytes)
 		}
 		if p2.RAMTotalBytes != 2147483648 {
 			t.Errorf("RAMTotalBytes debe ser 2147483648, recibido %d", p2.RAMTotalBytes)
@@ -768,7 +769,7 @@ func TestClient_ObtenerMetricasRRD(t *testing.T) {
 				if len(puntos) != 1 {
 					t.Fatalf("Se esperaba 1 punto, vinieron %d", len(puntos))
 				}
-				if puntos[0].RAMTotalBytes != 1073741824 || puntos[0].RAMUsedBytes != 21046067 {
+				if puntos[0].RAMTotalBytes != 1073741824 || puntos[0].RAMUsedBytes == nil || *puntos[0].RAMUsedBytes != 21046067 {
 					t.Errorf("RAM de LXC incorrecta: %+v", puntos[0])
 				}
 			})
@@ -837,10 +838,38 @@ func TestClient_ObtenerEstadoActual(t *testing.T) {
 		t.Fatalf("ObtenerEstadoActual falló: %v", err)
 	}
 
-	if m.VMID != 100 || m.Status != "running" || m.CPU != 0.05 || m.CPUs != 2 {
+	// Proxmox informa 0.05 (fracción): sale en porcentaje.
+	if m.VMID != 100 || m.Status != "running" || m.CPU == nil || *m.CPU != 5 || m.CPUs != 2 {
 		t.Errorf("Estado actual incorrecto: %+v", m)
 	}
-	if m.Mem != 536870912 || m.MaxMem != 2147483648 {
+	if m.Mem == nil || *m.Mem != 536870912 || m.MaxMem != 2147483648 {
 		t.Errorf("Memoria incorrecta: %+v", m)
+	}
+}
+
+// Con la instancia apagada, status/current trae cpu 0 y mem 0: hacia el front
+// salen en null (convención de la PM: null = apagada).
+func TestObtenerEstadoActual_ApagadaDevuelveNull(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{
+			"vmid": 101, "status": "stopped", "cpus": 1, "cpu": 0, "mem": 0, "maxmem": 1073741824,
+		}})
+	}))
+	defer server.Close()
+
+	client := proxmox.NewClient(server.URL, "pve1", tokenIDValido, tokenSecretValido, nil)
+	m, err := client.ObtenerEstadoActual(context.Background(), "pve1", "lxc", 101)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.CPU != nil || m.Mem != nil {
+		t.Errorf("Apagada: cpu y mem deben ser null, vinieron cpu=%v mem=%v", m.CPU, m.Mem)
+	}
+	if m.MaxMem != 1073741824 || m.Status != "stopped" {
+		t.Errorf("El resto de los datos se conserva: %+v", m)
+	}
+	crudo, _ := json.Marshal(m)
+	if !strings.Contains(string(crudo), `"cpu":null`) || !strings.Contains(string(crudo), `"mem":null`) {
+		t.Errorf("El JSON debe llevar cpu y mem en null: %s", crudo)
 	}
 }

@@ -715,14 +715,17 @@ func (c *Client) ObtenerMetricasRRD(ctx context.Context, nodo, tipo string, vmid
 
 	resultado := make([]domain.PuntoMetricaDTO, len(parsed.Data))
 	for i, p := range parsed.Data {
-		var cpuVal float64
+		// Sin dato de CPU o RAM (instancia apagada en ese período) queda null.
+		var cpuVal *float64
 		if p.CPU != nil {
-			cpuVal = *p.CPU
+			v := domain.PorcentajeCPU(*p.CPU)
+			cpuVal = &v
 		}
 
-		var ramUsed int64
+		var ramUsed *int64
 		if p.Mem != nil {
-			ramUsed = int64(*p.Mem)
+			v := int64(*p.Mem)
+			ramUsed = &v
 		}
 
 		var ramTotal int64
@@ -806,14 +809,17 @@ func (c *Client) ObtenerEstadoActual(ctx context.Context, nodo, tipo string, vmi
 	}
 
 	d := parsed.Data
-	var cpuVal float64
-	if d.CPU != nil {
-		cpuVal = *d.CPU
+	// CPU en porcentaje y RAM usada solo con la instancia encendida; si no, null.
+	var cpuVal *float64
+	var memVal *int64
+	if d.Status == "running" {
+		if d.CPU != nil {
+			v := domain.PorcentajeCPU(*d.CPU)
+			cpuVal = &v
+		}
+		memVal = d.Mem
 	}
-	var memVal, maxMemVal, diskVal, maxDiskVal, netInVal, netOutVal, readVal, writeVal, upVal int64
-	if d.Mem != nil {
-		memVal = *d.Mem
-	}
+	var maxMemVal, diskVal, maxDiskVal, netInVal, netOutVal, readVal, writeVal, upVal int64
 	if d.MaxMem != nil {
 		maxMemVal = *d.MaxMem
 	}

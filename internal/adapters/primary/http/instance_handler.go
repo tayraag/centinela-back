@@ -5,13 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"math"
 	"net"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"el-centinela/internal/adapters/primary/http/middleware"
+	"el-centinela/internal/core/domain"
 	"el-centinela/internal/core/ports"
 
 	"github.com/gin-gonic/gin"
@@ -577,7 +577,7 @@ func (h *InstanceHandler) ListarInstancias(c *gin.Context) {
 		var ramUsage, maxRam *int64
 
 		if inst.Estado == "running" {
-			cpu := math.Round(inst.Cpu*10000) / 100 // CPU en porcentaje con 2 decimales
+			cpu := domain.PorcentajeCPU(inst.Cpu)
 			cpuUsage = &cpu
 			mem := inst.Mem
 			ramUsage = &mem
@@ -615,12 +615,12 @@ func (h *InstanceHandler) ListarInstancias(c *gin.Context) {
 // ObtenerInstancia devuelve el estado actual de una instancia Proxmox.
 //
 // @Summary      Obtener instancia
-// @Description  Devuelve el estado actual (running/stopped, tipo, nodo, telemetría) de una VM o contenedor leído en vivo desde Proxmox VE.
+// @Description  Devuelve el estado actual (running/stopped, tipo, nodo, telemetría) de una VM o contenedor leído en vivo desde Proxmox VE. `cpu` es un porcentaje de 0 a 100; `cpu` y `mem` valen null si la instancia no está encendida.
 // @Tags         Instancias Proxmox
 // @Produce      json
 // @Security     BearerAuth
 // @Param        vmid path int true "VMID de la instancia"
-// @Success      200 {object} ports.InstanciaProxmoxDTO
+// @Success      200 {object} InstanciaDetalleResponse
 // @Failure      400 {object} ErrorResponse "INVALID_VMID — el vmid de la ruta no es un número entero"
 // @Failure      401 {object} ErrorResponse "MISSING_TOKEN | INVALID_TOKEN | TOKEN_REVOKED"
 // @Failure      403 {object} ErrorResponse "WRONG_TOKEN_TYPE | 2FA_REQUIRED | PASSWORD_CHANGE_REQUIRED | NO_ROLE | NO_USER | INVALID_USER_ID | INSTANCE_ACCESS_DENIED — el OPERATOR no tiene este vmid asignado"
@@ -639,7 +639,32 @@ func (h *InstanceHandler) ObtenerInstancia(c *gin.Context) {
 		mapearErrorProxmox(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, instancia)
+	c.JSON(http.StatusOK, detalleDeInstancia(instancia))
+}
+
+// InstanciaDetalleResponse es el cuerpo de GET /api/instances/:vmid. Mismos
+// campos que ports.InstanciaProxmoxDTO, pero con la convención de métricas del
+// front: cpu en porcentaje (0 a 100) y cpu y mem en null si no está encendida.
+type InstanciaDetalleResponse struct {
+	Vmid   int      `json:"vmid" example:"110"`
+	Nombre string   `json:"nombre" example:"api-produccion"`
+	Tipo   string   `json:"tipo" enums:"qemu,lxc" example:"qemu"`
+	Nodo   string   `json:"nodo" example:"pve-01"`
+	Estado string   `json:"estado" example:"running"`
+	Cpu    *float64 `json:"cpu" extensions:"x-nullable" minimum:"0" maximum:"100" example:"24.5"`
+	Mem    *int64   `json:"mem" extensions:"x-nullable" minimum:"0" example:"2147483648"`
+	MaxMem int64    `json:"maxMem" example:"4294967296"`
+	MaxCpu int      `json:"maxCpu" example:"2"`
+}
+
+func detalleDeInstancia(inst *ports.InstanciaProxmoxDTO) InstanciaDetalleResponse {
+	r := InstanciaDetalleResponse{Vmid: inst.Vmid, Nombre: inst.Nombre, Tipo: inst.Tipo, Nodo: inst.Nodo,
+		Estado: inst.Estado, MaxMem: inst.MaxMem, MaxCpu: inst.MaxCpu}
+	if inst.Estado == "running" {
+		cpu, mem := domain.PorcentajeCPU(inst.Cpu), inst.Mem
+		r.Cpu, r.Mem = &cpu, &mem
+	}
+	return r
 }
 
 // ==========================================

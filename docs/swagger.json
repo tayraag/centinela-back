@@ -1623,7 +1623,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Devuelve el estado actual (running/stopped, tipo, nodo, telemetría) de una VM o contenedor leído en vivo desde Proxmox VE.",
+                "description": "Devuelve el estado actual (running/stopped, tipo, nodo, telemetría) de una VM o contenedor leído en vivo desde Proxmox VE. `cpu` es un porcentaje de 0 a 100; `cpu` y `mem` valen null si la instancia no está encendida.",
                 "produces": [
                     "application/json"
                 ],
@@ -1644,7 +1644,7 @@
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/ports.InstanciaProxmoxDTO"
+                            "$ref": "#/definitions/http.InstanciaDetalleResponse"
                         }
                     },
                     "400": {
@@ -2309,7 +2309,7 @@
         },
         "/ws/instances/{vmid}/metrics": {
             "get": {
-                "description": "Establece un canal bidireccional vía WebSocket que emite métricas instantáneas cada 2 segundos. Requiere parámetro query `?ticket=\u003cuuid\u003e` emitido previamente vía POST /api/auth/ws-ticket. El servidor cierra el canal con código 1008 y el motivo como reason cuando el usuario pierde el acceso: `LOGOUT` (cerró sesión; corta todas sus conexiones WebSocket), `SESSIONS_REVOKED` (baja, suspensión o reset de credenciales), `USER_INACTIVE` (suspendido o eliminado), `INSTANCE_ACCESS_DENIED` (le quitaron el permiso sobre la instancia) o `EVENTS_UNAVAILABLE` (se perdió el canal de avisos; reconectar con un ticket nuevo). Al apagarse el servidor cierra con 1001; si la instancia deja de existir, con 1000 e `INSTANCE_NOT_FOUND`. Cada mensaje es un JSON de métricas; si Proxmox falla en un intervalo, el mensaje no trae métricas sino `{\"timestamp\",\"vmid\",\"status\":\"unavailable\",\"error\":{\"errorCode\":\"PROXMOX_UNAVAILABLE|PROXMOX_TIMEOUT\",\"message\"}}` y la conexión sigue. Solo acepta el Origin del front (ALLOWED_ORIGINS), hasta 10 conexiones simultáneas por usuario y mensajes del cliente de hasta 512 bytes; el servidor manda un ping cada 25 s y libera la conexión si no tiene respuesta en 60 s.",
+                "description": "Establece un canal bidireccional vía WebSocket que emite métricas instantáneas cada 2 segundos. Requiere parámetro query `?ticket=\u003cuuid\u003e` emitido previamente vía POST /api/auth/ws-ticket. El servidor cierra el canal con código 1008 y el motivo como reason cuando el usuario pierde el acceso: `LOGOUT` (cerró sesión; corta todas sus conexiones WebSocket), `SESSIONS_REVOKED` (baja, suspensión o reset de credenciales), `USER_INACTIVE` (suspendido o eliminado), `INSTANCE_ACCESS_DENIED` (le quitaron el permiso sobre la instancia) o `EVENTS_UNAVAILABLE` (se perdió el canal de avisos; reconectar con un ticket nuevo). Al apagarse el servidor cierra con 1001; si la instancia deja de existir, con 1000 e `INSTANCE_NOT_FOUND`. Cada mensaje es un JSON de métricas: `cpu` en porcentaje (0 a 100) y `cpu` y `mem` en null si la instancia no está encendida; si Proxmox falla en un intervalo, el mensaje no trae métricas sino `{\"timestamp\",\"vmid\",\"status\":\"unavailable\",\"error\":{\"errorCode\":\"PROXMOX_UNAVAILABLE|PROXMOX_TIMEOUT\",\"message\"}}` y la conexión sigue. Solo acepta el Origin del front (ALLOWED_ORIGINS), hasta 10 conexiones simultáneas por usuario y mensajes del cliente de hasta 512 bytes; el servidor manda un ping cada 25 s y libera la conexión si no tiene respuesta en 60 s.",
                 "tags": [
                     "Métricas en tiempo real"
                 ],
@@ -2657,6 +2657,56 @@
                 }
             }
         },
+        "http.InstanciaDetalleResponse": {
+            "type": "object",
+            "properties": {
+                "cpu": {
+                    "type": "number",
+                    "maximum": 100,
+                    "minimum": 0,
+                    "x-nullable": true,
+                    "example": 24.5
+                },
+                "estado": {
+                    "type": "string",
+                    "example": "running"
+                },
+                "maxCpu": {
+                    "type": "integer",
+                    "example": 2
+                },
+                "maxMem": {
+                    "type": "integer",
+                    "example": 4294967296
+                },
+                "mem": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "x-nullable": true,
+                    "example": 2147483648
+                },
+                "nodo": {
+                    "type": "string",
+                    "example": "pve-01"
+                },
+                "nombre": {
+                    "type": "string",
+                    "example": "api-produccion"
+                },
+                "tipo": {
+                    "type": "string",
+                    "enum": [
+                        "qemu",
+                        "lxc"
+                    ],
+                    "example": "qemu"
+                },
+                "vmid": {
+                    "type": "integer",
+                    "example": 110
+                }
+            }
+        },
         "http.InstanciaInventarioResponse": {
             "type": "object",
             "required": [
@@ -2683,9 +2733,10 @@
                 },
                 "cpuUsage": {
                     "type": "number",
-                    "maximum": 1,
+                    "maximum": 100,
                     "minimum": 0,
-                    "example": 0.24
+                    "x-nullable": true,
+                    "example": 24.5
                 },
                 "id": {
                     "type": "integer",
@@ -2720,6 +2771,7 @@
                 "ramUsage": {
                     "type": "integer",
                     "minimum": 0,
+                    "x-nullable": true,
                     "example": 2147483648
                 },
                 "status": {
@@ -3408,44 +3460,6 @@
                 },
                 "rol": {
                     "type": "string"
-                }
-            }
-        },
-        "ports.InstanciaProxmoxDTO": {
-            "type": "object",
-            "properties": {
-                "cpu": {
-                    "description": "Telemetría en tiempo real (0 cuando la instancia está detenida)",
-                    "type": "number"
-                },
-                "estado": {
-                    "description": "\"running\" | \"stopped\" | ...",
-                    "type": "string"
-                },
-                "maxCpu": {
-                    "description": "cantidad de vCPUs asignadas",
-                    "type": "integer"
-                },
-                "maxMem": {
-                    "description": "RAM máxima asignada (bytes)",
-                    "type": "integer"
-                },
-                "mem": {
-                    "description": "RAM usada (bytes)",
-                    "type": "integer"
-                },
-                "nodo": {
-                    "type": "string"
-                },
-                "nombre": {
-                    "type": "string"
-                },
-                "tipo": {
-                    "description": "\"qemu\" | \"lxc\"",
-                    "type": "string"
-                },
-                "vmid": {
-                    "type": "integer"
                 }
             }
         },

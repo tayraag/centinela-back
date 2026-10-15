@@ -91,8 +91,11 @@ nodo. `cores` son los hilos lógicos del nodo, sobre los que Proxmox calcula
   (sin contar loopback) o, si no hay, la primera IPv6 global. Vale `null` si la
   instancia está apagada, no tiene agente o red, o no respondió a tiempo (2 s por
   instancia y 2,2 s para todo el listado): nunca provoca un error.
-- `cpuUsage`: fracción entre 0 y 1; vale 0 cuando la instancia está detenida.
-- `ramUsage` y `maxRam`: bytes usados y bytes máximos asignados.
+- `cpuUsage`: porcentaje de 0 a 100, con 2 decimales.
+- `ramUsage`: bytes usados.
+- `maxRam`: bytes máximos asignados; se informa también con la instancia apagada.
+- Con la instancia apagada (`status` distinto de `running`), `cpuUsage` y
+  `ramUsage` valen `null`, nunca 0: para el front, `null` significa apagada.
 - `nivelAcceso`: `FULL_ACCESS` o `READ_ONLY`; para `ADMIN` siempre se informa
   `FULL_ACCESS`.
 - `activeTask`: objeto `{ tareaId, action, status }` con la tarea en curso de la
@@ -105,7 +108,14 @@ nodo. `cores` son los hilos lógicos del nodo, sobre los que Proxmox calcula
     `null`.
 
 `type` usa `vm` o `lxc`. La respuesta no omite telemetría, `nivelAcceso`, `ip` ni
-`activeTask`; estos dos últimos expresan ausencia con `null`.
+`activeTask`; `ip`, `activeTask`, `cpuUsage` y `ramUsage` expresan ausencia con
+`null`.
+
+**Convención de CPU y RAM en toda la API** (definida por la PM): la CPU viaja
+siempre en porcentaje de 0 a 100, y CPU y RAM usada valen `null` con la instancia
+apagada. Vale para el inventario, el detalle (`GET /api/instances/:vmid`, campos
+`cpu` y `mem`), el WebSocket de métricas (`cpu` y `mem`) y el estado del nodo
+(`cpu.usagePercent`).
 
 ```json
 [
@@ -116,7 +126,7 @@ nodo. `cores` son los hilos lógicos del nodo, sobre los que Proxmox calcula
     "node": "pve-01",
     "status": "running",
     "ip": null,
-    "cpuUsage": 0.24,
+    "cpuUsage": 24.5,
     "ramUsage": 2147483648,
     "maxRam": 4294967296,
     "nivelAcceso": "FULL_ACCESS",
@@ -129,8 +139,8 @@ nodo. `cores` son los hilos lógicos del nodo, sobre los que Proxmox calcula
     "node": "pve-01",
     "status": "stopped",
     "ip": null,
-    "cpuUsage": 0,
-    "ramUsage": 0,
+    "cpuUsage": null,
+    "ramUsage": null,
     "maxRam": 1073741824,
     "nivelAcceso": "FULL_ACCESS",
     "activeTask": {

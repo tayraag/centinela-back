@@ -64,7 +64,9 @@ type InstanciaProxmoxDTO struct {
 	Nodo   string `json:"nodo"`
 	Estado string `json:"estado"` // "running" | "stopped" | ...
 
-	// Telemetría en tiempo real (0 cuando la instancia está detenida)
+	// Telemetría en tiempo real, en las unidades de Proxmox (0 cuando la
+	// instancia está detenida). Uso interno: hacia el front sale convertida
+	// (ver domain.PorcentajeCPU e InstanciaDetalleResponse).
 	Cpu    float64 `json:"cpu"`    // uso de CPU: fracción [0,1]
 	Mem    int64   `json:"mem"`    // RAM usada (bytes)
 	MaxMem int64   `json:"maxMem"` // RAM máxima asignada (bytes)
@@ -84,8 +86,8 @@ type InstanciaListadaDTO struct {
 
 	// Campos extendidos de telemetría (retrocompatibles: omitempty)
 	Ip          *string        `json:"ip"`          // dirección IP de la instancia (si está disponible)
-	CpuUsage    *float64       `json:"cpuUsage"`    // fracción [0,1]
-	RamUsage    *int64         `json:"ramUsage"`    // bytes usados
+	CpuUsage    *float64       `json:"cpuUsage"`    // porcentaje 0 a 100; null si no está encendida
+	RamUsage    *int64         `json:"ramUsage"`    // bytes usados; null si no está encendida
 	MaxRam      *int64         `json:"maxRam"`      // bytes máximos
 	NivelAcceso string         `json:"nivelAcceso"` // "FULL_ACCESS" | "READ_ONLY" (o "FULL_ACCESS" para ADMIN)
 	ActiveTask  *ActiveTaskDTO `json:"activeTask"`  // tarea en curso o null

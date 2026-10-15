@@ -62,13 +62,14 @@ func (m *mockProxmoxForWS) ObtenerEstadoActual(_ context.Context, _, _ string, v
 		m.metricasEnVivo.VMID = vmid
 		return m.metricasEnVivo, nil
 	}
+	cpu, mem := 15.0, int64(1024*1024*1024)
 	return &domain.MetricasEnVivoDTO{
 		Timestamp: time.Now().Unix(),
 		VMID:      vmid,
 		Status:    "running",
-		CPU:       0.15,
+		CPU:       &cpu,
 		CPUs:      2,
-		Mem:       1024 * 1024 * 1024,
+		Mem:       &mem,
 		MaxMem:    2 * 1024 * 1024 * 1024,
 	}, nil
 }

@@ -75,8 +75,8 @@ type InstanciaInventarioResponse struct {
 	Node        string              `json:"node" binding:"required" example:"pve-01"`
 	Status      string              `json:"status" binding:"required" example:"running"`
 	IP          *string             `json:"ip" binding:"required" extensions:"x-nullable" example:"192.0.2.10"`
-	CPUUsage    float64             `json:"cpuUsage" binding:"required" minimum:"0" maximum:"1" example:"0.24"`
-	RAMUsage    int64               `json:"ramUsage" binding:"required" minimum:"0" example:"2147483648"`
+	CPUUsage    *float64            `json:"cpuUsage" binding:"required" extensions:"x-nullable" minimum:"0" maximum:"100" example:"24.5"`
+	RAMUsage    *int64              `json:"ramUsage" binding:"required" extensions:"x-nullable" minimum:"0" example:"2147483648"`
 	MaxRAM      int64               `json:"maxRam" binding:"required" minimum:"0" example:"4294967296"`
 	NivelAcceso string              `json:"nivelAcceso" binding:"required" enums:"FULL_ACCESS,READ_ONLY" example:"FULL_ACCESS"`
 	ActiveTask  *ActiveTaskResponse `json:"activeTask" binding:"required" extensions:"x-nullable"`

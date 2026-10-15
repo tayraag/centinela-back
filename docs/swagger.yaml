@@ -197,6 +197,44 @@ definitions:
     - storage
     - uptimeSeconds
     type: object
+  http.InstanciaDetalleResponse:
+    properties:
+      cpu:
+        example: 24.5
+        maximum: 100
+        minimum: 0
+        type: number
+        x-nullable: true
+      estado:
+        example: running
+        type: string
+      maxCpu:
+        example: 2
+        type: integer
+      maxMem:
+        example: 4294967296
+        type: integer
+      mem:
+        example: 2147483648
+        minimum: 0
+        type: integer
+        x-nullable: true
+      nodo:
+        example: pve-01
+        type: string
+      nombre:
+        example: api-produccion
+        type: string
+      tipo:
+        enum:
+        - qemu
+        - lxc
+        example: qemu
+        type: string
+      vmid:
+        example: 110
+        type: integer
+    type: object
   http.InstanciaInventarioResponse:
     properties:
       activeTask:
@@ -204,10 +242,11 @@ definitions:
         - $ref: '#/definitions/http.ActiveTaskResponse'
         x-nullable: true
       cpuUsage:
-        example: 0.24
-        maximum: 1
+        example: 24.5
+        maximum: 100
         minimum: 0
         type: number
+        x-nullable: true
       id:
         example: 110
         type: integer
@@ -235,6 +274,7 @@ definitions:
         example: 2147483648
         minimum: 0
         type: integer
+        x-nullable: true
       status:
         example: running
         type: string
@@ -745,33 +785,6 @@ definitions:
         type: string
       rol:
         type: string
-    type: object
-  ports.InstanciaProxmoxDTO:
-    properties:
-      cpu:
-        description: Telemetría en tiempo real (0 cuando la instancia está detenida)
-        type: number
-      estado:
-        description: '"running" | "stopped" | ...'
-        type: string
-      maxCpu:
-        description: cantidad de vCPUs asignadas
-        type: integer
-      maxMem:
-        description: RAM máxima asignada (bytes)
-        type: integer
-      mem:
-        description: RAM usada (bytes)
-        type: integer
-      nodo:
-        type: string
-      nombre:
-        type: string
-      tipo:
-        description: '"qemu" | "lxc"'
-        type: string
-      vmid:
-        type: integer
     type: object
   ports.ListaUsuariosResult:
     properties:
@@ -2131,7 +2144,8 @@ paths:
       - Instancias Proxmox
     get:
       description: Devuelve el estado actual (running/stopped, tipo, nodo, telemetría)
-        de una VM o contenedor leído en vivo desde Proxmox VE.
+        de una VM o contenedor leído en vivo desde Proxmox VE. `cpu` es un porcentaje
+        de 0 a 100; `cpu` y `mem` valen null si la instancia no está encendida.
       parameters:
       - description: VMID de la instancia
         in: path
@@ -2144,7 +2158,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/ports.InstanciaProxmoxDTO'
+            $ref: '#/definitions/http.InstanciaDetalleResponse'
         "400":
           description: INVALID_VMID — el vmid de la ruta no es un número entero
           schema:
@@ -2590,8 +2604,9 @@ paths:
         `INSTANCE_ACCESS_DENIED` (le quitaron el permiso sobre la instancia) o `EVENTS_UNAVAILABLE`
         (se perdió el canal de avisos; reconectar con un ticket nuevo). Al apagarse
         el servidor cierra con 1001; si la instancia deja de existir, con 1000 e `INSTANCE_NOT_FOUND`.
-        Cada mensaje es un JSON de métricas; si Proxmox falla en un intervalo, el
-        mensaje no trae métricas sino `{"timestamp","vmid","status":"unavailable","error":{"errorCode":"PROXMOX_UNAVAILABLE|PROXMOX_TIMEOUT","message"}}`
+        Cada mensaje es un JSON de métricas: `cpu` en porcentaje (0 a 100) y `cpu`
+        y `mem` en null si la instancia no está encendida; si Proxmox falla en un
+        intervalo, el mensaje no trae métricas sino `{"timestamp","vmid","status":"unavailable","error":{"errorCode":"PROXMOX_UNAVAILABLE|PROXMOX_TIMEOUT","message"}}`
         y la conexión sigue. Solo acepta el Origin del front (ALLOWED_ORIGINS), hasta
         10 conexiones simultáneas por usuario y mensajes del cliente de hasta 512
         bytes; el servidor manda un ping cada 25 s y libera la conexión si no tiene
