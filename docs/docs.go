@@ -1350,6 +1350,43 @@ const docTemplate = `{
                 }
             }
         },
+        "/auth/ws-ticket": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Genera un UUID criptográfico de un solo uso con TTL de 30 segundos almacenado en Redis bajo la clave ` + "`" + `ws:ticket:\u003cuuid\u003e` + "`" + `. Permite autenticar el handshake de WebSocket sin exponer el JWT en los query parameters.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Autenticación"
+                ],
+                "summary": "Generar ticket efímero para WebSocket",
+                "responses": {
+                    "200": {
+                        "description": "Ticket efímero válido por 30 segundos",
+                        "schema": {
+                            "$ref": "#/definitions/http.WsTicketResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "MISSING_TOKEN | INVALID_TOKEN | TOKEN_REVOKED",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "INTERNAL_ERROR",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/events": {
             "get": {
                 "description": "Abre un stream ` + "`" + `text/event-stream` + "`" + ` autenticado con el ticket de ` + "`" + `POST /api/events/ticket` + "`" + `, que es de un solo uso y vence a los 30 s: si se conecta dos veces o después de vencer, responde 401 y hay que pedir otro. El ticket se consume con ` + "`" + `GETDEL` + "`" + ` al abrir el stream y el servidor manda ` + "`" + `Cache-Control: no-cache` + "`" + `, ` + "`" + `Connection: keep-alive` + "`" + ` y ` + "`" + `X-Accel-Buffering: no` + "`" + ` para que un proxy nginx no acumule el stream. El framing tiene cuatro formas: (1) ` + "`" + `: conectado` + "`" + ` apenas se abre, que ` + "`" + `EventSource` + "`" + ` ignora; (2) un frame ` + "`" + `id: \u003cevento.id\u003e` + "`" + ` seguido de ` + "`" + `data: \u003chttp.SSEEventPayload en JSON\u003e` + "`" + ` por cada evento, que ` + "`" + `EventSource` + "`" + ` entrega en ` + "`" + `onmessage` + "`" + `; (3) ` + "`" + `: ping` + "`" + ` cada 25 s para que ningún proxy corte la conexión por inactividad; (4) ` + "`" + `event: cierre` + "`" + ` con ` + "`" + `{\"motivo\": ...}` + "`" + ` cuando el backend corta el stream, con motivo ` + "`" + `LOGOUT` + "`" + `, ` + "`" + `SESSIONS_REVOKED` + "`" + ` o ` + "`" + `USER_INACTIVE` + "`" + `. Importante: ` + "`" + `EventSource` + "`" + ` reconecta solo con la misma URL, y el ticket ya fue consumido, por lo que hay que cerrar la fuente y abrir un stream nuevo con un ticket nuevo.",
@@ -2079,7 +2116,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "OPERATIVO. Disponible para ADMIN y OPERATOR autenticados (no se filtra por permisos de instancia). La lectura se cachea en Redis 10 s (node:status:current): mientras está vigente se responde sin consultar Proxmox. Incluye también instancesSummary, que agrupa el recuento de VMs y contenedores LXC según su estado (running, stopped, paused). Si Proxmox no responde se devuelve la última lectura conocida (node:status:last_known) con ` + "`" + `stale: true` + "`" + `; ` + "`" + `fetchedAt` + "`" + ` indica cuándo se obtuvo. Solo si no hay ninguna lectura previa responde 502 o 504. RAM y almacenamiento en GB (1024³ bytes) con 2 decimales; ` + "`" + `storage` + "`" + ` es el disco raíz del nodo; ` + "`" + `cores` + "`" + ` son los hilos lógicos sobre los que se calcula ` + "`" + `usagePercent` + "`" + `.",
+                "description": "OPERATIVO. Disponible para ADMIN y OPERATOR autenticados (no se filtra por permisos de instancia). La lectura se cachea en Redis 10 s (node:status:current): mientras está vigente se responde sin consultar Proxmox. Incluye ` + "`" + `allocatable` + "`" + `, con núcleos físicos totales, almacenamiento disponible y RAM libre segura luego de reservar estrictamente 15% para Proxmox. Incluye también instancesSummary, que agrupa el recuento de VMs y contenedores LXC según su estado (running, stopped, paused). Si Proxmox no responde se devuelve la última lectura conocida (node:status:last_known) con ` + "`" + `stale: true` + "`" + `; ` + "`" + `fetchedAt` + "`" + ` indica cuándo se obtuvo. Solo si no hay ninguna lectura previa responde 502 o 504. RAM y almacenamiento en GB (1024³ bytes) con 2 decimales; ` + "`" + `storage` + "`" + ` es el disco raíz del nodo; ` + "`" + `cores` + "`" + ` son los hilos lógicos sobre los que se calcula ` + "`" + `usagePercent` + "`" + `.",
                 "produces": [
                     "application/json"
                 ],
@@ -2270,6 +2307,60 @@ const docTemplate = `{
                     }
                 }
             }
+        },
+        "/ws/instances/{vmid}/metrics": {
+            "get": {
+                "description": "Establece un canal bidireccional vía WebSocket que emite métricas instantáneas cada 2 segundos. Requiere parámetro query ` + "`" + `?ticket=\u003cuuid\u003e` + "`" + ` emitido previamente vía POST /api/auth/ws-ticket.",
+                "tags": [
+                    "Métricas en tiempo real"
+                ],
+                "summary": "Canal WebSocket de métricas de instancia en tiempo real",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Identificador de instancia (VMID)",
+                        "name": "vmid",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Ticket efímero de un solo uso",
+                        "name": "ticket",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "101": {
+                        "description": "Switching Protocols a WebSocket"
+                    },
+                    "400": {
+                        "description": "INVALID_VMID",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "UNAUTHORIZED",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "INSTANCE_ACCESS_DENIED | USER_INACTIVE",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "INTERNAL_ERROR",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    }
+                }
+            }
         }
     },
     "definitions": {
@@ -2450,6 +2541,39 @@ const docTemplate = `{
                 }
             }
         },
+        "http.CuotaAsignableNode": {
+            "type": "object",
+            "required": [
+                "freeRamMb",
+                "freeStorageGb",
+                "headroomPercent",
+                "maxCpuCores"
+            ],
+            "properties": {
+                "freeRamMb": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "example": 14336
+                },
+                "freeStorageGb": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "example": 280
+                },
+                "headroomPercent": {
+                    "type": "integer",
+                    "enum": [
+                        15
+                    ],
+                    "example": 15
+                },
+                "maxCpuCores": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "example": 8
+                }
+            }
+        },
         "http.ErrorResponse": {
             "type": "object",
             "properties": {
@@ -2466,6 +2590,7 @@ const docTemplate = `{
         "http.EstadoNodeResponse": {
             "type": "object",
             "required": [
+                "allocatable",
                 "cpu",
                 "fetchedAt",
                 "instancesSummary",
@@ -2475,6 +2600,9 @@ const docTemplate = `{
                 "uptimeSeconds"
             ],
             "properties": {
+                "allocatable": {
+                    "$ref": "#/definitions/http.CuotaAsignableNode"
+                },
                 "cpu": {
                     "$ref": "#/definitions/http.MetricaCPUNode"
                 },
@@ -3018,6 +3146,17 @@ const docTemplate = `{
                         "LXC_TEMPLATE"
                     ],
                     "example": "ISO"
+                }
+            }
+        },
+        "http.WsTicketResponse": {
+            "type": "object",
+            "properties": {
+                "expiresIn": {
+                    "type": "integer"
+                },
+                "ticket": {
+                    "type": "string"
                 }
             }
         },

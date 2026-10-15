@@ -40,7 +40,10 @@ func TestContratoEtapa1(t *testing.T) {
 
 	definitions := objeto(t, swagger, "definitions")
 	verificarObjetoRequerido(t, definitions, "http.EstadoNodeResponse", []string{
-		"cpu", "ram", "storage", "uptimeSeconds", "instancesSummary", "stale", "fetchedAt",
+		"cpu", "ram", "storage", "allocatable", "uptimeSeconds", "instancesSummary", "stale", "fetchedAt",
+	})
+	verificarObjetoRequerido(t, definitions, "http.CuotaAsignableNode", []string{
+		"maxCpuCores", "freeRamMb", "freeStorageGb", "headroomPercent",
 	})
 	verificarObjetoRequerido(t, definitions, "http.MetricaCPUNode", []string{
 		"usagePercent", "cores",

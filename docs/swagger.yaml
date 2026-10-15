@@ -125,6 +125,31 @@ definitions:
         example: VM
         type: string
     type: object
+  http.CuotaAsignableNode:
+    properties:
+      freeRamMb:
+        example: 14336
+        minimum: 0
+        type: integer
+      freeStorageGb:
+        example: 280
+        minimum: 0
+        type: integer
+      headroomPercent:
+        enum:
+        - 15
+        example: 15
+        type: integer
+      maxCpuCores:
+        example: 8
+        minimum: 0
+        type: integer
+    required:
+    - freeRamMb
+    - freeStorageGb
+    - headroomPercent
+    - maxCpuCores
+    type: object
   http.ErrorResponse:
     properties:
       errorCode:
@@ -136,6 +161,8 @@ definitions:
     type: object
   http.EstadoNodeResponse:
     properties:
+      allocatable:
+        $ref: '#/definitions/http.CuotaAsignableNode'
       cpu:
         $ref: '#/definitions/http.MetricaCPUNode'
       fetchedAt:
@@ -156,6 +183,7 @@ definitions:
         minimum: 0
         type: integer
     required:
+    - allocatable
     - cpu
     - fetchedAt
     - instancesSummary
@@ -552,6 +580,13 @@ definitions:
     - name
     - sizeBytes
     - type
+    type: object
+  http.WsTicketResponse:
+    properties:
+      expiresIn:
+        type: integer
+      ticket:
+        type: string
     type: object
   http.asignarPermisosRequest:
     properties:
@@ -1807,6 +1842,31 @@ paths:
       summary: Renovar access token
       tags:
       - Autenticación
+  /auth/ws-ticket:
+    post:
+      description: Genera un UUID criptográfico de un solo uso con TTL de 30 segundos
+        almacenado en Redis bajo la clave `ws:ticket:<uuid>`. Permite autenticar el
+        handshake de WebSocket sin exponer el JWT en los query parameters.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Ticket efímero válido por 30 segundos
+          schema:
+            $ref: '#/definitions/http.WsTicketResponse'
+        "401":
+          description: MISSING_TOKEN | INVALID_TOKEN | TOKEN_REVOKED
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "500":
+          description: INTERNAL_ERROR
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Generar ticket efímero para WebSocket
+      tags:
+      - Autenticación
   /events:
     get:
       description: 'Abre un stream `text/event-stream` autenticado con el ticket de
@@ -2364,13 +2424,15 @@ paths:
     get:
       description: 'OPERATIVO. Disponible para ADMIN y OPERATOR autenticados (no se
         filtra por permisos de instancia). La lectura se cachea en Redis 10 s (node:status:current):
-        mientras está vigente se responde sin consultar Proxmox. Incluye también instancesSummary,
-        que agrupa el recuento de VMs y contenedores LXC según su estado (running,
-        stopped, paused). Si Proxmox no responde se devuelve la última lectura conocida
-        (node:status:last_known) con `stale: true`; `fetchedAt` indica cuándo se obtuvo.
-        Solo si no hay ninguna lectura previa responde 502 o 504. RAM y almacenamiento
-        en GB (1024³ bytes) con 2 decimales; `storage` es el disco raíz del nodo;
-        `cores` son los hilos lógicos sobre los que se calcula `usagePercent`.'
+        mientras está vigente se responde sin consultar Proxmox. Incluye `allocatable`,
+        con núcleos físicos totales, almacenamiento disponible y RAM libre segura luego de reservar
+        estrictamente 15% para Proxmox. Incluye también instancesSummary, que agrupa
+        el recuento de VMs y contenedores LXC según su estado (running, stopped, paused).
+        Si Proxmox no responde se devuelve la última lectura conocida (node:status:last_known)
+        con `stale: true`; `fetchedAt` indica cuándo se obtuvo. Solo si no hay ninguna
+        lectura previa responde 502 o 504. RAM y almacenamiento en GB (1024³ bytes)
+        con 2 decimales; `storage` es el disco raíz del nodo; `cores` son los hilos
+        lógicos sobre los que se calcula `usagePercent`.'
       produces:
       - application/json
       responses:
@@ -2501,6 +2563,44 @@ paths:
       summary: Listar roles disponibles
       tags:
       - Usuarios (Admin)
+  /ws/instances/{vmid}/metrics:
+    get:
+      description: Establece un canal bidireccional vía WebSocket que emite métricas
+        instantáneas cada 2 segundos. Requiere parámetro query `?ticket=<uuid>` emitido
+        previamente vía POST /api/auth/ws-ticket.
+      parameters:
+      - description: Identificador de instancia (VMID)
+        in: path
+        name: vmid
+        required: true
+        type: integer
+      - description: Ticket efímero de un solo uso
+        in: query
+        name: ticket
+        required: true
+        type: string
+      responses:
+        "101":
+          description: Switching Protocols a WebSocket
+        "400":
+          description: INVALID_VMID
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "401":
+          description: UNAUTHORIZED
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "403":
+          description: INSTANCE_ACCESS_DENIED | USER_INACTIVE
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "500":
+          description: INTERNAL_ERROR
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+      summary: Canal WebSocket de métricas de instancia en tiempo real
+      tags:
+      - Métricas en tiempo real
 securityDefinitions:
   BearerAuth:
     description: 'Token de acceso definitivo. Formato: **Bearer &lt;accessToken&gt;**.

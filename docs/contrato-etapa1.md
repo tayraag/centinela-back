@@ -27,6 +27,14 @@ solo los de sus instancias asignadas.
 
 - `cpu`: `usagePercent` entre 0 y 100 y `cores` como cantidad de núcleos.
 - `ram` y `storage`: `usedGb`, `totalGb` y `usagePercent` entre 0 y 100.
+- `allocatable`: cuotas seguras para el asistente de creación:
+  - `maxCpuCores`: total de núcleos físicos del host (`cpuinfo.cores`, que ya
+    incluye todos los sockets); se diferencia de `cpu.cores`, que informa los
+    hilos lógicos;
+  - `freeRamMb`: RAM libre asignable en MiB, después de descontar el uso actual
+    y reservar estrictamente el 15% de la RAM física para Proxmox;
+  - `freeStorageGb`: espacio asignable del disco raíz (`rootfs.avail`) en GiB;
+  - `headroomPercent`: porcentaje reservado, actualmente `15`.
 - `uptimeSeconds`: tiempo activo del nodo, entero no negativo en segundos.
 - `instancesSummary`: grupos `vms` y `lxc`; cada uno contiene `running`,
   `stopped`, `paused` y `total` como enteros no negativos.
@@ -57,6 +65,12 @@ nodo. `cores` son los hilos lógicos del nodo, sobre los que Proxmox calcula
   "cpu": { "usagePercent": 37.5, "cores": 16 },
   "ram": { "usedGb": 42.25, "totalGb": 128, "usagePercent": 33.01 },
   "storage": { "usedGb": 380, "totalGb": 1024, "usagePercent": 37.11 },
+  "allocatable": {
+    "maxCpuCores": 16,
+    "freeRamMb": 68147,
+    "freeStorageGb": 644,
+    "headroomPercent": 15
+  },
   "uptimeSeconds": 86400,
   "instancesSummary": {
     "vms": { "running": 6, "stopped": 2, "paused": 1, "total": 9 },
