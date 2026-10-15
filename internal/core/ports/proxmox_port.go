@@ -48,6 +48,11 @@ var ErrRecursosInsuficientes = errors.New("recursos insuficientes para aprovisio
 // compartida que evita carreras entre solicitudes concurrentes.
 var ErrCoordinacionAprovisionamiento = errors.New("no se pudo coordinar la reserva de aprovisionamiento")
 
+// ErrCreacionNoDespachada indica que el cliente falló antes de enviar el POST
+// de creación. Permite liberar una reserva con certeza sin confundir ese caso
+// con una respuesta perdida después de que Proxmox pudo aceptar la operación.
+var ErrCreacionNoDespachada = errors.New("la creación no fue despachada a Proxmox")
+
 // InstanciaProxmoxDTO proyecta el estado de una instancia (VM o contenedor)
 // leído desde la API de Proxmox. Los campos de telemetría (Cpu, Mem, MaxMem)
 // provienen directamente de cluster/resources y solo tienen valor cuando la

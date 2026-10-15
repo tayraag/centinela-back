@@ -66,23 +66,37 @@ centinela-back/
 ├── internal/
 │   ├── core/                    # ★ NÚCLEO DE DOMINIO (sin dependencias externas)
 │   │   ├── domain/
-│   │   │   └── models.go        # Entidades: Usuario, SesionActiva, PermisoInstancia, etc.
+│   │   │   ├── models.go        # Entidades: Usuario, SesionActiva, PermisoInstancia, etc.
+│   │   │   └── metricas.go      # DTOs de telemetría y métricas (PuntoMetricaDTO, MetricasEnVivoDTO)
 │   │   ├── ports/
 │   │   │   ├── auth_port.go     # Interfaces AuthRepository + AuthService + DTOs de auth
 │   │   │   ├── user_port.go     # Interfaces UserRepository + UserService + DTOs de usuarios
-│   │   │   └── instance_port.go # Interface InstanceRepository (autorización por recurso)
+│   │   │   ├── instance_port.go # Interface InstanceRepository (autorización por recurso)
+│   │   │   ├── proxmox_port.go  # Interface ProxmoxPort (comunicación con hipervisor)
+│   │   │   ├── event_port.go    # Interface EventBus y contrato RealtimeEvent
+│   │   │   └── audit_port.go    # Interface AuditRepository + AuditService
 │   │   └── services/
-│   │       ├── auth_service.go  # Lógica: login, 2FA, tokens, refresh, logout
-│   │       └── user_service.go  # Lógica: CRUD usuarios, permisos, auditoría, perfil
+│   │       ├── auth_service.go             # Lógica: login, 2FA, tokens, refresh, logout
+│   │       ├── user_service.go             # Lógica: CRUD usuarios, permisos, auditoría, perfil
+│   │       ├── nodo_service.go             # Consolidación de estado, storages y plantillas del nodo
+│   │       ├── inventario_service.go       # Inventario de VMs/CTs filtrado por rol y permisos
+│   │       ├── seguimiento_tareas.go       # Worker pool concurrente de sondeo de UPID y push de TASK_FINISHED
+│   │       ├── aprovisionamiento_service.go# Creación coordinada de VMs/CTs con reserva de cuotas
+│   │       ├── audit_service.go            # Registro y consulta de auditoría particionada
+│   │       └── eventos_service.go          # Despacho de eventos en tiempo real hacia Pub/Sub
 │   │
 │   ├── adapters/
 │   │   ├── primary/             # Adaptadores de ENTRADA (quien llama al core)
 │   │   │   └── http/
-│   │   │       ├── auth_handler.go       # Endpoints de autenticación
-│   │   │       ├── user_handler.go       # Endpoints de gestión de usuarios (ADMIN)
-│   │   │       ├── events_handler.go     # Canal de eventos SSE (ver docs/eventos-tiempo-real.md)
-│   │   │       ├── account_handler.go    # Endpoints de perfil propio
-│   │   │       ├── responses.go          # Helpers de respuestas HTTP
+│   │   │       ├── auth_handler.go       # Endpoints de autenticación (/api/auth/*) y ws-ticket
+│   │   │       ├── user_handler.go       # Endpoints de gestión de usuarios ADMIN (/api/admin/users/*)
+│   │   │       ├── node_handler.go       # Endpoints de telemetría, storages y templates del nodo (/api/node/*)
+│   │   │       ├── instance_handler.go   # Endpoints de inventario, ciclo de vida y telemetría RRD (/api/instances/*)
+│   │   │       ├── ws_metrics_handler.go # Canal WebSocket de telemetría en vivo (/api/ws/instances/:vmid/metrics)
+│   │   │       ├── events_handler.go     # Canal de eventos SSE (/api/events)
+│   │   │       ├── account_handler.go    # Endpoints de perfil propio (/api/account/*)
+│   │   │       ├── audit_handler.go      # Endpoints de auditoría global (/api/admin/audit)
+│   │   │       ├── responses.go          # Helpers de respuestas HTTP estándar
 │   │   │       └── middleware/
 │   │   │           ├── auth_middleware.go    # RequireAuth, RequirePreAuth, RequireRole
 │   │   │           ├── instance_guard.go     # RequireInstanceAccess (guard de VMID)
@@ -91,14 +105,16 @@ centinela-back/
 │   │   │
 │   │   └── secondary/           # Adaptadores de SALIDA (implementan puertos del core)
 │   │       ├── postgres/
-│   │       │   ├── db.go                # InitDB(), AutoMigrate
+│   │       │   ├── db.go                # InitDB(), AutoMigrate, particionamiento trimestral
 │   │       │   ├── auth_repository.go   # Implementa AuthRepository
 │   │       │   ├── user_repository.go   # Implementa UserRepository
-│   │       │   └── instance_repository.go # Implementa InstanceRepository (VerificarAcceso)
+│   │       │   ├── instance_repository.go # Implementa InstanceRepository (VerificarAcceso)
+│   │       │   └── audit_repository.go  # Implementa AuditRepository sobre tabla particionada
 │   │       ├── redis/                   # Implementa KeyValueStore sobre Redis (clave-valor + Pub/Sub), ver docs/redis.md
 │   │       ├── memoria/                 # Implementa KeyValueStore en memoria (modo degradado si no hay Redis)
+│   │       ├── email/                   # Proveedor de correo (SMTP o Mock)
 │   │       ├── kvtest/                  # Test de contrato común a redis/ y memoria/
-│   │       └── proxmox/                 # Adapter Proxmox VE (API Token), ver su README.md
+│   │       └── proxmox/                 # Adapter Proxmox VE (API Token, RRDdata, /status/current), ver su README.md
 │   │           ├── client.go            # Implementa ProxmoxPort
 │   │           └── tls.go               # Verificación TLS (fingerprint / skip verify)
 │   │
@@ -205,11 +221,19 @@ go mod download
 Ejecuta el punto de entrada principal del backend:
 
 ```bash
-go run cmd/api/main.go
+go run ./cmd/api
 ```
 
-Si todo está en orden, verás el mensaje de confirmación en tu consola:
+Si todo está en orden, verás los logs de inicialización del servidor:
 
 ```text
-¡El Centinela está en línea!
+22:00:00 🚀 Iniciando El Centinela Backend...
+22:00:00 ✅ Variables de entorno cargadas desde el archivo .env
+22:00:00 ✅ Conexión exitosa a PostgreSQL
+22:00:00 🔄 Ejecutando auto-migración de tablas...
+22:00:01 ✅ Migración completada exitosamente
+22:00:01 [INFO] Conexión con Redis establecida exitosamente.
+22:00:01 🔁 Seguimiento de tareas iniciado: 8 workers
+22:00:01 📖 Swagger UI disponible en: http://localhost:8080/swagger/index.html
+22:00:01 [INFO] Servidor HTTP escuchando en :8080
 ```

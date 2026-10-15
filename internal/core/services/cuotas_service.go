@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -19,7 +20,6 @@ const (
 	claveCacheEstadoNodo          = "node:status:current"
 	ttlLockAprovisionamiento      = 30 * time.Second
 	esperaLockAprovisionamiento   = 2 * time.Second
-	ttlReservaAprovisionamiento   = 15 * time.Minute
 	ttlCapacidadAprovisionamiento = 10 * time.Second
 	bytesPorMiB                   = int64(1024 * 1024)
 	bytesPorGiB                   = int64(1024 * 1024 * 1024)
@@ -33,6 +33,7 @@ type capacidadAprovisionamiento struct {
 
 type reservaAprovisionamiento struct {
 	ID         string    `json:"id"`
+	VMID       int       `json:"vmid,omitempty"`
 	Nodo       string    `json:"nodo"`
 	StorageID  string    `json:"storageId"`
 	Compartido bool      `json:"compartido"`
@@ -43,7 +44,7 @@ type reservaAprovisionamiento struct {
 }
 
 // CuotasService valida CPU, RAM y storage bajo un lock distribuido y mantiene
-// una reserva temporal hasta que Proxmox refleje el resultado de la creación.
+// una reserva hasta que Proxmox confirme el resultado de la creación.
 // El lock global también cubre storages compartidos entre nodos.
 type CuotasService struct {
 	proxmox ports.ProxmoxPort
@@ -94,7 +95,6 @@ func (s *CuotasService) AprovisionarInstancia(ctx context.Context, input ports.C
 		ID: uuid.NewString(), Nodo: input.Nodo, StorageID: input.StorageID,
 		Compartido: storage.Shared == 1, Memoria: memoriaPedida,
 		Disco: discoPedido, Cores: input.Cores,
-		Vence: s.ahora().Add(ttlReservaAprovisionamiento),
 	}
 	reservas = append(reservas, reserva)
 	if err := s.guardarReservas(ctx, reservas); err != nil {
@@ -103,8 +103,24 @@ func (s *CuotasService) AprovisionarInstancia(ctx context.Context, input ports.C
 
 	resultado, err := s.creador.AprovisionarInstancia(ctx, input)
 	if err != nil {
-		_ = s.guardarReservas(ctx, quitarReserva(reservas, reserva.ID))
+		if errors.Is(err, ports.ErrCreacionNoDespachada) {
+			if quitarErr := s.guardarReservas(context.WithoutCancel(ctx), quitarReserva(reservas, reserva.ID)); quitarErr != nil {
+				return nil, errors.Join(err, quitarErr)
+			}
+			s.invalidarCacheCapacidad(context.WithoutCancel(ctx), input.Nodo)
+			return nil, err
+		}
+		// Un error posterior al despacho no demuestra que Proxmox haya rechazado
+		// la operación. Se retiene la capacidad hasta reconciliar el resultado.
+		s.invalidarCacheCapacidad(context.WithoutCancel(ctx), input.Nodo)
+		log.Printf("[APROVISIONAMIENTO] reserva %s retenida en nodo %s: resultado remoto sin confirmar", reserva.ID, reserva.Nodo)
 		return nil, err
+	}
+	reservas[len(reservas)-1].VMID = resultado.VMID
+	// Failure to attach the VMID leaves the original conservative reservation.
+	// Still return the accepted UPID so the HTTP layer can persist its tracking.
+	if err := s.guardarReservas(context.WithoutCancel(ctx), reservas); err != nil {
+		log.Printf("[APROVISIONAMIENTO] reserva %s conservada sin asociar VMID %d: %v", reserva.ID, resultado.VMID, err)
 	}
 	resultado.ReservaID = reserva.ID
 	// Al aceptar una creación se invalidan solamente las fotos de capacidad;
@@ -148,8 +164,18 @@ func (s *CuotasService) validarCapacidad(ctx context.Context, input ports.CrearI
 	var coresReservados int
 	for _, reserva := range reservas {
 		if reserva.Nodo == input.Nodo {
-			memoriaReservada += reserva.Memoria
-			coresReservados += reserva.Cores
+			var memoriaVisible int64
+			var coresVisibles int
+			for _, instancia := range capacidad.Instancias {
+				if reserva.VMID != 0 && instancia.Vmid == reserva.VMID && instancia.Nodo == reserva.Nodo {
+					memoriaVisible = instancia.MaxMem
+					coresVisibles = instancia.MaxCpu
+					break
+				}
+			}
+			// Only subtract the part not already represented by the inventory.
+			memoriaReservada += max(int64(0), reserva.Memoria-memoriaVisible)
+			coresReservados += max(0, reserva.Cores-coresVisibles)
 		}
 		if reserva.StorageID == input.StorageID && (storage.Shared == 1 || reserva.Nodo == input.Nodo) {
 			discoReservado += reserva.Disco
@@ -216,8 +242,17 @@ func (s *CuotasService) obtenerCapacidad(ctx context.Context, nodo string) (*cap
 	return capacidad, nil
 }
 
-// LiberarReserva se llama cuando el worker cierra la tarea. Si Redis no está
-// disponible, el TTL sigue evitando que la reserva quede retenida para siempre.
+// FinalizarReserva libera capacidad únicamente cuando Proxmox confirmó que la
+// tarea terminó correctamente. Un fallo o timeout puede haber dejado recursos.
+func (s *CuotasService) FinalizarReserva(ctx context.Context, reservaID string, resultado ResultadoTarea) error {
+	if resultado.Estado != ports.TareaCompleted {
+		return nil
+	}
+	return s.LiberarReserva(ctx, reservaID)
+}
+
+// LiberarReserva requiere un desenlace confirmado. Los resultados inciertos se
+// conservan para reconciliarlos en lugar de vencer automáticamente.
 func (s *CuotasService) LiberarReserva(ctx context.Context, reservaID string) error {
 	if strings.TrimSpace(reservaID) == "" {
 		return nil
@@ -275,7 +310,7 @@ func (s *CuotasService) guardarReservas(ctx context.Context, reservas []reservaA
 		}
 		return nil
 	}
-	if err := s.store.Set(ctx, claveReservas, reservas, ttlReservaAprovisionamiento); err != nil {
+	if err := s.store.Set(ctx, claveReservas, reservas, 0); err != nil {
 		return fmt.Errorf("%w: %v", ports.ErrCoordinacionAprovisionamiento, err)
 	}
 	return nil
@@ -284,9 +319,8 @@ func (s *CuotasService) guardarReservas(ctx context.Context, reservas []reservaA
 func reservasVigentes(reservas []reservaAprovisionamiento, ahora time.Time) []reservaAprovisionamiento {
 	vigentes := reservas[:0]
 	for _, reserva := range reservas {
-		if ahora.Before(reserva.Vence) {
-			vigentes = append(vigentes, reserva)
-		}
+		// Legacy expiry timestamps do not establish that remote work stopped.
+		vigentes = append(vigentes, reserva)
 	}
 	return vigentes
 }

@@ -230,6 +230,29 @@ func TestClient_AprovisionarInstancia_ReservaVMIDYEnviaConfiguracion(t *testing.
 	}
 }
 
+func TestClient_AprovisionarInstancia_MarcaFalloPrevioAlDespacho(t *testing.T) {
+	var posts int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			posts++
+		}
+		http.Error(w, "nextid no disponible", http.StatusInternalServerError)
+	}))
+	t.Cleanup(server.Close)
+	client := proxmox.NewClient(server.URL, "pve1", tokenIDValido, tokenSecretValido, nil)
+
+	_, err := client.AprovisionarInstancia(context.Background(), ports.CrearInstanciaProxmoxInput{Tipo: ports.TipoInstanciaQemu, Nodo: "pve1"})
+	if !errors.Is(err, ports.ErrCreacionNoDespachada) {
+		t.Fatalf("se esperaba ErrCreacionNoDespachada, vino %v", err)
+	}
+	if !errors.Is(err, ports.ErrProxmoxNoDisponible) {
+		t.Fatalf("el error debe conservar ErrProxmoxNoDisponible: %v", err)
+	}
+	if posts != 0 {
+		t.Fatalf("no debía enviarse ningún POST, llegaron %d", posts)
+	}
+}
+
 func TestClient_ListarInstancias_ProxmoxCaido(t *testing.T) {
 	// Servidor que responde con error 500
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

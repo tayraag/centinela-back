@@ -119,7 +119,7 @@ go test ./internal/adapters/secondary/proxmox/ -run Integracion -v
 ## 3. Levantar PostgreSQL y Redis con Docker
 
 ```bash
-docker compose up -d db redis
+docker compose up -d
 ```
 
 Verificar que los containers están corriendo:
@@ -499,31 +499,46 @@ centinela-back/
 ---
 
 ## 11. Rutas registradas
-
-| Método | Ruta                                  | Middleware                             | Descripción                                       |
-| ------ | ------------------------------------- | -------------------------------------- | ------------------------------------------------- |
-| POST   | `/api/auth/login`                     | —                                      | Login email+contraseña → JWT temporal (5 min)     |
-| POST   | `/api/auth/refresh`                   | —                                      | Refresh token → nuevo access token                |
-| POST   | `/api/auth/logout`                    | —                                      | Invalida la sesión asociada al refreshToken        |
-| GET    | `/api/auth/2fa/qr`                    | `RequirePreAuth`                       | Generar QR para vincular TOTP                     |
-| POST   | `/api/auth/2fa/verify`                | `RequirePreAuth`                       | Validar código TOTP → access+refresh tokens       |
-| GET    | `/api/roles`                          | `RequireAuth` + `RequireRole("ADMIN")` | Lista roles disponibles (hardcodeado)             |
-| GET    | `/api/admin/users`                    | `RequireAuth` + `RequireRole("ADMIN")` | Lista usuarios + summary (?rol, ?activo, ?buscar) |
-| POST   | `/api/admin/users`                    | `RequireAuth` + `RequireRole("ADMIN")` | Crear usuario → devuelve contrasenaTemp           |
-| GET    | `/api/admin/users/:id`                | `RequireAuth` + `RequireRole("ADMIN")` | Detalle con instanciasPermitidas                  |
-| PUT    | `/api/admin/users/:id`                | `RequireAuth` + `RequireRole("ADMIN")` | Actualizar nombre/email/rol/estado                |
-| DELETE | `/api/admin/users/:id`                | `RequireAuth` + `RequireRole("ADMIN")` | Eliminación lógica + cierra sesiones              |
-| GET    | `/api/admin/users/:id/permissions`    | `RequireAuth` + `RequireRole("ADMIN")` | Permisos de instancias con su nivel de acceso     |
-| PUT    | `/api/admin/users/:id/permissions`    | `RequireAuth` + `RequireRole("ADMIN")` | Reemplazar permisos de instancias                 |
-| GET    | `/api/admin/users/:id/activity`       | `RequireAuth` + `RequireRole("ADMIN")` | Auditoría filtrada del usuario                    |
-| POST   | `/api/admin/users/:id/2fa/reset`      | `RequireAuth` + `RequireRole("ADMIN")` | Resetear TOTP del usuario                         |
-| POST   | `/api/admin/users/:id/password/reset` | `RequireAuth` + `RequireRole("ADMIN")` | Nueva contraseña temporal                         |
-| GET    | `/api/account/profile`                | `RequireAuth`                          | Perfil propio                                     |
-| PUT    | `/api/account/profile`                | `RequireAuth`                          | Actualizar nombre/email propios                   |
-| PUT    | `/api/account/password`               | `RequireAuth`                          | Cambiar contraseña (requiere actual)              |
-| GET    | `/api/node/status`                    | `RequireAuth`                          | Estado del nodo (caché Redis 10 s, `stale` si Proxmox cae) |
-| POST   | `/api/events/ticket`                  | `RequireAuth`                          | Ticket de un solo uso (30 s) para el stream       |
-| GET    | `/api/events?ticket=`                 | Ticket de un solo uso                  | Stream SSE de eventos (ver docs/eventos-tiempo-real.md) |
+ 
+ | Método | Ruta                                  | Middleware                             | Descripción                                       |
+ | ------ | ------------------------------------- | -------------------------------------- | ------------------------------------------------- |
+ | POST   | `/api/auth/login`                     | —                                      | Login email+contraseña → JWT temporal (5 min)     |
+ | POST   | `/api/auth/refresh`                   | —                                      | Rota la cookie `centinela_refresh` → nuevo access token |
+ | POST   | `/api/auth/logout`                    | `RequireAuth`                          | Invalida la sesión activa y elimina la cookie     |
+ | POST   | `/api/auth/ws-ticket`                 | `RequireAuth`                          | Ticket efímero (30 s) para canal WebSocket de telemetría |
+ | POST   | `/api/auth/password/forgot`           | —                                      | Solicitar código de recuperación de contraseña    |
+ | POST   | `/api/auth/password/reset`            | —                                      | Confirmar código y resetear contraseña            |
+ | GET    | `/api/auth/2fa/qr`                    | `RequirePreAuth`                       | Generar QR para vincular TOTP                     |
+ | POST   | `/api/auth/2fa/verify`                | `RequirePreAuth`                       | Validar código TOTP → access token + cookie refresh |
+ | GET    | `/api/roles`                          | `RequireAuth` + `RequireRole("ADMIN")` | Lista roles disponibles (ADMIN, OPERATOR)         |
+ | GET    | `/api/admin/users`                    | `RequireAuth` + `RequireRole("ADMIN")` | Lista usuarios + summary (?rol, ?activo, ?buscar) |
+ | POST   | `/api/admin/users`                    | `RequireAuth` + `RequireRole("ADMIN")` | Crear usuario → devuelve contrasenaTemp           |
+ | GET    | `/api/admin/users/:id`                | `RequireAuth` + `RequireRole("ADMIN")` | Detalle con instanciasPermitidas                  |
+ | PUT    | `/api/admin/users/:id`                | `RequireAuth` + `RequireRole("ADMIN")` | Actualizar nombre/email/rol/estado                |
+ | DELETE | `/api/admin/users/:id`                | `RequireAuth` + `RequireRole("ADMIN")` | Eliminación lógica + cierra sesiones              |
+ | GET    | `/api/admin/users/:id/permissions`    | `RequireAuth` + `RequireRole("ADMIN")` | Permisos de instancias con su nivel de acceso     |
+ | PUT    | `/api/admin/users/:id/permissions`    | `RequireAuth` + `RequireRole("ADMIN")` | Reemplazar permisos de instancias                 |
+ | GET    | `/api/admin/users/:id/activity`       | `RequireAuth` + `RequireRole("ADMIN")` | Auditoría filtrada del usuario                    |
+ | POST   | `/api/admin/users/:id/2fa/reset`      | `RequireAuth` + `RequireRole("ADMIN")` | Resetear TOTP del usuario                         |
+ | POST   | `/api/admin/users/:id/password/reset` | `RequireAuth` + `RequireRole("ADMIN")` | Nueva contraseña temporal                         |
+ | GET    | `/api/admin/audit`                    | `RequireAuth` + `RequireRole("ADMIN")` | Registro global de auditoría particionada (RF-08) |
+ | GET    | `/api/admin/audit/export`             | `RequireAuth` + `RequireRole("ADMIN")` | Exportación CSV de auditoría                      |
+ | GET    | `/api/account/profile`                | `RequireAuth`                          | Perfil propio                                     |
+ | PUT    | `/api/account/profile`                | `RequireAuth`                          | Actualizar nombre/email propios                   |
+ | PUT    | `/api/account/password`               | `RequireAuth`                          | Cambiar contraseña (requiere actual)              |
+ | GET    | `/api/node/status`                    | `RequireAuth`                          | Estado del nodo (caché Redis 10 s, `stale` si Proxmox cae) |
+ | GET    | `/api/node/storages`                  | `RequireAuth` + `RequireRole("ADMIN")` | Catálogo de almacenamiento activo en el nodo      |
+ | GET    | `/api/node/templates`                 | `RequireAuth` + `RequireRole("ADMIN")` | Catálogo de plantillas LXC e imágenes ISO (RF-07) |
+ | POST   | `/api/events/ticket`                  | `RequireAuth`                          | Ticket de un solo uso (30 s) para stream SSE      |
+ | GET    | `/api/events?ticket=`                 | Ticket de un solo uso                  | Stream SSE de eventos (ver docs/eventos-tiempo-real.md) |
+ | GET    | `/api/ws/instances/:vmid/metrics`     | Ticket efímero query                   | Canal WebSocket de métricas en vivo cada 2s (RF-05) |
+ | GET    | `/api/instances`                      | `RequireAuth`                          | Inventario de instancias filtrado por rol y permisos |
+ | POST   | `/api/instances`                      | `RequireAuth` + `RequireRole("ADMIN")` | Aprovisionar VM/CT con reserva de cuotas          |
+ | GET    | `/api/instances/:vmid`                | `RequireInstanceAccess` (RO)           | Detalle en vivo de una instancia                  |
+ | POST   | `/api/instances/:vmid/start`          | `RequireInstanceAccess` (FA) + guard   | Iniciar instancia (asíncrono 202 con UPID)        |
+ | POST   | `/api/instances/:vmid/stop`           | `RequireInstanceAccess` (FA) + guard   | Detener instancia forzadamente (asíncrono 202)    |
+ | POST   | `/api/instances/:vmid/status/:action` | `RequireInstanceAccess` (FA) + guard   | Cambiar estado (shutdown / reboot)                |
+ | DELETE | `/api/instances/:vmid`                | `RequireRole("ADMIN")` + guard         | Eliminar instancia (asíncrono 202 con UPID)       |
 
 ---
 
@@ -752,16 +767,15 @@ curl.exe -s -X PUT http://localhost:8080/api/account/password -H "Content-Type: 
 
 ### 12.11 Cerrar sesión (logout)
 
-> A diferencia del resto de los endpoints de esta sección, `logout` cuelga de `/api/auth` (no de `/api/account`), no requiere el header `Authorization` y en cambio recibe el `refreshToken` en el body — es lo que el backend usa para identificar y cerrar la sesión.
+> `logout` cuelga de `/api/auth/logout`, requiere el header `Authorization: Bearer $ACCESS` para identificar al usuario autenticado e invalida la sesión asociada (y limpia la cookie HTTP-Only `centinela_refresh`).
 
 ```powershell
-Set-Content body_logout.json "{`"refreshToken`":`"$REFRESH`"}" -Encoding ascii -NoNewline
-curl.exe -s -i -X POST http://localhost:8080/api/auth/logout -H "Content-Type: application/json" -d "@body_logout.json"
+curl.exe -s -i -X POST http://localhost:8080/api/auth/logout -H "Authorization: Bearer $ACCESS"
 ```
 
 **Respuesta esperada: `HTTP/1.1 204 No Content`**
 
-> Invalida la sesión asociada a ese refresh token. Si se reintenta el mismo request, responde `401` con `errorCode: AUTH_FAILED` (sesión inválida o ya cerrada).
+> Invalida la sesión activa. Si se reintenta el mismo request con el token revocado, responde `401` con `errorCode: TOKEN_REVOKED` (sesión inválida o ya cerrada).
 
 ---
 

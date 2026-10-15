@@ -181,22 +181,22 @@ func (c *Client) AprovisionarInstancia(ctx context.Context, input ports.CrearIns
 
 	raw, err := c.doRequest(ctx, http.MethodGet, "/api2/json/cluster/nextid", nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %w", ports.ErrCreacionNoDespachada, err)
 	}
 	var siguiente struct {
 		Data string `json:"data"`
 	}
 	if err := json.Unmarshal(raw, &siguiente); err != nil {
-		return nil, fmt.Errorf("%w: respuesta de cluster/nextid inválida: %v", ports.ErrProxmoxNoDisponible, err)
+		return nil, fmt.Errorf("%w: %w: respuesta de cluster/nextid inválida: %v", ports.ErrCreacionNoDespachada, ports.ErrProxmoxNoDisponible, err)
 	}
 	vmid, err := strconv.Atoi(siguiente.Data)
 	if err != nil || vmid < 100 {
-		return nil, fmt.Errorf("%w: VMID inválido en cluster/nextid: %q", ports.ErrProxmoxNoDisponible, siguiente.Data)
+		return nil, fmt.Errorf("%w: %w: VMID inválido en cluster/nextid: %q", ports.ErrCreacionNoDespachada, ports.ErrProxmoxNoDisponible, siguiente.Data)
 	}
 
 	tipo := strings.ToLower(input.Tipo)
 	if tipo != ports.TipoInstanciaQemu && tipo != ports.TipoInstanciaLXC {
-		return nil, fmt.Errorf("tipo de instancia desconocido %q", input.Tipo)
+		return nil, fmt.Errorf("%w: tipo de instancia desconocido %q", ports.ErrCreacionNoDespachada, input.Tipo)
 	}
 	params := parametrosCreacion(vmid, input)
 	path := fmt.Sprintf("/api2/json/nodes/%s/%s", url.PathEscape(input.Nodo), tipo)
