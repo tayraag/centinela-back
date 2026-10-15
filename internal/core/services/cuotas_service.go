@@ -32,15 +32,13 @@ type capacidadAprovisionamiento struct {
 }
 
 type reservaAprovisionamiento struct {
-	ID         string    `json:"id"`
-	VMID       int       `json:"vmid,omitempty"`
-	Nodo       string    `json:"nodo"`
-	StorageID  string    `json:"storageId"`
-	Compartido bool      `json:"compartido"`
-	Memoria    int64     `json:"memoriaBytes"`
-	Disco      int64     `json:"discoBytes"`
-	Cores      int       `json:"cores"`
-	Vence      time.Time `json:"vence"`
+	ID        string `json:"id"`
+	VMID      int    `json:"vmid,omitempty"`
+	Nodo      string `json:"nodo"`
+	StorageID string `json:"storageId"`
+	Memoria   int64  `json:"memoriaBytes"`
+	Disco     int64  `json:"discoBytes"`
+	Cores     int    `json:"cores"`
 }
 
 // CuotasService valida CPU, RAM y storage bajo un lock distribuido y mantiene
@@ -50,13 +48,12 @@ type CuotasService struct {
 	proxmox ports.ProxmoxPort
 	creador ports.AprovisionamientoPort
 	store   ports.KeyValueStore
-	ahora   func() time.Time
 }
 
 var _ ports.AprovisionamientoPort = (*CuotasService)(nil)
 
 func NewCuotasService(proxmox ports.ProxmoxPort, creador ports.AprovisionamientoPort, store ports.KeyValueStore) *CuotasService {
-	return &CuotasService{proxmox: proxmox, creador: creador, store: store, ahora: time.Now}
+	return &CuotasService{proxmox: proxmox, creador: creador, store: store}
 }
 
 func (s *CuotasService) AprovisionarInstancia(ctx context.Context, input ports.CrearInstanciaProxmoxInput) (*ports.ResultadoAprovisionamiento, error) {
@@ -84,17 +81,14 @@ func (s *CuotasService) AprovisionarInstancia(ctx context.Context, input ports.C
 	if err != nil {
 		return nil, err
 	}
-	reservas = reservasVigentes(reservas, s.ahora())
-
-	storage, err := s.validarCapacidad(ctx, input, reservas, memoriaPedida, discoPedido)
+	_, err = s.validarCapacidad(ctx, input, reservas, memoriaPedida, discoPedido)
 	if err != nil {
 		return nil, err
 	}
 
 	reserva := reservaAprovisionamiento{
 		ID: uuid.NewString(), Nodo: input.Nodo, StorageID: input.StorageID,
-		Compartido: storage.Shared == 1, Memoria: memoriaPedida,
-		Disco: discoPedido, Cores: input.Cores,
+		Memoria: memoriaPedida, Disco: discoPedido, Cores: input.Cores,
 	}
 	reservas = append(reservas, reserva)
 	if err := s.guardarReservas(ctx, reservas); err != nil {
@@ -266,8 +260,7 @@ func (s *CuotasService) LiberarReserva(ctx context.Context, reservaID string) er
 	if err != nil {
 		return err
 	}
-	vigentes := reservasVigentes(reservas, s.ahora())
-	restantes, nodo := quitarReservaYObtenerNodo(vigentes, reservaID)
+	restantes, nodo := quitarReservaYObtenerNodo(reservas, reservaID)
 	if err := s.guardarReservas(ctx, restantes); err != nil {
 		return err
 	}
@@ -314,15 +307,6 @@ func (s *CuotasService) guardarReservas(ctx context.Context, reservas []reservaA
 		return fmt.Errorf("%w: %v", ports.ErrCoordinacionAprovisionamiento, err)
 	}
 	return nil
-}
-
-func reservasVigentes(reservas []reservaAprovisionamiento, ahora time.Time) []reservaAprovisionamiento {
-	vigentes := reservas[:0]
-	for _, reserva := range reservas {
-		// Legacy expiry timestamps do not establish that remote work stopped.
-		vigentes = append(vigentes, reserva)
-	}
-	return vigentes
 }
 
 func quitarReserva(reservas []reservaAprovisionamiento, id string) []reservaAprovisionamiento {
