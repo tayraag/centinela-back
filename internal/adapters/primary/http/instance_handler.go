@@ -221,7 +221,7 @@ func mapearErrorProxmox(c *gin.Context, err error) {
 		SendError(c, http.StatusConflict, "INSTANCE_BUSY", "La instancia se encuentra ejecutando otra tarea. Aguarde a que finalice.")
 	case errors.Is(err, ports.ErrRecursosInsuficientes):
 		log.Printf("📊 Cuota insuficiente [%s]: %v", ruta, err)
-		SendError(c, http.StatusConflict, "RESOURCE_QUOTA_EXCEEDED", "Los recursos solicitados ya no están disponibles en el nodo o almacenamiento seleccionado.")
+		SendError(c, http.StatusConflict, "RESOURCE_QUOTA_EXCEEDED", "Los recursos solicitados superan la capacidad disponible en el nodo físico o storage seleccionado.")
 	case errors.Is(err, ports.ErrCoordinacionAprovisionamiento):
 		log.Printf("🔒 No se pudo coordinar la reserva [%s]: %v", ruta, err)
 		SendError(c, http.StatusServiceUnavailable, "PROVISIONING_COORDINATION_UNAVAILABLE", "No se pudo reservar la capacidad de forma segura. Intente nuevamente.")
@@ -295,7 +295,7 @@ func normalizarCreacion(req CrearInstanciaRequest) (ports.CrearInstanciaProxmoxI
 // vzcreate y registra inmediatamente el UPID con el usuario autenticado.
 //
 // @Summary      Crear una VM o contenedor
-// @Description  ADMIN ONLY. Bajo lock distribuido consulta la capacidad cacheada en Redis (o Proxmox si falta), valida y reserva CPU, RAM y disco, invalida la caché al aceptar la orden y comienza el aprovisionamiento asíncrono. El resultado llega por TASK_FINISHED con accion CREATE; al completar correctamente (OK o WARNINGS), el creador recibe FULL_ACCESS y se vuelve a invalidar la capacidad.
+// @Description  ADMIN ONLY. CuotasService usa el lock Redis `lock:instance:provisioning` con TTL de 30 s y hasta 2 s de espera. Consulta la capacidad cacheada (o Proxmox si falta), valida CPU lógica, RAM con 15% de headroom y disco contra `avail` del storage, registra una reserva temporal e invalida la caché al aceptar la orden. El resultado llega por TASK_FINISHED con accion CREATE; al completar correctamente (OK o WARNINGS), el creador recibe FULL_ACCESS y se vuelve a invalidar la capacidad.
 // @Tags         Instancias Proxmox
 // @Accept       json
 // @Produce      json

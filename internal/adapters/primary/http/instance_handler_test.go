@@ -320,6 +320,9 @@ func TestCrearInstancia_RecursosInsuficientesEs409(t *testing.T) {
 	if w.Code != http.StatusConflict || respuesta["errorCode"] != "RESOURCE_QUOTA_EXCEEDED" {
 		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
 	}
+	if respuesta["message"] != "Los recursos solicitados superan la capacidad disponible en el nodo físico o storage seleccionado." {
+		t.Fatalf("mensaje de cuota inesperado: %q", respuesta["message"])
+	}
 }
 
 func TestCrearInstancia_RechazaLXCSinPasswordAntesDeProxmox(t *testing.T) {

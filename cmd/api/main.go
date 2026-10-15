@@ -138,7 +138,7 @@ func main() {
 	auditService := services.NewAuditService(auditRepo)
 	authService := services.NewAuthService(authRepo, kvStore, emailService, auditService)
 	userService := services.NewUserService(userRepo, authRepo, kvStore, auditService, emailService)
-	aprovisionamientoService := services.NewAprovisionamientoService(proxmoxClient, proxmoxClient, kvStore)
+	cuotasService := services.NewCuotasService(proxmoxClient, proxmoxClient, kvStore)
 
 	// 5. Inicializar handlers HTTP
 	authHandler := httpHandlers.NewAuthHandler(authService, kvStore)
@@ -156,7 +156,7 @@ func main() {
 					var meta map[string]any
 					if json.Unmarshal([]byte(*tarea.Metadatos), &meta) == nil {
 						if reservaID, _ := meta["reserva_id"].(string); reservaID != "" {
-							if err := aprovisionamientoService.LiberarReserva(ctx, reservaID); err != nil {
+							if err := cuotasService.LiberarReserva(ctx, reservaID); err != nil {
 								log.Printf("[APROVISIONAMIENTO] no se pudo liberar la reserva %s: %v", reservaID, err)
 							}
 						}
@@ -171,7 +171,7 @@ func main() {
 		})
 	seguimientoTareas.Iniciar(ctx)
 	instanceHandler := httpHandlers.NewInstanceHandler(proxmoxClient, userRepo, seguimientoTareas, tareaRepo, auditService,
-		services.NewInventarioService(proxmoxClient), aprovisionamientoService)
+		services.NewInventarioService(proxmoxClient), cuotasService)
 	eventsHandler := httpHandlers.NewEventsHandler(eventosService)
 	nodoNombre := valorODefecto(os.Getenv("PROXMOX_NODE"), "proxmox")
 	nodeHandler := httpHandlers.NewNodeHandler(services.NewNodoService(proxmoxClient, kvStore, nodoNombre), proxmoxClient, nodoNombre)
@@ -345,7 +345,6 @@ func main() {
 	}
 	srv.RegisterOnShutdown(eventsHandler.CerrarStreams)       // los streams SSE no terminan solos
 	srv.RegisterOnShutdown(wsMetricsHandler.CerrarConexiones) // los canales WS de telemetría tampoco
-
 
 	go func() {
 		log.Printf("[INFO] Servidor HTTP escuchando en %s", srv.Addr)

@@ -59,21 +59,21 @@ func (p *proxmoxAprovisionamiento) AprovisionarInstancia(context.Context, ports.
 	return &ports.ResultadoAprovisionamiento{VMID: 100 + n, UPID: "UPID", Accion: ports.AccionProxmoxCrearVM}, nil
 }
 
-func TestAprovisionamiento_SerializaSolicitudesConcurrentes(t *testing.T) {
+func TestCuotas_SerializaSolicitudesConcurrentes(t *testing.T) {
 	px := &proxmoxAprovisionamiento{bloquear: make(chan struct{}), inicio: make(chan struct{})}
-	svc := services.NewAprovisionamientoService(px, px, memoria.Nuevo())
+	svc := services.NewCuotasService(px, px, memoria.Nuevo())
 	ctx := context.Background()
 
 	primeraResultado := make(chan error, 1)
 	go func() {
-		_, err := svc.AprovisionarInstancia(ctx, inputCreacion(4*1024, 12, 4))
+		_, err := svc.AprovisionarInstancia(ctx, inputCreacion(4*1024, 1, 1))
 		primeraResultado <- err
 	}()
 	<-px.inicio // la primera ya validó, reservó y mantiene el lock
 
 	segundaResultado := make(chan error, 1)
 	go func() {
-		_, err := svc.AprovisionarInstancia(ctx, inputCreacion(3*1024, 9, 3))
+		_, err := svc.AprovisionarInstancia(ctx, inputCreacion(1*1024, 1, 1))
 		segundaResultado <- err
 	}()
 	select {
@@ -101,11 +101,12 @@ func inputCreacion(memoriaMB, discoGB, cores int) ports.CrearInstanciaProxmoxInp
 	}
 }
 
-func TestAprovisionamiento_RechazaCuotasInsuficientesAntesDeCrear(t *testing.T) {
+func TestCuotas_RechazaCuotasInsuficientesAntesDeCrear(t *testing.T) {
 	casos := []struct {
 		nombre string
 		input  ports.CrearInstanciaProxmoxInput
 	}{
+		{"RAM respeta headroom del 15%", inputCreacion(5*1024, 1, 1)},
 		{"RAM", inputCreacion(7*1024, 1, 1)},
 		{"CPU", inputCreacion(512, 1, 7)},
 		{"disco", inputCreacion(512, 21, 1)},
@@ -113,7 +114,7 @@ func TestAprovisionamiento_RechazaCuotasInsuficientesAntesDeCrear(t *testing.T) 
 	for _, caso := range casos {
 		t.Run(caso.nombre, func(t *testing.T) {
 			px := &proxmoxAprovisionamiento{}
-			svc := services.NewAprovisionamientoService(px, px, memoria.Nuevo())
+			svc := services.NewCuotasService(px, px, memoria.Nuevo())
 			if _, err := svc.AprovisionarInstancia(context.Background(), caso.input); !errors.Is(err, ports.ErrRecursosInsuficientes) {
 				t.Fatalf("se esperaba ErrRecursosInsuficientes, vino %v", err)
 			}
@@ -124,9 +125,50 @@ func TestAprovisionamiento_RechazaCuotasInsuficientesAntesDeCrear(t *testing.T) 
 	}
 }
 
-func TestAprovisionamiento_ReutilizaFotoDeCapacidadDeRedis(t *testing.T) {
+func TestCuotas_RechazaTamanosQueDesbordanConversionAntesDeConsultar(t *testing.T) {
+	const maxInt64 = int64(^uint64(0) >> 1)
+	const mib = int64(1024 * 1024)
+	const gib = int64(1024 * 1024 * 1024)
+	maxInt := int(^uint(0) >> 1)
+	casos := []struct {
+		nombre string
+		factor int64
+	}{
+		{nombre: "RAM", factor: mib},
+		{nombre: "disco", factor: gib},
+	}
+
+	probados := 0
+	for _, caso := range casos {
+		cantidadFueraDeRango := maxInt64/caso.factor + 1
+		if cantidadFueraDeRango > int64(maxInt) {
+			continue
+		}
+		input := inputCreacion(512, 1, 1)
+		if caso.nombre == "RAM" {
+			input.MemoriaMB = int(cantidadFueraDeRango)
+		} else {
+			input.DiscoGB = int(cantidadFueraDeRango)
+		}
+
+		px := &proxmoxAprovisionamiento{}
+		svc := services.NewCuotasService(px, px, memoria.Nuevo())
+		if _, err := svc.AprovisionarInstancia(context.Background(), input); !errors.Is(err, ports.ErrRecursosInsuficientes) {
+			t.Errorf("%s fuera de rango: se esperaba ErrRecursosInsuficientes, vino %v", caso.nombre, err)
+		}
+		if px.creaciones != 0 || px.lecturasNodo != 0 || px.lecturasInstancia != 0 || px.lecturasStorage != 0 {
+			t.Errorf("%s fuera de rango no debe consultar ni crear en Proxmox: %+v", caso.nombre, px)
+		}
+		probados++
+	}
+	if probados == 0 {
+		t.Skip("la arquitectura no puede representar una cantidad que desborde int64 al convertirla a bytes")
+	}
+}
+
+func TestCuotas_ReutilizaFotoDeCapacidadDeRedis(t *testing.T) {
 	px := &proxmoxAprovisionamiento{}
-	svc := services.NewAprovisionamientoService(px, px, memoria.Nuevo())
+	svc := services.NewCuotasService(px, px, memoria.Nuevo())
 	ctx := context.Background()
 
 	for intento := 0; intento < 2; intento++ {
@@ -139,14 +181,14 @@ func TestAprovisionamiento_ReutilizaFotoDeCapacidadDeRedis(t *testing.T) {
 	}
 }
 
-func TestAprovisionamiento_ReservaEvitaCarreraYSeLibera(t *testing.T) {
+func TestCuotas_ReservaEvitaCarreraYSeLibera(t *testing.T) {
 	px := &proxmoxAprovisionamiento{}
 	store := memoria.Nuevo()
-	svc := services.NewAprovisionamientoService(px, px, store)
+	svc := services.NewCuotasService(px, px, store)
 	ctx := context.Background()
 	_ = store.Set(ctx, "node:status:current", "foto-anterior", time.Minute)
 
-	primera, err := svc.AprovisionarInstancia(ctx, inputCreacion(4*1024, 12, 4))
+	primera, err := svc.AprovisionarInstancia(ctx, inputCreacion(4*1024, 1, 1))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,7 +204,7 @@ func TestAprovisionamiento_ReservaEvitaCarreraYSeLibera(t *testing.T) {
 
 	// Sin la reserva, ambas solicitudes entrarían porque Proxmox todavía
 	// devuelve la misma foto de capacidad. Con ella, la segunda llega tarde.
-	if _, err := svc.AprovisionarInstancia(ctx, inputCreacion(3*1024, 9, 3)); !errors.Is(err, ports.ErrRecursosInsuficientes) {
+	if _, err := svc.AprovisionarInstancia(ctx, inputCreacion(1*1024, 1, 1)); !errors.Is(err, ports.ErrRecursosInsuficientes) {
 		t.Fatalf("la segunda solicitud debía ser rechazada por la reserva: %v", err)
 	}
 	if px.creaciones != 1 {
@@ -179,7 +221,54 @@ func TestAprovisionamiento_ReservaEvitaCarreraYSeLibera(t *testing.T) {
 			t.Fatalf("al cerrar la tarea debía invalidarse %s: %v", clave, err)
 		}
 	}
-	if _, err := svc.AprovisionarInstancia(ctx, inputCreacion(3*1024, 9, 3)); err != nil {
+	if _, err := svc.AprovisionarInstancia(ctx, inputCreacion(1*1024, 1, 1)); err != nil {
 		t.Fatalf("después de liberar la reserva la capacidad debe volver a estar disponible: %v", err)
+	}
+}
+
+type storeLockObservado struct {
+	ports.KeyValueStore
+	clave string
+	ttl   time.Duration
+}
+
+func (s *storeLockObservado) AcquireLock(ctx context.Context, key string, ttl time.Duration) (func(context.Context) error, error) {
+	s.clave, s.ttl = key, ttl
+	return s.KeyValueStore.AcquireLock(ctx, key, ttl)
+}
+
+func TestCuotas_UsaLockDistribuidoEspecificadoYLiberacionSegura(t *testing.T) {
+	px := &proxmoxAprovisionamiento{}
+	base := memoria.Nuevo()
+	store := &storeLockObservado{KeyValueStore: base}
+	svc := services.NewCuotasService(px, px, store)
+
+	if _, err := svc.AprovisionarInstancia(context.Background(), inputCreacion(7*1024, 1, 1)); !errors.Is(err, ports.ErrRecursosInsuficientes) {
+		t.Fatalf("se esperaba rechazo por cuota, vino %v", err)
+	}
+	if store.clave != "lock:instance:provisioning" || store.ttl != 30*time.Second {
+		t.Fatalf("lock inesperado: clave=%q ttl=%v", store.clave, store.ttl)
+	}
+	if _, err := base.Get(context.Background(), store.clave); !errors.Is(err, ports.ErrClaveNoEncontrada) {
+		t.Fatalf("el lock debe liberarse también cuando falla la validación: %v", err)
+	}
+}
+
+type storeLockOcupado struct{ ports.KeyValueStore }
+
+func (s storeLockOcupado) AcquireLock(context.Context, string, time.Duration) (func(context.Context) error, error) {
+	return nil, context.DeadlineExceeded
+}
+
+func TestCuotas_ContencionDelLockEsRechazoControlado(t *testing.T) {
+	px := &proxmoxAprovisionamiento{}
+	store := storeLockOcupado{KeyValueStore: memoria.Nuevo()}
+	svc := services.NewCuotasService(px, px, store)
+
+	if _, err := svc.AprovisionarInstancia(context.Background(), inputCreacion(512, 1, 1)); !errors.Is(err, ports.ErrRecursosInsuficientes) {
+		t.Fatalf("la espera agotada del lock debe mapearse a rechazo de cuota: %v", err)
+	}
+	if px.creaciones != 0 {
+		t.Fatalf("la contención del lock no debe enviar tráfico de creación a Proxmox")
 	}
 }

@@ -14,12 +14,14 @@ import (
 )
 
 const (
-	claveLockAprovisionamiento    = "aprovisionamiento:lock"
+	claveLockAprovisionamiento    = "lock:instance:provisioning"
 	claveReservas                 = "aprovisionamiento:reservas"
 	claveCacheEstadoNodo          = "node:status:current"
-	ttlLockAprovisionamiento      = time.Minute
+	ttlLockAprovisionamiento      = 30 * time.Second
+	esperaLockAprovisionamiento   = 2 * time.Second
 	ttlReservaAprovisionamiento   = 15 * time.Minute
 	ttlCapacidadAprovisionamiento = 10 * time.Second
+	bytesPorMiB                   = int64(1024 * 1024)
 	bytesPorGiB                   = int64(1024 * 1024 * 1024)
 )
 
@@ -40,25 +42,39 @@ type reservaAprovisionamiento struct {
 	Vence      time.Time `json:"vence"`
 }
 
-// AprovisionamientoService valida capacidad y mantiene una reserva temporal
-// compartida antes de delegar la creación en Proxmox. El lock global también
-// cubre storages compartidos entre nodos.
-type AprovisionamientoService struct {
+// CuotasService valida CPU, RAM y storage bajo un lock distribuido y mantiene
+// una reserva temporal hasta que Proxmox refleje el resultado de la creación.
+// El lock global también cubre storages compartidos entre nodos.
+type CuotasService struct {
 	proxmox ports.ProxmoxPort
 	creador ports.AprovisionamientoPort
 	store   ports.KeyValueStore
 	ahora   func() time.Time
 }
 
-var _ ports.AprovisionamientoPort = (*AprovisionamientoService)(nil)
+var _ ports.AprovisionamientoPort = (*CuotasService)(nil)
 
-func NewAprovisionamientoService(proxmox ports.ProxmoxPort, creador ports.AprovisionamientoPort, store ports.KeyValueStore) *AprovisionamientoService {
-	return &AprovisionamientoService{proxmox: proxmox, creador: creador, store: store, ahora: time.Now}
+func NewCuotasService(proxmox ports.ProxmoxPort, creador ports.AprovisionamientoPort, store ports.KeyValueStore) *CuotasService {
+	return &CuotasService{proxmox: proxmox, creador: creador, store: store, ahora: time.Now}
 }
 
-func (s *AprovisionamientoService) AprovisionarInstancia(ctx context.Context, input ports.CrearInstanciaProxmoxInput) (*ports.ResultadoAprovisionamiento, error) {
-	release, err := s.store.AcquireLock(ctx, claveLockAprovisionamiento, ttlLockAprovisionamiento)
+func (s *CuotasService) AprovisionarInstancia(ctx context.Context, input ports.CrearInstanciaProxmoxInput) (*ports.ResultadoAprovisionamiento, error) {
+	memoriaPedida, memoriaValida := cantidadEnBytes(input.MemoriaMB, bytesPorMiB)
+	discoPedido, discoValido := cantidadEnBytes(input.DiscoGB, bytesPorGiB)
+	if !memoriaValida || !discoValido {
+		return nil, fmt.Errorf("%w: tamaño de RAM o disco fuera de rango", ports.ErrRecursosInsuficientes)
+	}
+
+	lockCtx, cancelarEspera := context.WithTimeout(ctx, esperaLockAprovisionamiento)
+	release, err := s.store.AcquireLock(lockCtx, claveLockAprovisionamiento, ttlLockAprovisionamiento)
+	cancelarEspera()
 	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
+			return nil, fmt.Errorf("%w: otra creación está reservando capacidad; reintente", ports.ErrRecursosInsuficientes)
+		}
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		return nil, fmt.Errorf("%w: %v", ports.ErrCoordinacionAprovisionamiento, err)
 	}
 	defer func() { _ = release(context.Background()) }()
@@ -69,15 +85,15 @@ func (s *AprovisionamientoService) AprovisionarInstancia(ctx context.Context, in
 	}
 	reservas = reservasVigentes(reservas, s.ahora())
 
-	storage, err := s.validarCapacidad(ctx, input, reservas)
+	storage, err := s.validarCapacidad(ctx, input, reservas, memoriaPedida, discoPedido)
 	if err != nil {
 		return nil, err
 	}
 
 	reserva := reservaAprovisionamiento{
 		ID: uuid.NewString(), Nodo: input.Nodo, StorageID: input.StorageID,
-		Compartido: storage.Shared == 1, Memoria: int64(input.MemoriaMB) * 1024 * 1024,
-		Disco: int64(input.DiscoGB) * bytesPorGiB, Cores: input.Cores,
+		Compartido: storage.Shared == 1, Memoria: memoriaPedida,
+		Disco: discoPedido, Cores: input.Cores,
 		Vence: s.ahora().Add(ttlReservaAprovisionamiento),
 	}
 	reservas = append(reservas, reserva)
@@ -98,7 +114,7 @@ func (s *AprovisionamientoService) AprovisionarInstancia(ctx context.Context, in
 	return resultado, nil
 }
 
-func (s *AprovisionamientoService) validarCapacidad(ctx context.Context, input ports.CrearInstanciaProxmoxInput, reservas []reservaAprovisionamiento) (ports.StorageDTO, error) {
+func (s *CuotasService) validarCapacidad(ctx context.Context, input ports.CrearInstanciaProxmoxInput, reservas []reservaAprovisionamiento, memoriaPedida, discoPedido int64) (ports.StorageDTO, error) {
 	capacidad, err := s.obtenerCapacidad(ctx, input.Nodo)
 	if err != nil {
 		return ports.StorageDTO{}, err
@@ -144,9 +160,9 @@ func (s *AprovisionamientoService) validarCapacidad(ctx context.Context, input p
 	if capacidad.Nodo.MemUsada > memoriaComprometida {
 		memoriaComprometida = capacidad.Nodo.MemUsada
 	}
-	memoriaPedida := int64(input.MemoriaMB) * 1024 * 1024
-	discoPedido := int64(input.DiscoGB) * bytesPorGiB
-	if memoriaPedida > capacidad.Nodo.MemTotal-memoriaComprometida-memoriaReservada {
+	memoriaReservadaHost := porcentajeRedondeadoHaciaArriba(max(int64(0), capacidad.Nodo.MemTotal), headroomRAMPercent)
+	memoriaDisponibleSegura := max(int64(0), capacidad.Nodo.MemTotal-memoriaComprometida-memoriaReservadaHost-memoriaReservada)
+	if memoriaPedida > memoriaDisponibleSegura {
 		return ports.StorageDTO{}, fmt.Errorf("%w: RAM disponible insuficiente en el nodo %s", ports.ErrRecursosInsuficientes, input.Nodo)
 	}
 	if input.Cores > capacidad.Nodo.CPUs-coresAsignados-coresReservados {
@@ -158,7 +174,19 @@ func (s *AprovisionamientoService) validarCapacidad(ctx context.Context, input p
 	return storage, nil
 }
 
-func (s *AprovisionamientoService) obtenerCapacidad(ctx context.Context, nodo string) (*capacidadAprovisionamiento, error) {
+func cantidadEnBytes(cantidad int, bytesPorUnidad int64) (int64, bool) {
+	if cantidad < 0 || bytesPorUnidad <= 0 {
+		return 0, false
+	}
+	cantidadInt64 := int64(cantidad)
+	maxInt64 := int64(^uint64(0) >> 1)
+	if cantidadInt64 > maxInt64/bytesPorUnidad {
+		return 0, false
+	}
+	return cantidadInt64 * bytesPorUnidad, true
+}
+
+func (s *CuotasService) obtenerCapacidad(ctx context.Context, nodo string) (*capacidadAprovisionamiento, error) {
 	clave := claveCapacidadNodo(nodo)
 	if crudo, err := s.store.Get(ctx, clave); err == nil {
 		var capacidad capacidadAprovisionamiento
@@ -190,7 +218,7 @@ func (s *AprovisionamientoService) obtenerCapacidad(ctx context.Context, nodo st
 
 // LiberarReserva se llama cuando el worker cierra la tarea. Si Redis no está
 // disponible, el TTL sigue evitando que la reserva quede retenida para siempre.
-func (s *AprovisionamientoService) LiberarReserva(ctx context.Context, reservaID string) error {
+func (s *CuotasService) LiberarReserva(ctx context.Context, reservaID string) error {
 	if strings.TrimSpace(reservaID) == "" {
 		return nil
 	}
@@ -217,7 +245,7 @@ func (s *AprovisionamientoService) LiberarReserva(ctx context.Context, reservaID
 	return nil
 }
 
-func (s *AprovisionamientoService) invalidarCacheCapacidad(ctx context.Context, nodo string) {
+func (s *CuotasService) invalidarCacheCapacidad(ctx context.Context, nodo string) {
 	_ = s.store.Del(ctx, claveCacheEstadoNodo, claveCapacidadNodo(nodo))
 }
 
@@ -225,7 +253,7 @@ func claveCapacidadNodo(nodo string) string {
 	return "aprovisionamiento:capacidad:" + strings.TrimSpace(nodo)
 }
 
-func (s *AprovisionamientoService) leerReservas(ctx context.Context) ([]reservaAprovisionamiento, error) {
+func (s *CuotasService) leerReservas(ctx context.Context) ([]reservaAprovisionamiento, error) {
 	crudo, err := s.store.Get(ctx, claveReservas)
 	if errors.Is(err, ports.ErrClaveNoEncontrada) {
 		return nil, nil
@@ -240,7 +268,7 @@ func (s *AprovisionamientoService) leerReservas(ctx context.Context) ([]reservaA
 	return reservas, nil
 }
 
-func (s *AprovisionamientoService) guardarReservas(ctx context.Context, reservas []reservaAprovisionamiento) error {
+func (s *CuotasService) guardarReservas(ctx context.Context, reservas []reservaAprovisionamiento) error {
 	if len(reservas) == 0 {
 		if err := s.store.Del(ctx, claveReservas); err != nil {
 			return fmt.Errorf("%w: %v", ports.ErrCoordinacionAprovisionamiento, err)
