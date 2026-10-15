@@ -2316,7 +2316,7 @@ const docTemplate = `{
         },
         "/ws/instances/{vmid}/metrics": {
             "get": {
-                "description": "Establece un canal bidireccional vía WebSocket que emite métricas instantáneas cada 2 segundos. Requiere parámetro query ` + "`" + `?ticket=\u003cuuid\u003e` + "`" + ` emitido previamente vía POST /api/auth/ws-ticket.",
+                "description": "Establece un canal bidireccional vía WebSocket que emite métricas instantáneas cada 2 segundos. Requiere parámetro query ` + "`" + `?ticket=\u003cuuid\u003e` + "`" + ` emitido previamente vía POST /api/auth/ws-ticket. El servidor cierra el canal con código 1008 y el motivo como reason cuando el usuario pierde el acceso: ` + "`" + `LOGOUT` + "`" + ` (cerró sesión; corta todas sus conexiones WebSocket), ` + "`" + `SESSIONS_REVOKED` + "`" + ` (baja, suspensión o reset de credenciales), ` + "`" + `USER_INACTIVE` + "`" + ` (suspendido o eliminado), ` + "`" + `INSTANCE_ACCESS_DENIED` + "`" + ` (le quitaron el permiso sobre la instancia) o ` + "`" + `EVENTS_UNAVAILABLE` + "`" + ` (se perdió el canal de avisos; reconectar con un ticket nuevo). Al apagarse el servidor cierra con 1001.",
                 "tags": [
                     "Métricas en tiempo real"
                 ],
@@ -2360,7 +2360,13 @@ const docTemplate = `{
                         }
                     },
                     "500": {
-                        "description": "INTERNAL_ERROR",
+                        "description": "INTERNAL_ERROR — no se pudo comprobar el acceso",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "EVENTS_UNAVAILABLE — no se pudo abrir el canal de avisos de corte",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }

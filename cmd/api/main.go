@@ -175,7 +175,7 @@ func main() {
 		services.NewInventarioService(proxmoxClient), nodoNombre, aprovisionadorSeguro(kvStore, cuotasService))
 	eventsHandler := httpHandlers.NewEventsHandler(eventosService)
 	nodeHandler := httpHandlers.NewNodeHandler(services.NewNodoService(proxmoxClient, kvStore, nodoNombre), proxmoxClient, nodoNombre)
-	wsMetricsHandler := httpHandlers.NewMetricsWSHandler(proxmoxClient, instanceRepo, authRepo, kvStore, nodoNombre)
+	wsMetricsHandler := httpHandlers.NewMetricsWSHandler(proxmoxClient, services.NewMetricasVivoService(kvStore, authRepo, instanceRepo, 0), nodoNombre)
 
 	// 6. Configurar el Router HTTP (Gin)
 	// Usamos gin.New() para tener control total sobre los middlewares.

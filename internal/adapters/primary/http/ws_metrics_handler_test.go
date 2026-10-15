@@ -3,6 +3,7 @@ package http_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"el-centinela/internal/adapters/secondary/memoria"
 	"el-centinela/internal/core/domain"
 	"el-centinela/internal/core/ports"
+	"el-centinela/internal/core/services"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -147,7 +149,7 @@ func TestMetricsWS_HandshakeYStreaming(t *testing.T) {
 		},
 	}
 
-	wsHandler := adaptersHttp.NewMetricsWSHandler(proxmoxMock, instanceRepo, authRepo, kv, "proxmox")
+	wsHandler := adaptersHttp.NewMetricsWSHandler(proxmoxMock, services.NewMetricasVivoService(kv, authRepo, instanceRepo, 0), "proxmox")
 
 	r := gin.New()
 	r.GET("/api/ws/instances/:vmid/metrics", wsHandler.StreamMetrics)
@@ -261,6 +263,35 @@ func TestMetricsWS_HandshakeYStreaming(t *testing.T) {
 		}
 		if resp == nil || resp.StatusCode != http.StatusUnauthorized {
 			t.Fatalf("Se esperaba 401, vino %v", resp)
+		}
+	})
+
+	t.Run("un logout del usuario cierra el WebSocket con 1008 y motivo LOGOUT", func(t *testing.T) {
+		ticket := uuid.New().String()
+		_ = kv.Set(context.Background(), "ws:ticket:"+ticket, operatorID.String(), 30*time.Second)
+		conn, _, err := websocket.DefaultDialer.Dial(wsURL+"?ticket="+ticket, nil)
+		if err != nil {
+			t.Fatalf("Handshake falló: %v", err)
+		}
+		defer conn.Close()
+		if _, _, err := conn.ReadMessage(); err != nil {
+			t.Fatalf("Primer mensaje: %v", err)
+		}
+
+		sesion := uuid.New()
+		_ = kv.Publish(context.Background(), ports.CanalEventos, ports.MensajeBus{Tipo: ports.MensajeLogout, UsuarioID: &operatorID, SesionID: &sesion})
+
+		_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+		for {
+			_, _, err := conn.ReadMessage()
+			if err == nil {
+				continue // métricas que ya estaban en vuelo
+			}
+			var cierre *websocket.CloseError
+			if !errors.As(err, &cierre) || cierre.Code != websocket.ClosePolicyViolation || cierre.Text != ports.MotivoWSLogout {
+				t.Fatalf("Se esperaba cierre 1008 LOGOUT, vino %v", err)
+			}
+			return
 		}
 	})
 }
