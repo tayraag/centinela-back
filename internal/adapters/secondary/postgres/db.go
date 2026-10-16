@@ -298,31 +298,26 @@ func migrarAuditoriaParticionada(db *gorm.DB) error {
 	if legacyExiste > 0 {
 		log.Println("🔄 Traspasando historial desde auditoria_legacy hacia la nueva tabla particionada auditoria...")
 		
-		tx := db.Begin()
-		defer func() {
-			if r := recover(); r != nil {
-				tx.Rollback()
+		// Traspaso y borrado de la legacy en una sola transacción: si el volcado
+		// falla, la legacy queda intacta. db.Transaction (no db.Begin) funciona
+		// también si db ya es una transacción (usa un savepoint), como en los tests.
+		err := db.Transaction(func(tx *gorm.DB) error {
+			if err := tx.Exec(`
+				INSERT INTO auditoria (id, fecha_hora, usuario_id, accion, instancia_id, instancia_nombre, resultado, detalles)
+				SELECT id, fecha_hora, usuario_id, accion, instancia_id, instancia_nombre, resultado, detalles
+				FROM auditoria_legacy
+				ON CONFLICT DO NOTHING
+			`).Error; err != nil {
+				return fmt.Errorf("error al volcar datos desde auditoria_legacy: %w", err)
 			}
-		}()
-
-		if err := tx.Exec(`
-			INSERT INTO auditoria (id, fecha_hora, usuario_id, accion, instancia_id, instancia_nombre, resultado, detalles)
-			SELECT id, fecha_hora, usuario_id, accion, instancia_id, instancia_nombre, resultado, detalles
-			FROM auditoria_legacy
-			ON CONFLICT DO NOTHING
-		`).Error; err != nil {
-			tx.Rollback()
-			return fmt.Errorf("error al volcar datos desde auditoria_legacy: %w", err)
-		}
-
-		log.Println("🗑️  Traspaso exitoso. Eliminando tabla transitoria auditoria_legacy...")
-		if err := tx.Exec(`DROP TABLE IF EXISTS auditoria_legacy CASCADE`).Error; err != nil {
-			tx.Rollback()
-			return fmt.Errorf("error al eliminar auditoria_legacy: %w", err)
-		}
-
-		if err := tx.Commit().Error; err != nil {
-			return fmt.Errorf("error al confirmar migración de auditoria_legacy: %w", err)
+			log.Println("🗑️  Traspaso exitoso. Eliminando tabla transitoria auditoria_legacy...")
+			if err := tx.Exec(`DROP TABLE IF EXISTS auditoria_legacy CASCADE`).Error; err != nil {
+				return fmt.Errorf("error al eliminar auditoria_legacy: %w", err)
+			}
+			return nil
+		})
+		if err != nil {
+			return err
 		}
 	}
 
