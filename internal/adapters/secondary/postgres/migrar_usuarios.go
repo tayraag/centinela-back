@@ -49,7 +49,12 @@ func migrarUnicidadEmail(db *gorm.DB) error {
 // con cambios.activo = true). Usa la fecha de esa eliminación. Los demás
 // inactivos quedan como suspendidos (eliminado_en NULL): ante la duda, el correo
 // sigue reservado y un admin lo resuelve a mano.
+//
+// Sin tabla auditoria (base nueva) no hay historial que clasificar: no hace nada.
 func clasificarEliminados(db *gorm.DB) error {
+	if !db.Migrator().HasTable("auditoria") {
+		return nil
+	}
 	eventos := `SELECT accion, resultado, detalles, fecha_hora FROM auditoria`
 	if existeTabla(db, "auditoria_legacy") {
 		eventos += ` UNION ALL SELECT accion, resultado, detalles, fecha_hora FROM auditoria_legacy`
@@ -156,6 +161,10 @@ func reemplazarIndiceEmail(db *gorm.DB) error {
 	})
 	if err != nil {
 		return err
+	}
+	if len(viejos) == 0 { // base nueva: no había unicidad anterior que reemplazar
+		log.Printf("🔑 usuarios: unicidad del correo creada con %s (solo no eliminados, sin distinguir mayúsculas ni espacios)", indiceEmailParcial)
+		return nil
 	}
 	nombres := make([]string, len(viejos))
 	for i, v := range viejos {
