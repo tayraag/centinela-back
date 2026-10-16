@@ -320,7 +320,18 @@ Estos son los pares error/status que las acciones de energía pueden devolver
 | 409  | `INSTANCE_INVALID_STATE`   | Estado incompatible con la acción         |
 | 500  | `INTERNAL_ERROR`           | Permisos o error inesperado de Proxmox    |
 | 502  | `PROXMOX_UNAVAILABLE`      | Proxmox caído, sin red o token rechazado  |
+| 503  | `INSTANCE_LOCK_UNAVAILABLE`| No se pudo verificar si está ocupada      |
 | 504  | `PROXMOX_TIMEOUT`          | Proxmox no respondió a tiempo             |
+
+**Exclusión mutua (`RequireInstanceIdle`).** Las operaciones que modifican una
+instancia (`start`, `stop`, `status/{action}` y el borrado; también la edición
+de configuración y los snapshots, cuando existan) pasan por una guarda que
+permite **una sola operación a la vez por instancia**. Si hay una tarea
+`RUNNING` de esa instancia o el lock `lock:instance:{vmid}:operation` está
+tomado, responde `409 INSTANCE_BUSY` **sin contactar a Proxmox**. Ante una
+ráfaga de pedidos simultáneos, pasa uno solo y el resto recibe `409`. Si no se
+puede consultar la base, responde `503 INSTANCE_LOCK_UNAVAILABLE` y tampoco se
+envía nada a Proxmox.
 
 **Códigos adicionales que emite el servidor para el mismo estado:**
 

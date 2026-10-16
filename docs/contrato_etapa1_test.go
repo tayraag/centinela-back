@@ -153,7 +153,8 @@ func TestContratoEtapa1(t *testing.T) {
 		t.Errorf("POST /instances 500 debe documentar TASK_TRACKING_UNAVAILABLE: %q", r500)
 	}
 
-	// Los ocho pares error/status observados en las acciones aceptadas.
+	// Los pares error/status observados en las acciones aceptadas (503 lo
+	// agrega la guarda de exclusión mutua RequireInstanceIdle).
 	pares := []struct{ codigo, errorCode string }{
 		{"400", "INVALID_VMID"},
 		{"401", "MISSING_TOKEN"},
@@ -162,6 +163,7 @@ func TestContratoEtapa1(t *testing.T) {
 		{"409", "INSTANCE_BUSY"},
 		{"500", "INTERNAL_ERROR"},
 		{"502", "PROXMOX_UNAVAILABLE"},
+		{"503", "INSTANCE_LOCK_UNAVAILABLE"},
 		{"504", "PROXMOX_TIMEOUT"},
 	}
 

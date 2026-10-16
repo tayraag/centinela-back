@@ -303,16 +303,19 @@ func main() {
 		// ==========================================
 		// Rutas de Instancias Proxmox
 		// ==========================================
+		// Exclusión mutua de las operaciones que modifican una instancia (409 INSTANCE_BUSY).
+		// Cuando existan PUT /:vmid/config y los snapshots, llevan la misma guarda.
+		exclusion := services.NewExclusionInstancias(kvStore, tareaRepo)
 		instances := api.Group("/instances", middleware.RequireAuth(authService))
 		{
 			instances.GET("", instanceHandler.ListarInstancias)
 			instances.POST("", middleware.RequireRole("ADMIN"), instanceHandler.CrearInstancia)
 			instances.GET("/:vmid", middleware.RequireInstanceAccess(instanceRepo, "vmid", ports.NivelAccesoReadOnly), instanceHandler.ObtenerInstancia)
-			instances.POST("/:vmid/start", middleware.RequireInstanceAccess(instanceRepo, "vmid", ports.NivelAccesoFullAccess), middleware.RejectProtectedInstance(vmidsProtegidos, "vmid"), instanceHandler.IniciarInstancia)
+			instances.POST("/:vmid/start", middleware.RequireInstanceAccess(instanceRepo, "vmid", ports.NivelAccesoFullAccess), middleware.RejectProtectedInstance(vmidsProtegidos, "vmid"), middleware.RequireInstanceIdle(exclusion, "vmid"), instanceHandler.IniciarInstancia)
 			// Las acciones destructivas llevan además RejectProtectedInstance (VMIDs de infraestructura).
-			instances.POST("/:vmid/stop", middleware.RequireInstanceAccess(instanceRepo, "vmid", ports.NivelAccesoFullAccess), middleware.RejectProtectedInstance(vmidsProtegidos, "vmid"), instanceHandler.DetenerInstancia)
-			instances.POST("/:vmid/status/:action", middleware.RequireInstanceAccess(instanceRepo, "vmid", ports.NivelAccesoFullAccess), middleware.RejectProtectedInstance(vmidsProtegidos, "vmid"), instanceHandler.CambiarEstado)
-			instances.DELETE("/:vmid", middleware.RequireRole("ADMIN"), middleware.RejectProtectedInstance(vmidsProtegidos, "vmid"), instanceHandler.EliminarInstancia)
+			instances.POST("/:vmid/stop", middleware.RequireInstanceAccess(instanceRepo, "vmid", ports.NivelAccesoFullAccess), middleware.RejectProtectedInstance(vmidsProtegidos, "vmid"), middleware.RequireInstanceIdle(exclusion, "vmid"), instanceHandler.DetenerInstancia)
+			instances.POST("/:vmid/status/:action", middleware.RequireInstanceAccess(instanceRepo, "vmid", ports.NivelAccesoFullAccess), middleware.RejectProtectedInstance(vmidsProtegidos, "vmid"), middleware.RequireInstanceIdle(exclusion, "vmid"), instanceHandler.CambiarEstado)
+			instances.DELETE("/:vmid", middleware.RequireRole("ADMIN"), middleware.RejectProtectedInstance(vmidsProtegidos, "vmid"), middleware.RequireInstanceIdle(exclusion, "vmid"), instanceHandler.EliminarInstancia)
 		}
 		// ==========================================
 		// Swagger UI: apagada por defecto.

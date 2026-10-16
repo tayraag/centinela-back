@@ -1753,7 +1753,7 @@ const docTemplate = `{
                         }
                     },
                     "409": {
-                        "description": "INSTANCE_INVALID_STATE — la instancia debe estar detenida | INSTANCE_BUSY — la instancia está ejecutando otra tarea",
+                        "description": "INSTANCE_INVALID_STATE — la instancia debe estar detenida | INSTANCE_BUSY — la instancia está ejecutando otra tarea (tarea RUNNING o lock lock:instance:{vmid}:operation); se responde sin contactar a Proxmox",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -1766,6 +1766,12 @@ const docTemplate = `{
                     },
                     "502": {
                         "description": "PROXMOX_UNAVAILABLE — Proxmox caído, sin red o token rechazado; la orden NO llegó a aplicarse",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "INSTANCE_LOCK_UNAVAILABLE — no se pudo verificar si la instancia está ocupada; no se envió nada a Proxmox",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -1918,7 +1924,7 @@ const docTemplate = `{
                         }
                     },
                     "409": {
-                        "description": "INSTANCE_INVALID_STATE: La instancia se encuentra en un estado incompatible para la acción solicitada | INSTANCE_BUSY — la instancia está ejecutando otra tarea; reintentar al recibir TASK_FINISHED",
+                        "description": "INSTANCE_INVALID_STATE: La instancia se encuentra en un estado incompatible para la acción solicitada | INSTANCE_BUSY — la instancia está ejecutando otra tarea (tarea RUNNING o lock lock:instance:{vmid}:operation); se responde sin contactar a Proxmox; reintentar al recibir TASK_FINISHED",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -1931,6 +1937,12 @@ const docTemplate = `{
                     },
                     "502": {
                         "description": "PROXMOX_UNAVAILABLE — Proxmox caído, sin red o token rechazado; la orden NO llegó a aplicarse",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "INSTANCE_LOCK_UNAVAILABLE — no se pudo verificar si la instancia está ocupada; no se envió nada a Proxmox",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -2007,7 +2019,7 @@ const docTemplate = `{
                         }
                     },
                     "409": {
-                        "description": "INSTANCE_INVALID_STATE: La instancia se encuentra en un estado incompatible para la acción solicitada | INSTANCE_BUSY — la instancia está ejecutando otra tarea; reintentar al recibir TASK_FINISHED",
+                        "description": "INSTANCE_INVALID_STATE: La instancia se encuentra en un estado incompatible para la acción solicitada | INSTANCE_BUSY — la instancia está ejecutando otra tarea (tarea RUNNING o lock lock:instance:{vmid}:operation); se responde sin contactar a Proxmox; reintentar al recibir TASK_FINISHED",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -2020,6 +2032,12 @@ const docTemplate = `{
                     },
                     "502": {
                         "description": "PROXMOX_UNAVAILABLE — Proxmox caído, sin red o token rechazado; la orden NO llegó a aplicarse",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "INSTANCE_LOCK_UNAVAILABLE — no se pudo verificar si la instancia está ocupada; no se envió nada a Proxmox",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -2089,7 +2107,7 @@ const docTemplate = `{
                         }
                     },
                     "409": {
-                        "description": "INSTANCE_INVALID_STATE: La instancia se encuentra en un estado incompatible para la acción solicitada | INSTANCE_BUSY — la instancia está ejecutando otra tarea; reintentar al recibir TASK_FINISHED",
+                        "description": "INSTANCE_INVALID_STATE: La instancia se encuentra en un estado incompatible para la acción solicitada | INSTANCE_BUSY — la instancia está ejecutando otra tarea (tarea RUNNING o lock lock:instance:{vmid}:operation); se responde sin contactar a Proxmox; reintentar al recibir TASK_FINISHED",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -2102,6 +2120,12 @@ const docTemplate = `{
                     },
                     "502": {
                         "description": "PROXMOX_UNAVAILABLE — Proxmox caído, sin red o token rechazado; la orden NO llegó a aplicarse",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "INSTANCE_LOCK_UNAVAILABLE — no se pudo verificar si la instancia está ocupada; no se envió nada a Proxmox",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
