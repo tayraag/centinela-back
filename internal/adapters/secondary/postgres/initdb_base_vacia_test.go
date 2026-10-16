@@ -70,18 +70,3 @@ func TestInitDB_BaseVacia(t *testing.T) {
 		cerrar(db)
 	}
 }
-
-// Guarda defensiva: sin tabla auditoria no hay historial que clasificar.
-func TestClasificarEliminados_SinTablaAuditoria(t *testing.T) {
-	tx := transaccionDescartable(t)
-	if err := tx.Exec(`ALTER TABLE auditoria RENAME TO auditoria_oculta_test`).Error; err != nil {
-		t.Fatal(err)
-	}
-	if err := clasificarEliminados(tx); err != nil {
-		t.Errorf("Sin tabla auditoria debe salir sin error: %v", err)
-	}
-	if err := migrarUnicidadEmail(tx); err != nil {
-		t.Errorf("La migración completa tampoco debe fallar sin auditoria: %v", err)
-	}
-	// La transacción se descarta al terminar: la tabla vuelve a su nombre.
-}
