@@ -542,10 +542,12 @@ centinela-back/
  | GET    | `/api/instances`                      | `RequireAuth`                          | Inventario de instancias filtrado por rol y permisos |
  | POST   | `/api/instances`                      | `RequireAuth` + `RequireRole("ADMIN")` | Aprovisionar VM/CT con reserva de cuotas          |
  | GET    | `/api/instances/:vmid`                | `RequireInstanceAccess` (RO)           | Detalle en vivo de una instancia                  |
- | POST   | `/api/instances/:vmid/start`          | `RequireInstanceAccess` (FA) + guard   | Iniciar instancia (asíncrono 202 con UPID)        |
- | POST   | `/api/instances/:vmid/stop`           | `RequireInstanceAccess` (FA) + guard   | Detener instancia forzadamente (asíncrono 202)    |
- | POST   | `/api/instances/:vmid/status/:action` | `RequireInstanceAccess` (FA) + guard   | Cambiar estado (shutdown / reboot)                |
- | DELETE | `/api/instances/:vmid`                | `RequireRole("ADMIN")` + guard         | Eliminar instancia (asíncrono 202 con UPID)       |
+ | POST   | `/api/instances/:vmid/start`          | `RequireInstanceAccess` (FA) + `RejectProtectedInstance` + `RequireInstanceIdle` | Iniciar instancia (asíncrono 202 con UPID)        |
+ | POST   | `/api/instances/:vmid/stop`           | `RequireInstanceAccess` (FA) + `RejectProtectedInstance` + `RequireInstanceIdle` | Detener instancia forzadamente (asíncrono 202)    |
+ | POST   | `/api/instances/:vmid/status/:action` | `RequireInstanceAccess` (FA) + `RejectProtectedInstance` + `RequireInstanceIdle` | Cambiar estado (shutdown / reboot)                |
+ | DELETE | `/api/instances/:vmid`                | `RequireRole("ADMIN")` + `RejectProtectedInstance` + `RequireInstanceIdle` | Eliminar instancia (asíncrono 202 con UPID)       |
+
+> `RequireInstanceIdle` permite una sola operación a la vez por instancia: si hay una tarea `RUNNING` suya o el lock Redis `lock:instance:{vmid}:operation` está tomado, responde `409 INSTANCE_BUSY` sin contactar a Proxmox (en una ráfaga de pedidos simultáneos pasa uno solo). Si no puede consultar la base, `503 INSTANCE_LOCK_UNAVAILABLE`. Ver `docs/contrato-etapa1.md`.
 
 ---
 

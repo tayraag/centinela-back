@@ -668,6 +668,8 @@ Requiere `Authorization: Bearer <accessToken>`. Devuelve un ticket temporal de u
 **GET /api/events?ticket=uuid-xyz**
 Abre un stream persistente de tipo `text/event-stream` donde el backend envía notificaciones en tiempo real (estado de VMs, tareas en curso, notificaciones del sistema) sin necesidad de polling por parte del frontend.
 
+> **OPERATIVO ETAPA-1:** `recursoTipo` es `VM`, `LXC` o `HOST` (el servidor físico; reemplaza a `NODE`). Los eventos de `HOST`, como las alertas `ALERT_TRIGGERED`, no traen `recursoId` y solo llegan a usuarios ADMIN; a un OPERATOR se le descartan aunque tenga permisos sobre instancias. Los de VM/LXC (por ejemplo `TASK_FINISHED`) llegan a ADMIN y a los OPERATOR con permiso sobre ese VMID. Ver `docs/contrato-eventos.md`.
+
 #### 7\. Inventario de instancias
 
 El contrato centraliza el resumen numérico y la lista de recursos en una única respuesta estructurada. Las búsquedas por ID o nombre, junto con los filtros por estado, tipo y nodo exigidos por el documento, se manejan enviándolos como Query Parameters.
@@ -745,7 +747,7 @@ Este es el primer endpoint que el frontend consume al entrar al detalle. Aliment
 
 **GET /api/instances/{id}**&nbsp;
 
-> **OPERATIVO ETAPA-1 (código actual): `GET /api/instances/:vmid` (`:vmid` entero, `400 INVALID_VMID` si no lo es) devuelve la lectura en vivo `InstanciaProxmoxDTO` (`{vmid, nombre, tipo: qemu|lxc, nodo, estado, cpu: fracción 0-1, mem, maxMem, maxCpu}`), no el detalle rico del ejemplo siguiente (`os, qemuAgentActive, permissions, availableActions, recentTasks...`, que queda como planificado).
+> **OPERATIVO ETAPA-1 (código actual): `GET /api/instances/:vmid` (`:vmid` entero, `400 INVALID_VMID` si no lo es) devuelve la lectura en vivo `InstanciaDetalleResponse` (`{vmid, nombre, tipo: qemu|lxc, nodo, estado, cpu: porcentaje 0-100, mem, maxMem, maxCpu}`; `cpu` y `mem` son `null` si la instancia no está `running`), no el detalle rico del ejemplo siguiente (`os, qemuAgentActive, permissions, availableActions, recentTasks...`, que queda como planificado).
 
 ```json
 {
@@ -812,7 +814,7 @@ Donde `{action}` puede ser: `start` (Iniciar), `stop` (Forzar apagado), `shutdow
 **DELETE /api/instances/{id}** (Eliminar instancia)
 Requiere rol ADMIN estrictamente, y la instancia debe estar en estado `stopped` (`409 INSTANCE_INVALID_STATE` si no, `409 INSTANCE_BUSY` si hay tarea RUNNING).
 
-> **OPERATIVO ETAPA-1:** las 4 acciones + el borrado son asíncronos y responden `202 {upid: string, tareaId?: string-uuid}` (`tareaId` se omite si falló el registro local, sin tratarlo como error; correlacionar por `TASK_FINISHED`). Pre-chequeos sin tocar Proxmox: `409 INSTANCE_BUSY` si hay tarea RUNNING; matriz `start→stopped`, `stop|shutdown|reboot→running` (`409 INSTANCE_INVALID_STATE`). Errores Proxmox: `404 INSTANCE_NOT_FOUND`, `502 PROXMOX_UNAVAILABLE` (orden no llegó), `504 PROXMOX_TIMEOUT` (pudo aplicarse). Sobre de error `{errorCode, message}`.
+> **OPERATIVO ETAPA-1:** las 4 acciones + el borrado son asíncronos y responden `202 {upid: string, tareaId?: string-uuid}` (`tareaId` se omite si falló el registro local, sin tratarlo como error; correlacionar por `TASK_FINISHED`). Pre-chequeos sin tocar Proxmox: `409 INSTANCE_BUSY` si hay tarea RUNNING o el lock `lock:instance:{vmid}:operation` está tomado (guarda `RequireInstanceIdle`: de una ráfaga de pedidos simultáneos sobre la misma instancia pasa uno solo), `503 INSTANCE_LOCK_UNAVAILABLE` si no se pudo verificar (reintentable); matriz `start→stopped`, `stop|shutdown|reboot→running` (`409 INSTANCE_INVALID_STATE`). Errores Proxmox: `404 INSTANCE_NOT_FOUND`, `502 PROXMOX_UNAVAILABLE` (orden no llegó), `504 PROXMOX_TIMEOUT` (pudo aplicarse). Sobre de error `{errorCode, message}`.
 
 Sí hay una respuesta para el front, pero está agrupada más abajo para no repetirla.
 

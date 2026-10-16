@@ -22,7 +22,7 @@ El proyecto sigue una **Arquitectura Hexagonal (Puertos y Adaptadores)** adaptad
           │
           ▼
 ┌─────────────────────┐
-│   Middleware Chain  │  RequireAuth → RequireRole → RequireInstanceAccess → Logger
+│   Middleware Chain  │  RequireAuth → RequireRole → RequireInstanceAccess → RejectProtectedInstance → RequireInstanceIdle → Logger
 └──────────┬──────────┘
            │
            ▼
@@ -73,7 +73,12 @@ centinela-back/
 │   │   │   ├── user_port.go     # Interfaces UserRepository + UserService + DTOs de usuarios
 │   │   │   ├── instance_port.go # Interface InstanceRepository (autorización por recurso)
 │   │   │   ├── proxmox_port.go  # Interface ProxmoxPort (comunicación con hipervisor)
-│   │   │   ├── event_port.go    # Interface EventBus y contrato RealtimeEvent
+│   │   │   ├── event_port.go    # Contrato RealtimeEvent (TASK_FINISHED, ALERT_TRIGGERED, recursos VM/LXC/HOST)
+│   │   │   ├── eventos_bus_port.go # Interfaces EventosService y SeguimientoTareas, mensajes del bus
+│   │   │   ├── tarea_port.go    # Interface TareaRepository (tareas_asincronas)
+│   │   │   ├── exclusion_port.go # Interface ExclusionInstancias (una operación a la vez por instancia)
+│   │   │   ├── metricas_vivo_port.go # Interface MetricasVivoService (acceso al WebSocket de métricas)
+│   │   │   ├── key_value_store.go # Interface KeyValueStore (Redis o memoria)
 │   │   │   └── audit_port.go    # Interface AuditRepository + AuditService
 │   │   └── services/
 │   │       ├── auth_service.go             # Lógica: login, 2FA, tokens, refresh, logout
@@ -83,7 +88,9 @@ centinela-back/
 │   │       ├── seguimiento_tareas.go       # Worker pool concurrente de sondeo de UPID y push de TASK_FINISHED
 │   │       ├── cuotas_service.go            # Validación y reserva coordinada de cuotas para crear VMs/CTs
 │   │       ├── audit_service.go            # Registro y consulta de auditoría particionada
-│   │       └── eventos_service.go          # Despacho de eventos en tiempo real hacia Pub/Sub
+│   │       ├── exclusion_instancias.go     # Exclusión mutua por instancia: lock Redis + tarea RUNNING (409 INSTANCE_BUSY)
+│   │       ├── metricas_vivo_service.go    # Ticket y vigilancia del WebSocket de métricas (corte por logout, baja o permiso)
+│   │       └── eventos_service.go          # Despacho de eventos en tiempo real hacia Pub/Sub (HOST solo para ADMIN)
 │   │
 │   ├── adapters/
 │   │   ├── primary/             # Adaptadores de ENTRADA (quien llama al core)
@@ -101,11 +108,17 @@ centinela-back/
 │   │   │           ├── auth_middleware.go    # RequireAuth, RequirePreAuth, RequireRole
 │   │   │           ├── instance_guard.go     # RequireInstanceAccess (guard de VMID)
 │   │   │           ├── protected_instance.go # RejectProtectedInstance (VMIDs de infraestructura)
+│   │   │           ├── instance_idle.go      # RequireInstanceIdle (exclusión mutua: 409 INSTANCE_BUSY sin contactar a Proxmox)
+│   │   │           ├── cors_middleware.go    # CORS (ALLOWED_ORIGINS; también lo usa el WebSocket de métricas)
+│   │   │           ├── security_headers_middleware.go # Headers de seguridad
 │   │   │           └── logger_middleware.go  # Logger de peticiones HTTP
 │   │   │
 │   │   └── secondary/           # Adaptadores de SALIDA (implementan puertos del core)
 │   │       ├── postgres/
 │   │       │   ├── db.go                # InitDB(), AutoMigrate, particionamiento trimestral
+│   │       │   ├── migrar_usuarios.go   # Eliminación lógica y unicidad parcial del correo (después de crear auditoria)
+│   │       │   ├── tarea_repository.go  # Implementa TareaRepository (tareas_asincronas)
+│   │       │   ├── purga_worker.go      # Purga horaria de sesiones vencidas
 │   │       │   ├── auth_repository.go   # Implementa AuthRepository
 │   │       │   ├── user_repository.go   # Implementa UserRepository
 │   │       │   ├── instance_repository.go # Implementa InstanceRepository (VerificarAcceso)
