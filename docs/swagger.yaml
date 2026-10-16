@@ -446,7 +446,7 @@ definitions:
         enum:
         - VM
         - LXC
-        - NODE
+        - HOST
         example: VM
         type: string
       severidad:
@@ -462,13 +462,13 @@ definitions:
         - INSTANCE_CREATED
         - RESOURCE_SATURATION
         - TASK_FINISHED
+        - ALERT_TRIGGERED
         example: TASK_FINISHED
         type: string
     required:
     - fechaHora
     - id
     - mensaje
-    - recursoId
     - recursoTipo
     - severidad
     - tipo

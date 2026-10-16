@@ -76,8 +76,8 @@ Se decide **en el momento de cada evento**, consultando la base:
 
 | Rol | Recibe |
 | --- | ------ |
-| `ADMIN` | Todos los eventos de cualquier instancia y nodo. |
-| `OPERATOR` | Solo los eventos de instancias (VM o LXC) sobre las que tiene permiso asignado (`FULL_ACCESS` o `READ_ONLY`). Un operador sin asignación sobre ese VMID no recibe el evento. Los que no son de una instancia (por ejemplo, del nodo) son solo para ADMIN. |
+| `ADMIN` | Todos los eventos: de cualquier instancia y del host (`recursoTipo: HOST`, como las alertas `ALERT_TRIGGERED`). |
+| `OPERATOR` | Solo los eventos de instancias (VM o LXC) sobre las que tiene permiso asignado (`FULL_ACCESS` o `READ_ONLY`). Un operador sin asignación sobre ese VMID no recibe el evento. Los que no son de una instancia (por ejemplo, una alerta `ALERT_TRIGGERED` del `HOST`) son solo para ADMIN y al OPERATOR se le descartan en silencio. |
 
 Como se consulta en vivo, **si un admin le quita un permiso a un operador, deja de recibir esos eventos al instante**, sin reconectar.
 

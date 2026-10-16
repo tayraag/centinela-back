@@ -2966,7 +2966,6 @@
                 "fechaHora",
                 "id",
                 "mensaje",
-                "recursoId",
                 "recursoTipo",
                 "severidad",
                 "tipo"
@@ -2997,7 +2996,7 @@
                     "enum": [
                         "VM",
                         "LXC",
-                        "NODE"
+                        "HOST"
                     ],
                     "example": "VM"
                 },
@@ -3016,7 +3015,8 @@
                         "INSTANCE_STATE_CHANGED",
                         "INSTANCE_CREATED",
                         "RESOURCE_SATURATION",
-                        "TASK_FINISHED"
+                        "TASK_FINISHED",
+                        "ALERT_TRIGGERED"
                     ],
                     "example": "TASK_FINISHED"
                 }

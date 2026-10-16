@@ -465,7 +465,7 @@ El `data:` de cada evento es el esquema `http.SSEEventPayload`:
 | `tipo`        | enum           | sí          |
 | `severidad`   | enum           | sí          |
 | `recursoTipo` | enum           | sí          |
-| `recursoId`   | string         | sí          |
+| `recursoId`   | string         | no          |
 | `mensaje`     | string         | sí          |
 | `fechaHora`   | string RFC3339 | sí          |
 | `detalles`    | object         | no          |
@@ -476,9 +476,14 @@ El `data:` de cada evento es el esquema `http.SSEEventPayload`:
 - `fechaHora` es RFC3339, declarado en Swagger con `format: date-time`.
 - `detalles` se omite cuando el evento no trae datos extra.
 - `tipo` admite `INSTANCE_STATE_CHANGED`, `INSTANCE_CREATED`,
-  `RESOURCE_SATURATION` y `TASK_FINISHED`.
+  `RESOURCE_SATURATION`, `TASK_FINISHED` y `ALERT_TRIGGERED`.
 - `severidad` admite `INFO`, `WARNING` y `CRITICAL`.
-- `recursoTipo` admite `VM`, `LXC` y `NODE`.
+- `recursoTipo` admite `VM`, `LXC` y `HOST` (el servidor físico; reemplaza al
+  antiguo `NODE`).
+- `recursoId` es el VMID en los eventos de VM y LXC; se omite en los del `HOST`.
+- Los eventos de `HOST`, como las alertas `ALERT_TRIGGERED`, solo llegan a
+  usuarios `ADMIN`; un `OPERATOR` no los recibe aunque tenga permisos sobre
+  instancias. Ejemplos en `contrato-eventos.md`.
 
 `detalles` tiene forma `http.SSEDetallesEvento`: todos sus campos son
 opcionales porque la forma depende del `tipo` del evento. Hoy el único tipo que

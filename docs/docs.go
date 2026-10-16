@@ -2973,7 +2973,6 @@ const docTemplate = `{
                 "fechaHora",
                 "id",
                 "mensaje",
-                "recursoId",
                 "recursoTipo",
                 "severidad",
                 "tipo"
@@ -3004,7 +3003,7 @@ const docTemplate = `{
                     "enum": [
                         "VM",
                         "LXC",
-                        "NODE"
+                        "HOST"
                     ],
                     "example": "VM"
                 },
@@ -3023,7 +3022,8 @@ const docTemplate = `{
                         "INSTANCE_STATE_CHANGED",
                         "INSTANCE_CREATED",
                         "RESOURCE_SATURATION",
-                        "TASK_FINISHED"
+                        "TASK_FINISHED",
+                        "ALERT_TRIGGERED"
                     ],
                     "example": "TASK_FINISHED"
                 }

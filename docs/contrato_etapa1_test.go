@@ -287,8 +287,13 @@ func TestContratoEtapa1(t *testing.T) {
 
 	const payloadDef = "http.SSEEventPayload"
 	verificarObjetoRequerido(t, definitions, payloadDef, []string{
-		"id", "tipo", "severidad", "recursoTipo", "recursoId", "mensaje", "fechaHora",
+		"id", "tipo", "severidad", "recursoTipo", "mensaje", "fechaHora",
 	})
+
+	// recursoId se omite en los eventos del HOST (no refieren a una instancia).
+	if requeridosDe(t, objeto(t, definitions, payloadDef))["recursoId"] {
+		t.Error("recursoId no debe ser obligatorio: los eventos del HOST no lo traen")
+	}
 
 	// detalles se omite cuando el evento no trae datos extra.
 	if requeridosDe(t, objeto(t, definitions, payloadDef))["detalles"] {
@@ -301,9 +306,9 @@ func TestContratoEtapa1(t *testing.T) {
 
 	// Los tres enums traveling en el sobre, con los valores exactos de ports.
 	verificarEnum(t, definitions, payloadDef, "tipo",
-		"INSTANCE_STATE_CHANGED", "INSTANCE_CREATED", "RESOURCE_SATURATION", "TASK_FINISHED")
+		"INSTANCE_STATE_CHANGED", "INSTANCE_CREATED", "RESOURCE_SATURATION", "TASK_FINISHED", "ALERT_TRIGGERED")
 	verificarEnum(t, definitions, payloadDef, "severidad", "INFO", "WARNING", "CRITICAL")
-	verificarEnum(t, definitions, payloadDef, "recursoTipo", "VM", "LXC", "NODE")
+	verificarEnum(t, definitions, payloadDef, "recursoTipo", "VM", "LXC", "HOST")
 
 	// detalles es un objeto propio y todas sus claves son opcionales: su forma
 	// depende del tipo de evento.
@@ -420,13 +425,13 @@ func TestContratoEtapa1(t *testing.T) {
 	// valor, esta comparación lo delata.
 	tipos := []string{
 		ports.EventoInstanciaEstado, ports.EventoInstanciaCreada,
-		ports.EventoSaturacion, ports.EventoTareaFinalizada,
+		ports.EventoSaturacion, ports.EventoTareaFinalizada, ports.EventoAlerta,
 	}
 	verificarEnum(t, definitions, payloadDef, "tipo", tipos...)
 	verificarEnum(t, definitions, payloadDef, "severidad",
 		ports.SeveridadInfo, ports.SeveridadWarning, ports.SeveridadCritical)
 	verificarEnum(t, definitions, payloadDef, "recursoTipo",
-		ports.RecursoVM, ports.RecursoLXC, ports.RecursoNodo)
+		ports.RecursoVM, ports.RecursoLXC, ports.RecursoHost)
 	verificarEnum(t, definitions, detallesDef, "estado",
 		ports.TareaRunning, ports.TareaCompleted, ports.TareaFailed)
 
@@ -486,6 +491,18 @@ func TestContratoEtapa1(t *testing.T) {
 	compararTodasLasClaves(t, serializar(eventoFallo), payloadDef, definitions, "sobre de fallo")
 	compararTodasLasClaves(t, serializar(eventoOk)["detalles"], successDef, definitions, "detalles de éxito")
 	compararTodasLasClaves(t, serializar(eventoFallo)["detalles"], failedDef, definitions, "detalles de fallo")
+
+	// Una alerta del HOST (ALERT_TRIGGERED) cumple el mismo sobre, sin recursoId.
+	alerta, err := ports.NewRealtimeEvent(ports.EventoAlerta, ports.SeveridadCritical, "El uso de CPU del host superó el 90%")
+	if err != nil {
+		t.Fatalf("construir la alerta del host: %v", err)
+	}
+	sobreAlerta := serializar(alerta.ConRecurso(ports.RecursoHost, ""))
+	compararClaves(t, sobreAlerta, payloadDef, definitions, "sobre de alerta del host")
+	compararTodasLasClaves(t, sobreAlerta, payloadDef, definitions, "sobre de alerta del host")
+	if _, tiene := sobreAlerta["recursoId"]; tiene {
+		t.Errorf("La alerta del host no debe traer recursoId: %v", sobreAlerta)
+	}
 
 	contenidoContrato, err := os.ReadFile("contrato-etapa1.md")
 	if err != nil {

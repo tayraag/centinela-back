@@ -8,8 +8,9 @@ de datos** del evento genérico que viajará por ese canal.
 
 El canal que los transporta es SSE (`GET /api/events`) sobre Redis Pub/Sub, y
 está documentado en [eventos-tiempo-real.md](eventos-tiempo-real.md). Hoy se
-publica `TASK_FINISHED`; los demás tipos quedan definidos para cuando se
-implementen sus emisores, que deben usar exactamente este esquema.
+publica `TASK_FINISHED`; el canal ya distribuye también `ALERT_TRIGGERED` (alertas
+del host) y los demás tipos, que quedan definidos para cuando se implementen sus
+emisores, que deben usar exactamente este esquema.
 
 - Definición del contrato (Go): `internal/core/ports/event_port.go` (struct `RealtimeEvent`).
 - Definición del contrato (TypeScript): `frontend/centinela/src/types/notifications.ts` (interface `RealtimeEvent`).
@@ -25,14 +26,15 @@ enum** en inglés MAYÚSCULA con guión bajo.
 | tipo        | string         | string    | Tipo de evento (ver enums)             |
 | severidad   | string         | string    | Nivel de severidad (ver enums)         |
 | recursoTipo | string         | string    | Tipo de recurso afectado (ver enums)   |
-| recursoId   | string         | string    | Identificador del recurso afectado     |
+| recursoId   | string         | string    | VMID de la VM o LXC; se omite en HOST  |
 | mensaje     | string         | string    | Texto legible para el usuario          |
 | fechaHora   | time.Time      | RFC3339   | Momento en que se generó el evento     |
 | detalles    | map[string]any | object    | Datos extra opcionales (según el tipo) |
 
 - `id` permite deduplicar eventos repetidos del lado del cliente.
-- `recursoTipo`, `recursoId` y `detalles` son opcionales: se completan según el
-  tipo de evento (ver `ConRecurso` y `ConDetalles` en el código).
+- `recursoTipo`, `recursoId` y `detalles` se completan según el tipo de evento
+  (ver `ConRecurso` y `ConDetalles` en el código). `recursoId` y `detalles` no
+  viajan cuando no aplican: un evento del HOST no trae `recursoId`.
 
 ## Valores permitidos
 
@@ -44,6 +46,7 @@ enum** en inglés MAYÚSCULA con guión bajo.
 | EventoInstanciaCreada | INSTANCE_CREATED       | Se creó una instancia             |
 | EventoSaturacion      | RESOURCE_SATURATION    | Un recurso superó su umbral       |
 | EventoTareaFinalizada | TASK_FINISHED          | Terminó una tarea asincrónica     |
+| EventoAlerta          | ALERT_TRIGGERED        | Se disparó una alerta (p. ej. del host) |
 
 ### Severidad (`severidad`)
 
@@ -55,11 +58,14 @@ enum** en inglés MAYÚSCULA con guión bajo.
 
 ### Tipo de recurso (`recursoTipo`)
 
-| Constante Go | Valor | Significado     |
-|--------------|-------|-----------------|
-| RecursoVM    | VM    | Máquina virtual |
-| RecursoLXC   | LXC   | Contenedor LXC  |
-| RecursoNodo  | NODE  | Nodo de Proxmox |
+| Constante Go | Valor | Significado                               | Lo reciben                                      |
+|--------------|-------|-------------------------------------------|-------------------------------------------------|
+| RecursoVM    | VM    | Máquina virtual                           | ADMIN y OPERATOR con permiso sobre ese VMID     |
+| RecursoLXC   | LXC   | Contenedor LXC                            | ADMIN y OPERATOR con permiso sobre ese VMID     |
+| RecursoHost  | HOST  | Servidor físico (el nodo de Proxmox)      | Solo ADMIN; al OPERATOR se le descarta en silencio |
+
+`HOST` reemplaza al valor `NODE` de versiones anteriores del contrato (nunca se
+llegó a emitir un evento `NODE`).
 
 ### Estado de tarea
 
@@ -115,6 +121,47 @@ Si falla, `severidad` es `WARNING` y `detalles` queda, por ejemplo:
 { "tareaId": "3f2504e0-4f89-11d3-9a0c-0305e82c3302", "accion": "STOP", "estado": "FAILED", "exitstatus": "CT 201 not running", "motivo": "PROXMOX_ERROR", "error": "CT 201 not running" }
 ```
 
+### Alerta del host (`ALERT_TRIGGERED`)
+
+Una alerta de infraestructura del servidor físico: no refiere a una instancia,
+así que **no trae `recursoId`**, y solo la reciben los usuarios **ADMIN**. La
+forma de `detalles` depende de la alerta; por ejemplo, un umbral superado:
+
+```json
+{
+  "id": "5b0c8e9a-2f4d-4c1e-9b7a-1d2e3f4a5b6c",
+  "tipo": "ALERT_TRIGGERED",
+  "severidad": "CRITICAL",
+  "recursoTipo": "HOST",
+  "mensaje": "El uso de CPU del host superó el 90%",
+  "fechaHora": "2026-10-16T10:15:00-03:00",
+  "detalles": {
+    "metrica": "cpu",
+    "valor": 92.4,
+    "umbral": 90
+  }
+}
+```
+
+O una caída del almacenamiento del host:
+
+```json
+{
+  "id": "8d1e2f3a-4b5c-4d6e-8f7a-9b0c1d2e3f4a",
+  "tipo": "ALERT_TRIGGERED",
+  "severidad": "WARNING",
+  "recursoTipo": "HOST",
+  "mensaje": "El storage local-lvm superó el 85% de uso",
+  "fechaHora": "2026-10-16T10:20:00-03:00",
+  "detalles": {
+    "metrica": "storage",
+    "storage": "local-lvm",
+    "valor": 86.1,
+    "umbral": 85
+  }
+}
+```
+
 ### Evento de saturación (`RESOURCE_SATURATION`)
 
 ```json
@@ -122,9 +169,8 @@ Si falla, `severidad` es `WARNING` y `detalles` queda, por ejemplo:
   "id": "b6a1c2d3-e4f5-4678-9abc-def012345678",
   "tipo": "RESOURCE_SATURATION",
   "severidad": "CRITICAL",
-  "recursoTipo": "NODE",
-  "recursoId": "nodo-01",
-  "mensaje": "El uso de CPU del nodo superó el 90%",
+  "recursoTipo": "HOST",
+  "mensaje": "El uso de CPU del host superó el 90%",
   "fechaHora": "2026-09-21T14:35:10Z",
   "detalles": {
     "metrica": "cpu",

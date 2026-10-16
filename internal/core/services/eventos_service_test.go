@@ -116,6 +116,16 @@ func eventoDe(t *testing.T, recursoTipo, recursoID string) ports.RealtimeEvent {
 	return ev.ConRecurso(recursoTipo, recursoID)
 }
 
+// alertaDelHost es un ALERT_TRIGGERED del servidor físico: sin recursoId.
+func alertaDelHost(t *testing.T) ports.RealtimeEvent {
+	t.Helper()
+	ev, err := ports.NewRealtimeEvent(ports.EventoAlerta, ports.SeveridadCritical, "El uso de CPU del host superó el 90%")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ev.ConRecurso(ports.RecursoHost, "").ConDetalles(map[string]any{"metrica": "cpu", "valor": 92.4, "umbral": 90})
+}
+
 func recibeEvento(t *testing.T, c *ports.ConexionEventos, esperado ports.RealtimeEvent) {
 	t.Helper()
 	select {
@@ -231,7 +241,7 @@ func TestTicket_DeUnaSesionCerradaNoSirve(t *testing.T) {
 func TestEventos_AdminRecibeTodo(t *testing.T) {
 	e := nuevoEntornoEventos(t, "ADMIN")
 	conexion, _ := e.conectar(t)
-	for _, ev := range []ports.RealtimeEvent{eventoDe(t, ports.RecursoVM, "110"), eventoDe(t, ports.RecursoNodo, "proxmox")} {
+	for _, ev := range []ports.RealtimeEvent{eventoDe(t, ports.RecursoVM, "110"), alertaDelHost(t)} {
 		_ = e.eventos.Publicar(context.Background(), ev)
 		recibeEvento(t, conexion, ev)
 	}
@@ -248,7 +258,7 @@ func TestEventos_OperatorSoloSusInstanciasYEnVivo(t *testing.T) {
 	recibeEvento(t, conexion, propio)
 
 	_ = e.eventos.Publicar(ctx, eventoDe(t, ports.RecursoLXC, "201")) // sin permiso
-	_ = e.eventos.Publicar(ctx, eventoDe(t, ports.RecursoNodo, "proxmox"))
+	_ = e.eventos.Publicar(ctx, alertaDelHost(t))
 	noRecibeNada(t, conexion)
 
 	// Revocación en vivo: le sacan el permiso sobre la 110 y deja de recibir sus eventos.
@@ -257,6 +267,46 @@ func TestEventos_OperatorSoloSusInstanciasYEnVivo(t *testing.T) {
 	e.permisos.mu.Unlock()
 	_ = e.eventos.Publicar(ctx, eventoDe(t, ports.RecursoVM, "110"))
 	noRecibeNada(t, conexion)
+}
+
+// ALERT_TRIGGERED del HOST: llega al ADMIN y se descarta para el OPERATOR,
+// aunque tenga permisos sobre instancias. El TASK_FINISHED de una de sus
+// instancias le sigue llegando (retrocompatibilidad).
+func TestEventos_AlertaDelHostSoloParaAdmin(t *testing.T) {
+	ctx := context.Background()
+
+	admin := nuevoEntornoEventos(t, "ADMIN")
+	conAdmin, _ := admin.conectar(t)
+	alerta := alertaDelHost(t)
+	_ = admin.eventos.Publicar(ctx, alerta)
+	recibeEvento(t, conAdmin, alerta)
+
+	operador := nuevoEntornoEventos(t, "OPERATOR")
+	operador.permisos.permisos[110] = ports.NivelAccesoFullAccess
+	conOperador, _ := operador.conectar(t)
+	_ = operador.eventos.Publicar(ctx, alertaDelHost(t))
+	noRecibeNada(t, conOperador)
+	tarea := eventoDe(t, ports.RecursoVM, "110")
+	_ = operador.eventos.Publicar(ctx, tarea)
+	recibeEvento(t, conOperador, tarea)
+}
+
+// El evento del HOST viaja sin recursoId (omitempty) y los de instancia lo
+// mantienen.
+func TestEventos_RecursoIdOpcional(t *testing.T) {
+	serializar := func(ev ports.RealtimeEvent) map[string]any {
+		crudo, _ := json.Marshal(ev)
+		var m map[string]any
+		_ = json.Unmarshal(crudo, &m)
+		return m
+	}
+	host := serializar(alertaDelHost(t))
+	if _, tiene := host["recursoId"]; tiene || host["recursoTipo"] != "HOST" || host["tipo"] != "ALERT_TRIGGERED" {
+		t.Errorf("Alerta del host: %v", host)
+	}
+	if vm := serializar(eventoDe(t, ports.RecursoVM, "110")); vm["recursoId"] != "110" {
+		t.Errorf("Un evento de VM debe conservar su recursoId: %v", vm)
+	}
 }
 
 func TestEventos_TASK_FINISHED_CincoAccionesCanonicas(t *testing.T) {

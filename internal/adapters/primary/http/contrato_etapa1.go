@@ -123,13 +123,15 @@ type SSEDetallesEvento struct {
 //
 // El mismo `id` viaja también en la línea `id:` del frame SSE, para que el
 // cliente pueda deduplicar. `detalles` se omite cuando el evento no trae datos
-// extra.
+// extra. `recursoId` se omite en los eventos del HOST (el servidor físico), que
+// no refieren a una instancia: esos eventos, como ALERT_TRIGGERED, solo llegan
+// a usuarios ADMIN.
 type SSEEventPayload struct {
 	ID          string             `json:"id" binding:"required" example:"75d0322d-1d76-4dbf-ad0d-2571c458aa63"`
-	Tipo        string             `json:"tipo" binding:"required" enums:"INSTANCE_STATE_CHANGED,INSTANCE_CREATED,RESOURCE_SATURATION,TASK_FINISHED" example:"TASK_FINISHED"`
+	Tipo        string             `json:"tipo" binding:"required" enums:"INSTANCE_STATE_CHANGED,INSTANCE_CREATED,RESOURCE_SATURATION,TASK_FINISHED,ALERT_TRIGGERED" example:"TASK_FINISHED"`
 	Severidad   string             `json:"severidad" binding:"required" enums:"INFO,WARNING,CRITICAL" example:"INFO"`
-	RecursoTipo string             `json:"recursoTipo" binding:"required" enums:"VM,LXC,NODE" example:"VM"`
-	RecursoID   string             `json:"recursoId" binding:"required" example:"110"`
+	RecursoTipo string             `json:"recursoTipo" binding:"required" enums:"VM,LXC,HOST" example:"VM"`
+	RecursoID   string             `json:"recursoId,omitempty" example:"110"`
 	Mensaje     string             `json:"mensaje" binding:"required" example:"La tarea de encendido finalizó correctamente"`
 	FechaHora   string             `json:"fechaHora" binding:"required" format:"date-time" example:"2026-09-30T11:24:03-03:00"`
 	Detalles    *SSEDetallesEvento `json:"detalles,omitempty"`
