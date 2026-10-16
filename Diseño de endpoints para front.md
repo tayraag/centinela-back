@@ -912,6 +912,8 @@ Petición (Frontend ➡️ Backend):
 }
 ```
 
+> **OPERATIVO:** el endpoint implementado es **`PUT /api/instances/:vmid/config`** (no `/resources`) y el campo de CPU se llama **`cores`** (no `vCpu`): `{ "cores": 4, "ramMb": 4096 }`, al menos uno de los dos, enteros positivos (`ramMb` mínimo 16). Requiere ADMIN o `FULL_ACCESS` sobre la instancia (`READ_ONLY` → `403 INSTANCE_ACCESS_DENIED`); las instancias de infraestructura responden `403 INSTANCE_PROTECTED`. Los incrementos se validan contra el margen del nodo comparando con lo que la instancia ya tiene (DeltaRAM): si no alcanza, `409 RESOURCE_QUOTA_EXCEEDED` sin escribir en Proxmox. Responde `200 { "requiresReboot": false }` si el cambio quedó aplicado (instancia apagada, o LXC/hot-plug en caliente) y `200 { "requiresReboot": true, "message": "Recursos modificados; los cambios se aplicarán tras reiniciar la instancia." }` si la instancia está encendida y Proxmox lo dejó pendiente (lo habitual en VMs QEMU). Pasa por la guarda de exclusión mutua (`409 INSTANCE_BUSY` si hay otra operación en curso). `GET /api/instances/{id}/resources` sigue planificado.
+
 &nbsp;
 
 #### 8.2 Detalle de instancia \- Disco

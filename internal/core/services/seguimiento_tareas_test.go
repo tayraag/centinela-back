@@ -57,6 +57,12 @@ func (p *proxmoxTareas) Shutdown(context.Context, string, int, string) (string, 
 	return "", nil
 }
 func (p *proxmoxTareas) Reboot(context.Context, string, int, string) (string, error) { return "", nil }
+func (p *proxmoxTareas) ObtenerConfig(context.Context, string, string, int, bool) (*ports.ConfigInstanciaDTO, error) {
+	return &ports.ConfigInstanciaDTO{}, nil
+}
+func (p *proxmoxTareas) ActualizarConfig(context.Context, string, string, int, int, int, string) error {
+	return nil
+}
 func (p *proxmoxTareas) EliminarInstancia(context.Context, string, int, string) (string, error) {
 	return "", nil
 }

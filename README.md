@@ -77,6 +77,7 @@ centinela-back/
 │   │   │   ├── eventos_bus_port.go # Interfaces EventosService y SeguimientoTareas, mensajes del bus
 │   │   │   ├── tarea_port.go    # Interface TareaRepository (tareas_asincronas)
 │   │   │   ├── exclusion_port.go # Interface ExclusionInstancias (una operación a la vez por instancia)
+│   │   │   ├── configuracion_port.go # Interface ConfiguracionInstancias (cambio de CPU y RAM)
 │   │   │   ├── metricas_vivo_port.go # Interface MetricasVivoService (acceso al WebSocket de métricas)
 │   │   │   ├── key_value_store.go # Interface KeyValueStore (Redis o memoria)
 │   │   │   └── audit_port.go    # Interface AuditRepository + AuditService
@@ -86,9 +87,10 @@ centinela-back/
 │   │       ├── nodo_service.go             # Consolidación de estado, storages y plantillas del nodo
 │   │       ├── inventario_service.go       # Inventario de VMs/CTs filtrado por rol y permisos
 │   │       ├── seguimiento_tareas.go       # Worker pool concurrente de sondeo de UPID y push de TASK_FINISHED
-│   │       ├── cuotas_service.go            # Validación y reserva coordinada de cuotas para crear VMs/CTs
+│   │       ├── cuotas_service.go            # Validación y reserva coordinada de cuotas para crear VMs/CTs y ampliar CPU/RAM (AmpliarInstancia)
 │   │       ├── audit_service.go            # Registro y consulta de auditoría particionada
 │   │       ├── exclusion_instancias.go     # Exclusión mutua por instancia: lock Redis + tarea RUNNING (409 INSTANCE_BUSY)
+│   │       ├── configuracion_instancias.go # Cambio de CPU/RAM: DeltaRAM contra el nodo (CuotasService.AmpliarInstancia) y detección de hot-plug
 │   │       ├── metricas_vivo_service.go    # Ticket y vigilancia del WebSocket de métricas (corte por logout, baja o permiso)
 │   │       └── eventos_service.go          # Despacho de eventos en tiempo real hacia Pub/Sub (HOST solo para ADMIN)
 │   │
@@ -99,6 +101,7 @@ centinela-back/
 │   │   │       ├── user_handler.go       # Endpoints de gestión de usuarios ADMIN (/api/admin/users/*)
 │   │   │       ├── node_handler.go       # Endpoints de telemetría, storages y templates del nodo (/api/node/*)
 │   │   │       ├── instance_handler.go   # Endpoints de inventario y ciclo de vida (/api/instances/*)
+│   │   │       ├── instance_config_handler.go # PUT /api/instances/:vmid/config (cores/ramMb, DeltaRAM y requiresReboot)
 │   │   │       ├── ws_metrics_handler.go # Canal WebSocket de telemetría en vivo (/api/ws/instances/:vmid/metrics)
 │   │   │       ├── events_handler.go     # Canal de eventos SSE (/api/events)
 │   │   │       ├── account_handler.go    # Endpoints de perfil propio (/api/account/*)

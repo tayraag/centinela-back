@@ -36,6 +36,29 @@ definitions:
     - status
     - tareaId
     type: object
+  http.ConfigInstanciaRequest:
+    properties:
+      cores:
+        example: 4
+        minimum: 1
+        type: integer
+      ramMb:
+        example: 4096
+        minimum: 16
+        type: integer
+    type: object
+  http.ConfigInstanciaResponse:
+    properties:
+      message:
+        example: Recursos modificados; los cambios se aplicarán tras reiniciar la
+          instancia.
+        type: string
+      requiresReboot:
+        example: true
+        type: boolean
+    required:
+    - requiresReboot
+    type: object
   http.CreacionAceptadaResponse:
     properties:
       tareaId:
@@ -2199,6 +2222,82 @@ paths:
       security:
       - BearerAuth: []
       summary: Obtener instancia
+      tags:
+      - Instancias Proxmox
+  /instances/{vmid}/config:
+    put:
+      consumes:
+      - application/json
+      description: 'ADMIN o FULL_ACCESS sobre la instancia. Cambia `cores` y/o `ramMb`
+        (al menos uno, enteros positivos; `ramMb` mínimo 16). Los incrementos se validan
+        contra el margen del nodo (RAM con 15% de headroom y vCPU), comparando con
+        lo que la instancia ya tiene asignado (DeltaRAM): si no alcanza responde 409
+        RESOURCE_QUOTA_EXCEEDED sin escribir en Proxmox. Las reducciones no se validan.
+        Si la instancia está apagada el cambio queda aplicado (`requiresReboot: false`).
+        Si está encendida y Proxmox lo dejó pendiente porque la instancia no admite
+        hot-plug (lo habitual en VMs QEMU), responde `requiresReboot: true`: se aplica
+        al reiniciarla. En LXC, CPU y RAM se aplican en caliente. Pasa por la guarda
+        de exclusión mutua (409 INSTANCE_BUSY si la instancia tiene otra operación
+        en curso).'
+      parameters:
+      - description: VMID de la instancia
+        in: path
+        name: vmid
+        required: true
+        type: integer
+      - description: Nuevos cores y/o RAM
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/http.ConfigInstanciaRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/http.ConfigInstanciaResponse'
+        "400":
+          description: INVALID_VMID | INVALID_REQUEST — sin cores ni ramMb, o valores
+            no enteros, menores a 1 o RAM menor a 16 MiB
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "401":
+          description: MISSING_TOKEN | INVALID_TOKEN | TOKEN_REVOKED
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "403":
+          description: INSTANCE_ACCESS_DENIED — se requiere FULL_ACCESS (READ_ONLY
+            no alcanza) | INSTANCE_PROTECTED — infraestructura de El Centinela
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "404":
+          description: INSTANCE_NOT_FOUND
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "409":
+          description: RESOURCE_QUOTA_EXCEEDED — el incremento supera el margen del
+            nodo; no se escribió en Proxmox | INSTANCE_BUSY — otra operación en curso
+            o la config cambió en el medio
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "502":
+          description: PROXMOX_UNAVAILABLE
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "503":
+          description: INSTANCE_LOCK_UNAVAILABLE | PROVISIONING_COORDINATION_UNAVAILABLE
+            — no se pudo coordinar la validación de capacidad
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "504":
+          description: PROXMOX_TIMEOUT
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Cambiar CPU y RAM de una instancia
       tags:
       - Instancias Proxmox
   /instances/{vmid}/pause:

@@ -146,34 +146,56 @@ func (s *CuotasService) validarCapacidad(ctx context.Context, input ports.CrearI
 		return ports.StorageDTO{}, fmt.Errorf("%w: el storage %q no está disponible para %s", ports.ErrRecursosInsuficientes, input.StorageID, input.Tipo)
 	}
 
+	memoriaDisponibleSegura, coresDisponibles := margenNodo(capacidad, input.Nodo, reservas)
+	if memoriaPedida > memoriaDisponibleSegura {
+		return ports.StorageDTO{}, fmt.Errorf("%w: RAM disponible insuficiente en el nodo %s", ports.ErrRecursosInsuficientes, input.Nodo)
+	}
+	if input.Cores > coresDisponibles {
+		return ports.StorageDTO{}, fmt.Errorf("%w: vCPU disponibles insuficientes en el nodo %s", ports.ErrRecursosInsuficientes, input.Nodo)
+	}
+	var discoReservado int64
+	for _, reserva := range reservas {
+		if reserva.StorageID == input.StorageID && (storage.Shared == 1 || reserva.Nodo == input.Nodo) {
+			discoReservado += reserva.Disco
+		}
+	}
+	if discoPedido > storage.Avail-discoReservado {
+		return ports.StorageDTO{}, fmt.Errorf("%w: espacio insuficiente en el storage %s", ports.ErrRecursosInsuficientes, input.StorageID)
+	}
+	return storage, nil
+}
+
+// margenNodo calcula la RAM (bytes) y las vCPU que todavía se pueden asignar en
+// el nodo sin pasarse: lo asignado a las instancias (o lo usado, si es mayor),
+// el headroom del host (15%) y las reservas de creaciones en curso. Lo usan la
+// creación (validarCapacidad) y la ampliación de una instancia (AmpliarInstancia).
+func margenNodo(capacidad *capacidadAprovisionamiento, nodo string, reservas []reservaAprovisionamiento) (memoriaDisponible int64, coresDisponibles int) {
 	var memoriaAsignada int64
 	var coresAsignados int
 	for _, instancia := range capacidad.Instancias {
-		if instancia.Nodo == input.Nodo {
+		if instancia.Nodo == nodo {
 			memoriaAsignada += instancia.MaxMem
 			coresAsignados += instancia.MaxCpu
 		}
 	}
-	var memoriaReservada, discoReservado int64
+	var memoriaReservada int64
 	var coresReservados int
 	for _, reserva := range reservas {
-		if reserva.Nodo == input.Nodo {
-			var memoriaVisible int64
-			var coresVisibles int
-			for _, instancia := range capacidad.Instancias {
-				if reserva.VMID != 0 && instancia.Vmid == reserva.VMID && instancia.Nodo == reserva.Nodo {
-					memoriaVisible = instancia.MaxMem
-					coresVisibles = instancia.MaxCpu
-					break
-				}
+		if reserva.Nodo != nodo {
+			continue
+		}
+		var memoriaVisible int64
+		var coresVisibles int
+		for _, instancia := range capacidad.Instancias {
+			if reserva.VMID != 0 && instancia.Vmid == reserva.VMID && instancia.Nodo == reserva.Nodo {
+				memoriaVisible = instancia.MaxMem
+				coresVisibles = instancia.MaxCpu
+				break
 			}
-			// Only subtract the part not already represented by the inventory.
-			memoriaReservada += max(int64(0), reserva.Memoria-memoriaVisible)
-			coresReservados += max(0, reserva.Cores-coresVisibles)
 		}
-		if reserva.StorageID == input.StorageID && (storage.Shared == 1 || reserva.Nodo == input.Nodo) {
-			discoReservado += reserva.Disco
-		}
+		// Only subtract the part not already represented by the inventory.
+		memoriaReservada += max(int64(0), reserva.Memoria-memoriaVisible)
+		coresReservados += max(0, reserva.Cores-coresVisibles)
 	}
 
 	memoriaComprometida := memoriaAsignada
@@ -181,17 +203,51 @@ func (s *CuotasService) validarCapacidad(ctx context.Context, input ports.CrearI
 		memoriaComprometida = capacidad.Nodo.MemUsada
 	}
 	memoriaReservadaHost := porcentajeRedondeadoHaciaArriba(max(int64(0), capacidad.Nodo.MemTotal), headroomRAMPercent)
-	memoriaDisponibleSegura := max(int64(0), capacidad.Nodo.MemTotal-memoriaComprometida-memoriaReservadaHost-memoriaReservada)
-	if memoriaPedida > memoriaDisponibleSegura {
-		return ports.StorageDTO{}, fmt.Errorf("%w: RAM disponible insuficiente en el nodo %s", ports.ErrRecursosInsuficientes, input.Nodo)
+	memoriaDisponible = max(int64(0), capacidad.Nodo.MemTotal-memoriaComprometida-memoriaReservadaHost-memoriaReservada)
+	coresDisponibles = capacidad.Nodo.CPUs - coresAsignados - coresReservados
+	return memoriaDisponible, coresDisponibles
+}
+
+// AmpliarInstancia valida que el nodo tenga margen para sumarle a una instancia
+// existente deltaCores vCPU y deltaMemoria bytes (solo los incrementos: lo que
+// ya tiene asignado ya está contado) y, con el lock de capacidad tomado,
+// ejecuta aplicar (el PUT /config). Así una ampliación y una creación
+// simultáneas no pueden pasar las dos la validación y sobrecargar el nodo. Si
+// no hay margen devuelve ErrRecursosInsuficientes sin llamar a aplicar.
+func (s *CuotasService) AmpliarInstancia(ctx context.Context, nodo string, deltaCores int, deltaMemoria int64, aplicar func() error) error {
+	lockCtx, cancelarEspera := context.WithTimeout(ctx, esperaLockAprovisionamiento)
+	release, err := s.store.AcquireLock(lockCtx, claveLockAprovisionamiento, ttlLockAprovisionamiento)
+	cancelarEspera()
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
+			return fmt.Errorf("%w: otra operación está reservando capacidad; reintente", ports.ErrCoordinacionAprovisionamiento)
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return fmt.Errorf("%w: %v", ports.ErrCoordinacionAprovisionamiento, err)
 	}
-	if input.Cores > capacidad.Nodo.CPUs-coresAsignados-coresReservados {
-		return ports.StorageDTO{}, fmt.Errorf("%w: vCPU disponibles insuficientes en el nodo %s", ports.ErrRecursosInsuficientes, input.Nodo)
+	defer func() { _ = release(context.Background()) }()
+
+	reservas, err := s.leerReservas(ctx)
+	if err != nil {
+		return err
 	}
-	if discoPedido > storage.Avail-discoReservado {
-		return ports.StorageDTO{}, fmt.Errorf("%w: espacio insuficiente en el storage %s", ports.ErrRecursosInsuficientes, input.StorageID)
+	capacidad, err := s.obtenerCapacidad(ctx, nodo)
+	if err != nil {
+		return err
 	}
-	return storage, nil
+	memoriaDisponible, coresDisponibles := margenNodo(capacidad, nodo, reservas)
+	if deltaMemoria > memoriaDisponible {
+		return fmt.Errorf("%w: RAM disponible insuficiente en el nodo %s", ports.ErrRecursosInsuficientes, nodo)
+	}
+	if deltaCores > coresDisponibles {
+		return fmt.Errorf("%w: vCPU disponibles insuficientes en el nodo %s", ports.ErrRecursosInsuficientes, nodo)
+	}
+	err = aplicar()
+	// La foto de capacidad ya no refleja la instancia: la próxima lectura vuelve a Proxmox.
+	s.invalidarCacheCapacidad(context.WithoutCancel(ctx), nodo)
+	return err
 }
 
 func cantidadEnBytes(cantidad int, bytesPorUnidad int64) (int64, bool) {

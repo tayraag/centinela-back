@@ -114,6 +114,14 @@ func (m *mockProxmoxPort) Reboot(ctx context.Context, node string, vmid int, vmT
 	return "UPID:test:reboot", nil
 }
 
+func (m *mockProxmoxPort) ObtenerConfig(context.Context, string, string, int, bool) (*ports.ConfigInstanciaDTO, error) {
+	return &ports.ConfigInstanciaDTO{}, nil
+}
+
+func (m *mockProxmoxPort) ActualizarConfig(context.Context, string, string, int, int, int, string) error {
+	return nil
+}
+
 func (m *mockProxmoxPort) EliminarInstancia(ctx context.Context, node string, vmid int, vmType string) (string, error) {
 	m.escrituras++
 	if m.errAccion != nil {

@@ -1,6 +1,7 @@
 package proxmox
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/json"
@@ -861,4 +862,79 @@ func (c *Client) ObtenerEstadoActual(ctx context.Context, nodo, tipo string, vmi
 		DiskWrite: writeVal,
 		Uptime:    upVal,
 	}, nil
+}
+
+// ObtenerConfig consulta GET /nodes/{node}/{tipo}/{vmid}/config (con
+// ?current=1 si enUso). Proxmox informa memory como string en qemu y como
+// número en lxc; se aceptan las dos formas.
+func (c *Client) ObtenerConfig(ctx context.Context, nodo, tipo string, vmid int, enUso bool) (*ports.ConfigInstanciaDTO, error) {
+	tipoPVE, err := tipoProxmox(tipo)
+	if err != nil {
+		return nil, err
+	}
+	path := fmt.Sprintf("/api2/json/nodes/%s/%s/%d/config", url.PathEscape(nodo), tipoPVE, vmid)
+	if enUso {
+		path += "?current=1"
+	}
+	raw, err := c.doRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	var parsed struct {
+		Data struct {
+			Cores  json.Number `json:"cores"`
+			Memory json.Number `json:"memory"`
+			Digest string      `json:"digest"`
+		} `json:"data"`
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	if err := decoder.Decode(&parsed); err != nil {
+		return nil, fmt.Errorf("%w: respuesta de config inválida: %v", ports.ErrProxmoxNoDisponible, err)
+	}
+	cores, _ := strconv.Atoi(parsed.Data.Cores.String())
+	memoria, _ := strconv.Atoi(parsed.Data.Memory.String())
+	if cores == 0 && tipoPVE == ports.TipoInstanciaQemu {
+		cores = 1 // en qemu, sin "cores" en la config Proxmox usa 1
+	}
+	return &ports.ConfigInstanciaDTO{Cores: cores, MemoriaMB: memoria, Digest: parsed.Data.Digest}, nil
+}
+
+// ActualizarConfig hace PUT /nodes/{node}/{tipo}/{vmid}/config. Proxmox responde
+// {"data": null}: no es una tarea, el cambio queda guardado al responder.
+func (c *Client) ActualizarConfig(ctx context.Context, nodo, tipo string, vmid int, cores, memoriaMB int, digest string) error {
+	tipoPVE, err := tipoProxmox(tipo)
+	if err != nil {
+		return err
+	}
+	cambios := url.Values{}
+	if cores > 0 {
+		cambios.Set("cores", strconv.Itoa(cores))
+	}
+	if memoriaMB > 0 {
+		cambios.Set("memory", strconv.Itoa(memoriaMB))
+	}
+	if digest != "" {
+		cambios.Set("digest", digest)
+	}
+	path := fmt.Sprintf("/api2/json/nodes/%s/%s/%d/config", url.PathEscape(nodo), tipoPVE, vmid)
+	_, err = c.doRequest(ctx, http.MethodPut, path, cambios)
+	if err != nil && strings.Contains(err.Error(), "detected modified configuration") {
+		// El digest no coincide: alguien cambió la config (p. ej. desde la UI de
+		// Proxmox) entre la lectura y la escritura. Se informa como ocupada.
+		return fmt.Errorf("%w: %v", ports.ErrInstanciaOcupada, err)
+	}
+	return err
+}
+
+// tipoProxmox normaliza el tipo de instancia al segmento de la ruta de Proxmox.
+func tipoProxmox(tipo string) (string, error) {
+	t := strings.ToLower(strings.TrimSpace(tipo))
+	if t == "vm" {
+		t = ports.TipoInstanciaQemu
+	}
+	if t != ports.TipoInstanciaQemu && t != ports.TipoInstanciaLXC {
+		return "", fmt.Errorf("tipo de instancia desconocido %q", tipo)
+	}
+	return t, nil
 }

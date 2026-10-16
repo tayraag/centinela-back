@@ -873,3 +873,61 @@ func TestObtenerEstadoActual_ApagadaDevuelveNull(t *testing.T) {
 		t.Errorf("El JSON debe llevar cpu y mem en null: %s", crudo)
 	}
 }
+
+// ObtenerConfig: Proxmox manda memory como string en qemu y como número en lxc
+// (capturas de RF-10); con enUso pide ?current=1.
+func TestObtenerConfig_QemuYLXC(t *testing.T) {
+	var consultas []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		consultas = append(consultas, r.URL.Path+"?"+r.URL.RawQuery)
+		data := map[string]any{"memory": "2048", "cores": 2, "digest": "abc"}
+		if strings.Contains(r.URL.Path, "/lxc/") {
+			data = map[string]any{"memory": 512, "cores": 1, "digest": "def"}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": data})
+	}))
+	defer server.Close()
+	client := proxmox.NewClient(server.URL, "pve1", tokenIDValido, tokenSecretValido, nil)
+
+	vm, err := client.ObtenerConfig(context.Background(), "pve1", "qemu", 110, true)
+	if err != nil || vm.MemoriaMB != 2048 || vm.Cores != 2 || vm.Digest != "abc" {
+		t.Errorf("qemu: %+v %v", vm, err)
+	}
+	ct, err := client.ObtenerConfig(context.Background(), "pve1", "lxc", 201, false)
+	if err != nil || ct.MemoriaMB != 512 || ct.Cores != 1 {
+		t.Errorf("lxc: %+v %v", ct, err)
+	}
+	if len(consultas) != 2 || !strings.HasSuffix(consultas[0], "/qemu/110/config?current=1") || strings.Contains(consultas[1], "current") {
+		t.Errorf("Rutas consultadas: %v", consultas)
+	}
+}
+
+// ActualizarConfig manda solo lo que cambia, con el digest; si Proxmox rechaza
+// el digest (config modificada en el medio) se informa como instancia ocupada.
+func TestActualizarConfig_ParametrosYDigestRechazado(t *testing.T) {
+	var cuerpo string
+	rechazar := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		cuerpo = r.PostForm.Encode()
+		if rechazar {
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": nil, "message": "detected modified configuration - file changed by other user? Try again.\n"})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": nil})
+	}))
+	defer server.Close()
+	client := proxmox.NewClient(server.URL, "pve1", tokenIDValido, tokenSecretValido, nil)
+
+	if err := client.ActualizarConfig(context.Background(), "pve1", "qemu", 110, 0, 4096, "abc"); err != nil {
+		t.Fatal(err)
+	}
+	if cuerpo != "digest=abc&memory=4096" {
+		t.Errorf("Debe mandar solo memory y el digest (sin cores): %q", cuerpo)
+	}
+	rechazar = true
+	if err := client.ActualizarConfig(context.Background(), "pve1", "qemu", 110, 2, 0, "viejo"); !errors.Is(err, ports.ErrInstanciaOcupada) {
+		t.Errorf("Digest rechazado: se esperaba ErrInstanciaOcupada, vino %v", err)
+	}
+}

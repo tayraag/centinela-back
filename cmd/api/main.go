@@ -304,8 +304,9 @@ func main() {
 		// Rutas de Instancias Proxmox
 		// ==========================================
 		// Exclusión mutua de las operaciones que modifican una instancia (409 INSTANCE_BUSY).
-		// Cuando existan PUT /:vmid/config y los snapshots, llevan la misma guarda.
+		// Cuando existan los endpoints de snapshots, llevan la misma guarda.
 		exclusion := services.NewExclusionInstancias(kvStore, tareaRepo)
+		configHandler := httpHandlers.NewInstanceConfigHandler(services.NewConfiguracionInstancias(proxmoxClient, cuotasService), auditService)
 		instances := api.Group("/instances", middleware.RequireAuth(authService))
 		{
 			instances.GET("", instanceHandler.ListarInstancias)
@@ -315,6 +316,7 @@ func main() {
 			// Las acciones destructivas llevan además RejectProtectedInstance (VMIDs de infraestructura).
 			instances.POST("/:vmid/stop", middleware.RequireInstanceAccess(instanceRepo, "vmid", ports.NivelAccesoFullAccess), middleware.RejectProtectedInstance(vmidsProtegidos, "vmid"), middleware.RequireInstanceIdle(exclusion, "vmid"), instanceHandler.DetenerInstancia)
 			instances.POST("/:vmid/status/:action", middleware.RequireInstanceAccess(instanceRepo, "vmid", ports.NivelAccesoFullAccess), middleware.RejectProtectedInstance(vmidsProtegidos, "vmid"), middleware.RequireInstanceIdle(exclusion, "vmid"), instanceHandler.CambiarEstado)
+			instances.PUT("/:vmid/config", middleware.RequireInstanceAccess(instanceRepo, "vmid", ports.NivelAccesoFullAccess), middleware.RejectProtectedInstance(vmidsProtegidos, "vmid"), middleware.RequireInstanceIdle(exclusion, "vmid"), configHandler.ActualizarConfig)
 			instances.DELETE("/:vmid", middleware.RequireRole("ADMIN"), middleware.RejectProtectedInstance(vmidsProtegidos, "vmid"), middleware.RequireInstanceIdle(exclusion, "vmid"), instanceHandler.EliminarInstancia)
 		}
 		// ==========================================

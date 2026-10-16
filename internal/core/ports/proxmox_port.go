@@ -155,6 +155,24 @@ type ProxmoxPort interface {
 
 	// ObtenerEstadoActual consulta GET /nodes/{node}/{tipo}/{vmid}/status/current.
 	ObtenerEstadoActual(ctx context.Context, nodo, tipo string, vmid int) (*domain.MetricasEnVivoDTO, error)
+
+	// ObtenerConfig consulta GET /nodes/{node}/{tipo}/{vmid}/config. Con enUso
+	// = true (current=1) devuelve la configuración que la instancia está usando;
+	// con false, la que tendrá después de aplicar los cambios pendientes.
+	ObtenerConfig(ctx context.Context, nodo, tipo string, vmid int, enUso bool) (*ConfigInstanciaDTO, error)
+
+	// ActualizarConfig hace PUT /nodes/{node}/{tipo}/{vmid}/config con los
+	// cores y la memoria (MiB) dados; 0 = no se cambia. digest (el de
+	// ObtenerConfig) hace que Proxmox rechace el cambio si la configuración se
+	// modificó en el medio.
+	ActualizarConfig(ctx context.Context, nodo, tipo string, vmid int, cores, memoriaMB int, digest string) error
+}
+
+// ConfigInstanciaDTO es la CPU y RAM configuradas de una instancia.
+type ConfigInstanciaDTO struct {
+	Cores     int    // vCPU (cores); en un LXC sin límite de CPU vale 0
+	MemoriaMB int    // RAM en MiB
+	Digest    string // huella del archivo de configuración (control de concurrencia)
 }
 
 // StorageDTO representa un almacenamiento tal como lo informa Proxmox en /nodes/{node}/storage.
