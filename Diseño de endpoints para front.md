@@ -855,6 +855,8 @@ Devuelve el detalle microscópico del hardware virtual, la disponibilidad del no
 
 **GET /api/instances/{id}/resources**&nbsp;
 
+> **PLANIFICADO:** este `GET` todavía no está implementado. El cambio de CPU y RAM sí: ver `PUT /api/instances/{vmid}/config` más abajo.
+
 ```json
 {
   "cpu": {
@@ -897,22 +899,54 @@ Devuelve el detalle microscópico del hardware virtual, la disponibilidad del no
 
 &nbsp;
 
-Para la modificación de vCPUs y memoria RAM asignada, el frontend enviará los nuevos valores requeridos.
+**Cambio de CPU y RAM — OPERATIVO**
 
-**PUT /api/instances/{id}/resources**
+Para modificar los cores y la memoria RAM asignados, el frontend envía solo los valores nuevos.
 
-Petición (Frontend ➡️ Backend):
+**PUT /api/instances/{vmid}/config**
 
-&nbsp;
+Requiere ADMIN o `FULL_ACCESS` sobre la instancia (`READ_ONLY` no alcanza). Las instancias de infraestructura de El Centinela no se pueden reconfigurar.
 
-```
+Petición (Frontend ➡️ Backend), al menos uno de los dos campos, enteros positivos (`ramMb` mínimo 16):
+
+```json
 {
-  "vCpu": 4,
+  "cores": 4,
   "ramMb": 4096
 }
 ```
 
-> **OPERATIVO:** el endpoint implementado es **`PUT /api/instances/:vmid/config`** (no `/resources`) y el campo de CPU se llama **`cores`** (no `vCpu`): `{ "cores": 4, "ramMb": 4096 }`, al menos uno de los dos, enteros positivos (`ramMb` mínimo 16). Requiere ADMIN o `FULL_ACCESS` sobre la instancia (`READ_ONLY` → `403 INSTANCE_ACCESS_DENIED`); las instancias de infraestructura responden `403 INSTANCE_PROTECTED`. Los incrementos se validan contra el margen del nodo comparando con lo que la instancia ya tiene (DeltaRAM): si no alcanza, `409 RESOURCE_QUOTA_EXCEEDED` sin escribir en Proxmox. Responde `200 { "requiresReboot": false }` si el cambio quedó aplicado (instancia apagada, o LXC/hot-plug en caliente) y `200 { "requiresReboot": true, "message": "Recursos modificados; los cambios se aplicarán tras reiniciar la instancia." }` si la instancia está encendida y Proxmox lo dejó pendiente (lo habitual en VMs QEMU). Pasa por la guarda de exclusión mutua (`409 INSTANCE_BUSY` si hay otra operación en curso). `GET /api/instances/{id}/resources` sigue planificado.
+Los incrementos se validan contra el margen del nodo (RAM con 15% de headroom y vCPU), comparando con lo que la instancia ya tiene asignado: se valida solo la diferencia (DeltaRAM). Las reducciones no se validan.
+
+Respuesta `200` si el cambio quedó aplicado: la instancia estaba apagada, o es un LXC / admite hot-plug y se aplicó en caliente.
+
+```json
+{
+  "requiresReboot": false
+}
+```
+
+Respuesta `200` si la instancia está encendida y Proxmox dejó el cambio pendiente (lo habitual en VMs QEMU): se aplica al reiniciarla.
+
+```json
+{
+  "requiresReboot": true,
+  "message": "Recursos modificados; los cambios se aplicarán tras reiniciar la instancia."
+}
+```
+
+Errores (sobre `{ "errorCode", "message" }`):
+
+| HTTP | `errorCode` | Cuándo |
+|------|-------------|--------|
+| 400 | `INVALID_REQUEST` | Sin `cores` ni `ramMb`, valores no enteros, menores a 1, o `ramMb` menor a 16 |
+| 403 | `INSTANCE_ACCESS_DENIED` | El usuario no tiene `FULL_ACCESS` sobre la instancia |
+| 403 | `INSTANCE_PROTECTED` | Es una instancia de infraestructura de El Centinela |
+| 404 | `INSTANCE_NOT_FOUND` | La instancia no existe |
+| 409 | `RESOURCE_QUOTA_EXCEEDED` | El incremento no entra en el margen del nodo; no se escribió nada en Proxmox |
+| 409 | `INSTANCE_BUSY` | La instancia tiene otra operación en curso, o su configuración cambió en el medio |
+| 502 / 504 | `PROXMOX_UNAVAILABLE` / `PROXMOX_TIMEOUT` | Proxmox caído o sin respuesta |
+| 503 | `INSTANCE_LOCK_UNAVAILABLE` / `PROVISIONING_COORDINATION_UNAVAILABLE` | No se pudo coordinar la operación; se puede reintentar |
 
 &nbsp;
 
