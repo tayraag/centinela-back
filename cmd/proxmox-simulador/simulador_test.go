@@ -346,6 +346,112 @@ func TestSnapshots(t *testing.T) {
 	}
 }
 
+// snapshotsDe devuelve los snapshots de una instancia por nombre, más la
+// entrada "current", y los nombres en el orden en que los lista el simulador.
+func snapshotsDe(e *entorno, tipo, vmid string) (porNombre map[string]map[string]any, orden []string) {
+	e.t.Helper()
+	s, data, cuerpo := e.pedir("GET", "/nodes/proxmox/"+tipo+"/"+vmid+"/snapshot", nil)
+	if s != 200 {
+		e.t.Fatalf("Listar snapshots de %s/%s: %d %v", tipo, vmid, s, cuerpo)
+	}
+	porNombre = map[string]map[string]any{}
+	for _, x := range data.([]any) {
+		snap := x.(map[string]any)
+		nombre := snap["name"].(string)
+		porNombre[nombre] = snap
+		orden = append(orden, nombre)
+	}
+	return porNombre, orden
+}
+
+// Ciclo completo de snapshots (crear, listar, revertir y borrar) para QEMU y
+// LXC, con el formato de las capturas del Proxmox real (RF-06).
+func TestSnapshots_CicloCompleto(t *testing.T) {
+	casos := []struct{ tipo, vmid, prefijo string }{
+		{"qemu", "110", "qm"},
+		{"lxc", "201", "vz"},
+	}
+	for _, c := range casos {
+		t.Run(c.tipo, func(t *testing.T) {
+			e := nuevoEntorno(t, "")
+			base := "/nodes/proxmox/" + c.tipo + "/" + c.vmid + "/snapshot"
+			esperarUPID := func(accion string, s int, upid any) {
+				t.Helper()
+				// Formato real: UPID:<nodo>:<pid>:<pstart>:<inicio>:<tipo de tarea>:<vmid>:<usuario>:
+				if s != 200 || !strings.HasPrefix(fmt.Sprint(upid), "UPID:proxmox:") || !strings.Contains(fmt.Sprint(upid), ":"+c.prefijo+accion+":"+c.vmid+":") {
+					t.Fatalf("%s: se esperaba 200 con UPID %s%s, vino %d %v", accion, c.prefijo, accion, s, upid)
+				}
+			}
+
+			// 1. Crear: devuelve el UPID y el snapshot aparece recién cuando termina la tarea.
+			s, upid, _ := e.pedir("POST", base, url.Values{"snapname": {"antes_del_cambio"}, "description": {"Antes de actualizar"}})
+			esperarUPID("snapshot", s, upid)
+			if porNombre, _ := snapshotsDe(e, c.tipo, c.vmid); porNombre["antes_del_cambio"] != nil {
+				t.Error("El snapshot no debe aparecer mientras la tarea sigue en curso")
+			}
+			if s, _, cuerpo := e.pedir("POST", base, url.Values{"snapname": {"otro"}}); s != 500 || !strings.Contains(fmt.Sprint(cuerpo["message"]), "locked (snapshot)") {
+				t.Errorf("Otra orden durante la tarea debe dar 500 locked (snapshot): %d %v", s, cuerpo)
+			}
+			e.avanzar(3 * time.Second)
+
+			// 2. Listar: los campos de la captura real y la entrada "current" al final.
+			porNombre, orden := snapshotsDe(e, c.tipo, c.vmid)
+			primero := porNombre["antes_del_cambio"]
+			if primero == nil || primero["description"] != "Antes de actualizar" || primero["snaptime"] != float64(e.reloj.Add(-3*time.Second).Unix()) {
+				t.Fatalf("Snapshot creado: %v", primero)
+			}
+			if _, tieneVMState := primero["vmstate"]; tieneVMState != (c.tipo == "qemu") {
+				t.Errorf("vmstate solo aparece en QEMU, como en las capturas: %v", primero)
+			}
+			if orden[len(orden)-1] != "current" || porNombre["current"]["parent"] != "antes_del_cambio" || porNombre["current"]["description"] != "You are here!" {
+				t.Errorf("La entrada current debe ir al final y apuntar al último snapshot: %v %v", orden, porNombre["current"])
+			}
+
+			// Un segundo snapshot: orden cronológico y cadena de padres.
+			e.avanzar(time.Minute)
+			s, upid, _ = e.pedir("POST", base, url.Values{"snapname": {"despues_del_cambio"}})
+			esperarUPID("snapshot", s, upid)
+			e.avanzar(3 * time.Second)
+			porNombre, orden = snapshotsDe(e, c.tipo, c.vmid)
+			if strings.Join(orden, ",") != "antes_del_cambio,despues_del_cambio,current" || porNombre["despues_del_cambio"]["parent"] != "antes_del_cambio" {
+				t.Errorf("Orden cronológico y padre: %v %v", orden, porNombre["despues_del_cambio"])
+			}
+
+			// 3. Revertir al primero.
+			s, upid, _ = e.pedir("POST", base+"/antes_del_cambio/rollback", url.Values{})
+			esperarUPID("rollback", s, upid)
+			e.avanzar(3 * time.Second)
+			if porNombre, _ = snapshotsDe(e, c.tipo, c.vmid); porNombre["current"]["parent"] != "antes_del_cambio" {
+				t.Errorf("Después del rollback, current debe colgar del snapshot elegido: %v", porNombre["current"])
+			}
+
+			// 4. Borrar el segundo: sigue listado hasta que termina la tarea.
+			s, upid, _ = e.pedir("DELETE", base+"/despues_del_cambio", nil)
+			esperarUPID("delsnapshot", s, upid)
+			if porNombre, _ = snapshotsDe(e, c.tipo, c.vmid); porNombre["despues_del_cambio"] == nil {
+				t.Error("El snapshot se quita recién cuando termina la tarea de borrado")
+			}
+			e.avanzar(3 * time.Second)
+			if _, orden = snapshotsDe(e, c.tipo, c.vmid); strings.Join(orden, ",") != "antes_del_cambio,current" {
+				t.Errorf("Después del borrado deben quedar el primero y current: %v", orden)
+			}
+
+			// Errores, como en Proxmox: snapshot inexistente y nombre inválido.
+			for _, pedido := range []struct{ metodo, ruta string }{
+				{"POST", base + "/no_existe/rollback"},
+				{"DELETE", base + "/no_existe"},
+			} {
+				if s, _, cuerpo := e.pedir(pedido.metodo, pedido.ruta, url.Values{}); s != 500 || !strings.Contains(fmt.Sprint(cuerpo["message"]), "does not exist") {
+					t.Errorf("%s %s: se esperaba 500 does not exist, vino %d %v", pedido.metodo, pedido.ruta, s, cuerpo)
+				}
+			}
+			if s, _, cuerpo := e.pedir("POST", base, url.Values{"description": {"sin nombre"}}); s != 400 || cuerpo["errors"] == nil {
+				t.Errorf("Sin snapname debe dar 400 con errors: %d %v", s, cuerpo)
+			}
+		})
+	}
+}
+
 // ==========================================
 // Creación y configuración (RF-07, RF-10)
 // ==========================================
