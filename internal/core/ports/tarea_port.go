@@ -50,7 +50,7 @@ type TareaRepository interface {
 
 	// ActualizarEstado confirma atómicamente el estado final (COMPLETED | FAILED),
 	// los metadatos técnicos y la auditoría definitiva. En una creación que
-	// Proxmox completó (OK o WARNINGS) también asigna FULL_ACCESS al usuario
+	// Proxmox completó con exitstatus OK también asigna FULL_ACCESS al usuario
 	// creador sobre el VMID reservado.
 	// Repetir el cierre de una tarea terminada no genera nuevos registros. Un
 	// error deja RUNNING para reintento.

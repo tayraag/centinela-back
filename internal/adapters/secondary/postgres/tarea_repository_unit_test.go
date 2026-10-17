@@ -16,7 +16,7 @@ func TestDebeAsignarPermisoCreacion(t *testing.T) {
 		esperado   bool
 	}{
 		{"VM OK", ports.AccionProxmoxCrearVM, ports.TareaCompleted, "OK", true},
-		{"LXC con advertencias", ports.AccionProxmoxCrearLXC, ports.TareaCompleted, "WARNINGS: 1", true},
+		{"LXC con advertencias", ports.AccionProxmoxCrearLXC, ports.TareaCompleted, "WARNINGS: 1", false},
 		{"creación fallida", ports.AccionProxmoxCrearVM, ports.TareaFailed, "unable to create VM", false},
 		{"acción operativa", "start", ports.TareaCompleted, "OK", false},
 		{"completed sin éxito Proxmox", ports.AccionCrearLXC, ports.TareaCompleted, "error", false},

@@ -237,7 +237,7 @@ func TestCreacionNoAsignaPermisoCuandoFalla(t *testing.T) {
 	}
 }
 
-func TestCreacionConAdvertenciasTambienAutoasignaPermiso(t *testing.T) {
+func TestCreacionConAdvertenciasNoAutoasignaPermiso(t *testing.T) {
 	db, usuario, _ := baseRF08(t)
 	repo, ctx := postgres.NewTareaRepository(db), context.Background()
 	tarea := nuevaTareaRF08(usuario, ports.AccionProxmoxCrearLXC)
@@ -249,9 +249,12 @@ func TestCreacionConAdvertenciasTambienAutoasignaPermiso(t *testing.T) {
 	if err := repo.ActualizarEstado(ctx, tarea.ID, ports.TareaCompleted, cierre, services.NewAuditService(nil).PrepararAuditoriaTarea(tarea, cierre, time.Now())); err != nil {
 		t.Fatal(err)
 	}
-	var permiso domain.PermisoInstancia
-	if err := db.Where("usuario_id = ? AND vmid_proxmox = ?", usuario, 221).First(&permiso).Error; err != nil {
-		t.Fatalf("la creación completada con advertencias debe ser visible: %v", err)
+	var cantidad int64
+	if err := db.Model(&domain.PermisoInstancia{}).Where("usuario_id = ? AND vmid_proxmox = ?", usuario, 221).Count(&cantidad).Error; err != nil {
+		t.Fatal(err)
+	}
+	if cantidad != 0 {
+		t.Fatal("una creación sin exitstatus OK no debe recibir permisos")
 	}
 }
 

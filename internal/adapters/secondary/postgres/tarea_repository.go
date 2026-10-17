@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
-	"strings"
 
 	"el-centinela/internal/core/domain"
 	"el-centinela/internal/core/ports"
@@ -38,7 +37,7 @@ func (r *TareaRepository) Crear(ctx context.Context, tarea *domain.TareaAsincron
 }
 
 // ActualizarEstado guarda el estado final de la tarea y sus metadatos (JSONB).
-// Para una creación que Proxmox dio por completada (OK o WARNINGS), la misma
+// Para una creación que Proxmox dio por completada con exitstatus OK, la misma
 // transacción otorga FULL_ACCESS al usuario creador. Así nunca queda una tarea
 // COMPLETED sin su permiso, ni se publica TASK_FINISHED antes de que el
 // inventario sea visible.
@@ -83,7 +82,7 @@ func (r *TareaRepository) ActualizarEstado(ctx context.Context, id uuid.UUID, es
 func debeAsignarPermisoCreacion(tarea domain.TareaAsincrona, estado string, metadatos map[string]any) bool {
 	_, esCreacion := ports.TipoRecursoCreacion(tarea.Accion)
 	exitstatus, _ := metadatos["exitstatus"].(string)
-	exitoProxmox := exitstatus == "OK" || strings.HasPrefix(exitstatus, "WARNINGS")
+	exitoProxmox := exitstatus == "OK"
 	return esCreacion && estado == ports.TareaCompleted && exitoProxmox
 }
 
