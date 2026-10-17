@@ -2048,9 +2048,9 @@ paths:
         del storage, y registra una reserva temporal. Luego obtiene el VMID mediante
         `/cluster/nextid`, despacha la creación QEMU o LXC y solo responde 202 con
         vmid, tareaId y upid después de persistir la tarea RUNNING y su auditoría
-        inicial. El resultado llega por TASK_FINISHED con accion CREATE; al completar
-        correctamente (OK o WARNINGS), el creador recibe FULL_ACCESS y se vuelve a
-        invalidar la capacidad.
+        inicial. El resultado llega por TASK_FINISHED con accion CREATE; cuando Proxmox
+        finaliza con exitstatus OK, el creador recibe FULL_ACCESS y se vuelve a invalidar
+        la capacidad.
       parameters:
       - description: Configuración de la instancia
         in: body
