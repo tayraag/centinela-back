@@ -263,6 +263,9 @@ func (h *InstanceHandler) validarEstadoParaAccion(c *gin.Context, vmid int, acci
 func mapearErrorProxmox(c *gin.Context, err error) {
 	ruta := c.Request.Method + " " + c.Request.URL.Path
 	switch {
+	case errors.Is(err, ports.ErrVerificacionPostConfig):
+		log.Printf("⚠️  Configuración aplicada sin verificación posterior [%s]: %v", ruta, err)
+		SendError(c, http.StatusBadGateway, "CONFIG_APPLIED_VERIFICATION_FAILED", "Proxmox aceptó la configuración, pero no pudo verificarse si requiere reinicio. Verifique el estado antes de reintentar.")
 	case errors.Is(err, ports.ErrInstanciaNoEncontrada):
 		SendError(c, http.StatusNotFound, "INSTANCE_NOT_FOUND", "La instancia no existe en Proxmox.")
 	case errors.Is(err, ports.ErrInstanciaOcupada):
@@ -473,6 +476,9 @@ func (h *InstanceHandler) CrearInstancia(c *gin.Context) {
 	metadatos := map[string]any{
 		"instanciaNombre": input.Nombre,
 		"resource_type":   input.Tipo,
+		"cores":           input.Cores,
+		"ramMb":           input.MemoriaMB,
+		"discoGb":         input.DiscoGB,
 		"reserva_id":      resultado.ReservaID,
 	}
 	tareaID, err := h.seguimiento.Seguir(c.Request.Context(), extraerUserID(c), resultado.VMID, resultado.Accion, resultado.UPID, metadatos)

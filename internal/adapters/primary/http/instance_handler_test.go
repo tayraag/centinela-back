@@ -208,11 +208,17 @@ func (m *mockTareaRepository) BuscarTareasActivasPorVmids(context.Context, []int
 
 type mockAuditService struct {
 	ports.AuditService
-	registros []ports.RegistrarAuditoriaInput
+	registros    []ports.RegistrarAuditoriaInput
+	errRegistrar error
 }
 
 func (m *mockAuditService) Registrar(_ context.Context, input ports.RegistrarAuditoriaInput) {
 	m.registros = append(m.registros, input)
+}
+
+func (m *mockAuditService) RegistrarEstricto(_ context.Context, input ports.RegistrarAuditoriaInput) error {
+	m.registros = append(m.registros, input)
+	return m.errRegistrar
 }
 
 // ultimo devuelve el último registro de auditoría capturado.
@@ -308,7 +314,9 @@ func TestCrearInstancia_RegistraOrdenRealEnSeguimiento(t *testing.T) {
 	if seguimiento.llamadas != 1 || seguimiento.usuarioID != usuarioID || seguimiento.vmid != 502 || seguimiento.accion != ports.AccionProxmoxCrearLXC || seguimiento.upid != upid {
 		t.Fatalf("orden no registrada correctamente: %+v", seguimiento)
 	}
-	if seguimiento.metadatos["resource_type"] != ports.TipoInstanciaLXC || seguimiento.metadatos["instanciaNombre"] != "db-cache" || seguimiento.metadatos["reserva_id"] != "reserva-502" {
+	if seguimiento.metadatos["resource_type"] != ports.TipoInstanciaLXC || seguimiento.metadatos["instanciaNombre"] != "db-cache" ||
+		seguimiento.metadatos["cores"] != 1 || seguimiento.metadatos["ramMb"] != 1024 || seguimiento.metadatos["discoGb"] != 10 ||
+		seguimiento.metadatos["reserva_id"] != "reserva-502" {
 		t.Fatalf("metadatos de creación incorrectos: %v", seguimiento.metadatos)
 	}
 	var respuesta map[string]any
