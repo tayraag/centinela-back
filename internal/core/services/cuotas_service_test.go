@@ -254,6 +254,24 @@ func TestCuotas_UsaLockDistribuidoEspecificadoYLiberacionSegura(t *testing.T) {
 	}
 }
 
+func TestCuotas_NoRetieneLockMientrasProxmoxProcesaElUPID(t *testing.T) {
+	px := &proxmoxAprovisionamiento{}
+	base := memoria.Nuevo()
+	store := &storeLockObservado{KeyValueStore: base}
+	svc := services.NewCuotasService(px, px, store)
+
+	resultado, err := svc.AprovisionarInstancia(context.Background(), inputCreacion(512, 1, 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resultado.UPID == "" {
+		t.Fatal("Proxmox debía devolver un UPID para el seguimiento asíncrono")
+	}
+	if _, err := base.Get(context.Background(), "lock:instance:provisioning"); !errors.Is(err, ports.ErrClaveNoEncontrada) {
+		t.Fatalf("el lock de aprovisionamiento no debe sobrevivir al despacho del UPID: %v", err)
+	}
+}
+
 type storeLockOcupado struct{ ports.KeyValueStore }
 
 func (s storeLockOcupado) AcquireLock(context.Context, string, time.Duration) (func(context.Context) error, error) {

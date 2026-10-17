@@ -531,6 +531,9 @@ func TestListarInstancias_OperatorVisualizaSoloAsignadas(t *testing.T) {
 	if res[0].ID != 101 {
 		t.Errorf("Se esperaba la instancia 101, pero se recibió id=%d", res[0].ID)
 	}
+	if res[0].NivelAcceso != ports.NivelAccesoFullAccess {
+		t.Errorf("nivelAcceso = %q, se esperaba FULL_ACCESS", res[0].NivelAcceso)
+	}
 }
 
 func TestListarInstancias_ProxmoxInaccesible(t *testing.T) {
