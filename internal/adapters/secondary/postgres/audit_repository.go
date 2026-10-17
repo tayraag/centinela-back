@@ -33,10 +33,11 @@ func (r *auditRepositoryImpl) Registrar(ctx context.Context, input ports.Registr
 	var detallesPtr *string
 	if len(input.Detalles) > 0 {
 		b, err := json.Marshal(input.Detalles)
-		if err == nil {
-			s := string(b)
-			detallesPtr = &s
+		if err != nil {
+			return fmt.Errorf("error al serializar detalles de auditoría: %w", err)
 		}
+		s := string(b)
+		detallesPtr = &s
 	}
 
 	var usuarioIDPtr *uuid.UUID
@@ -49,12 +50,31 @@ func (r *auditRepositoryImpl) Registrar(ctx context.Context, input ports.Registr
 		Accion:          input.Accion,
 		InstanciaID:     input.InstanciaID,
 		InstanciaNombre: input.InstanciaNombre,
+		RecursoTipo:     input.RecursoTipo,
+		RecursoID:       input.RecursoID,
+		Upid:            input.Upid,
 		Resultado:       input.Resultado,
 		Detalles:        detallesPtr,
 		FechaHora:       time.Now(),
 	}
 
-	if err := r.db.WithContext(ctx).Create(&registro).Error; err != nil {
+	query := r.db.WithContext(ctx)
+	// Compatibilidad durante un rolling deploy: los eventos sin UPID pueden
+	// seguir insertándose antes de que la instancia nueva ejecute la migración.
+	omitir := make([]string, 0, 3)
+	if input.Upid == "" {
+		omitir = append(omitir, "Upid")
+	}
+	if input.RecursoTipo == "" {
+		omitir = append(omitir, "RecursoTipo")
+	}
+	if input.RecursoID == "" {
+		omitir = append(omitir, "RecursoID")
+	}
+	if len(omitir) > 0 {
+		query = query.Omit(omitir...)
+	}
+	if err := query.Create(&registro).Error; err != nil {
 		return fmt.Errorf("error al insertar registro de auditoría: %w", err)
 	}
 	return nil
@@ -115,9 +135,9 @@ func (r *auditRepositoryImpl) Listar(ctx context.Context, orgID uuid.UUID, filtr
 		if nombreUsuario == "" {
 			nombreUsuario = "[usuario eliminado]"
 		}
-		detalles := ""
+		var detalles json.RawMessage
 		if row.Auditoria.Detalles != nil {
-			detalles = *row.Auditoria.Detalles
+			detalles = json.RawMessage([]byte(*row.Auditoria.Detalles))
 		}
 		items[i] = ports.AuditoriaDTO{
 			ID:              row.Auditoria.ID,
@@ -127,6 +147,9 @@ func (r *auditRepositoryImpl) Listar(ctx context.Context, orgID uuid.UUID, filtr
 			Accion:          row.Auditoria.Accion,
 			InstanciaID:     row.Auditoria.InstanciaID,
 			InstanciaNombre: row.Auditoria.InstanciaNombre,
+			RecursoTipo:     row.Auditoria.RecursoTipo,
+			RecursoID:       row.Auditoria.RecursoID,
+			Upid:            row.Auditoria.Upid,
 			Resultado:       row.Auditoria.Resultado,
 			Detalles:        detalles,
 		}
@@ -171,9 +194,9 @@ func (r *auditRepositoryImpl) ExportarRegistros(ctx context.Context, orgID uuid.
 		if nombreUsuario == "" {
 			nombreUsuario = "[usuario eliminado]"
 		}
-		detalles := ""
+		var detalles json.RawMessage
 		if row.Auditoria.Detalles != nil {
-			detalles = *row.Auditoria.Detalles
+			detalles = json.RawMessage([]byte(*row.Auditoria.Detalles))
 		}
 		items[i] = ports.AuditoriaDTO{
 			ID:              row.Auditoria.ID,
@@ -183,6 +206,9 @@ func (r *auditRepositoryImpl) ExportarRegistros(ctx context.Context, orgID uuid.
 			Accion:          row.Auditoria.Accion,
 			InstanciaID:     row.Auditoria.InstanciaID,
 			InstanciaNombre: row.Auditoria.InstanciaNombre,
+			RecursoTipo:     row.Auditoria.RecursoTipo,
+			RecursoID:       row.Auditoria.RecursoID,
+			Upid:            row.Auditoria.Upid,
 			Resultado:       row.Auditoria.Resultado,
 			Detalles:        detalles,
 		}

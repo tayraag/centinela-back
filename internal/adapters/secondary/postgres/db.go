@@ -246,6 +246,9 @@ func migrarAuditoriaParticionada(db *gorm.DB) error {
 				accion           VARCHAR(100) NOT NULL,
 				instancia_id     VARCHAR(100),
 				instancia_nombre VARCHAR(255),
+				resource_type     VARCHAR(30),
+				resource_id       VARCHAR(100),
+				upid             VARCHAR(255),
 				resultado        VARCHAR(50)  NOT NULL,
 				detalles         JSONB,
 				fecha_hora       TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
@@ -255,6 +258,17 @@ func migrarAuditoriaParticionada(db *gorm.DB) error {
 			return fmt.Errorf("error al crear tabla auditoria particionada: %w", err)
 		}
 		log.Println("🗂️  Tabla auditoria creada con particionamiento declarativo RANGE (fecha_hora)")
+	}
+	// RF-08: instalaciones ya migradas también reciben el campo de correlación.
+	// En PostgreSQL, agregarlo a la madre lo propaga a todas sus particiones.
+	if err := db.Exec(`ALTER TABLE auditoria ADD COLUMN IF NOT EXISTS upid VARCHAR(255)`).Error; err != nil {
+		return fmt.Errorf("error al agregar UPID a auditoria: %w", err)
+	}
+	if err := db.Exec(`ALTER TABLE auditoria ADD COLUMN IF NOT EXISTS resource_type VARCHAR(30)`).Error; err != nil {
+		return fmt.Errorf("error al agregar resource_type a auditoria: %w", err)
+	}
+	if err := db.Exec(`ALTER TABLE auditoria ADD COLUMN IF NOT EXISTS resource_id VARCHAR(100)`).Error; err != nil {
+		return fmt.Errorf("error al agregar resource_id a auditoria: %w", err)
 	}
 
 	// 2. Crear particiones trimestrales e idempotentes.
@@ -297,7 +311,7 @@ func migrarAuditoriaParticionada(db *gorm.DB) error {
 
 	if legacyExiste > 0 {
 		log.Println("🔄 Traspasando historial desde auditoria_legacy hacia la nueva tabla particionada auditoria...")
-		
+
 		// Traspaso y borrado de la legacy en una sola transacción: si el volcado
 		// falla, la legacy queda intacta. db.Transaction (no db.Begin) funciona
 		// también si db ya es una transacción (usa un savepoint), como en los tests.
@@ -328,7 +342,7 @@ func migrarAuditoriaParticionada(db *gorm.DB) error {
 // trimestre en curso y del siguiente, evitando que los registros caigan en la default.
 func asegurarParticionesFuturas(db *gorm.DB) error {
 	ahora := time.Now()
-	qActual := int((ahora.Month() - 1) / 3 + 1)
+	qActual := int((ahora.Month()-1)/3 + 1)
 	yActual := ahora.Year()
 
 	qSiguiente := qActual + 1
@@ -347,7 +361,7 @@ func asegurarParticionesFuturas(db *gorm.DB) error {
 	}
 
 	for _, t := range trimestres {
-		mesInicio := time.Month((t.q - 1) * 3 + 1)
+		mesInicio := time.Month((t.q-1)*3 + 1)
 		fechaInicio := time.Date(t.year, mesInicio, 1, 0, 0, 0, 0, time.UTC)
 		fechaFin := fechaInicio.AddDate(0, 3, 0)
 
@@ -363,7 +377,7 @@ func asegurarParticionesFuturas(db *gorm.DB) error {
 			return fmt.Errorf("error al asegurar partición futura %s: %w", nombreParticion, err)
 		}
 	}
-	
+
 	log.Println("📅 Particiones trimestrales dinámicas aseguradas (actual y próximo)")
 	return nil
 }

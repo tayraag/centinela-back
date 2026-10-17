@@ -33,10 +33,19 @@ func NewAuditService(repo ports.AuditRepository) ports.AuditService {
 // Registrar inserta un registro de auditoría de forma inmutable.
 // En caso de error, solo lo loguea — no interrumpe la operación principal (fallo silencioso).
 func (s *auditServiceImpl) Registrar(ctx context.Context, input ports.RegistrarAuditoriaInput) {
-	if err := s.repo.Registrar(ctx, input); err != nil {
+	if err := s.RegistrarEstricto(ctx, input); err != nil {
 		log.Printf("[AUDIT] error al registrar auditoría | usuario=%s | accion=%s | error=%v",
 			input.UsuarioID, input.Accion, err)
 	}
+}
+
+// RegistrarEstricto confirma la escritura de auditoría al llamador. A diferencia
+// de Registrar, no oculta los errores de persistencia.
+func (s *auditServiceImpl) RegistrarEstricto(ctx context.Context, input ports.RegistrarAuditoriaInput) error {
+	if err := s.repo.Registrar(ctx, input); err != nil {
+		return fmt.Errorf("no se pudo persistir la auditoría %s: %w", input.Accion, err)
+	}
+	return nil
 }
 
 // ==========================================
@@ -89,7 +98,7 @@ func (s *auditServiceImpl) ExportarCSV(ctx context.Context, orgID uuid.UUID, fil
 	// Encabezados
 	if err := w.Write([]string{
 		"ID", "UsuarioID", "NombreUsuario", "FechaHora",
-		"Accion", "InstanciaID", "InstanciaNombre", "Resultado", "Detalles",
+		"Accion", "InstanciaID", "InstanciaNombre", "ResourceType", "ResourceID", "UPID", "Resultado", "Detalles",
 	}); err != nil {
 		return nil, fmt.Errorf("error al escribir encabezados CSV: %w", err)
 	}
@@ -108,8 +117,11 @@ func (s *auditServiceImpl) ExportarCSV(ctx context.Context, orgID uuid.UUID, fil
 			r.Accion,
 			r.InstanciaID,
 			r.InstanciaNombre,
+			r.RecursoTipo,
+			r.RecursoID,
+			r.Upid,
 			r.Resultado,
-			r.Detalles,
+			string(r.Detalles),
 		}
 		if err := w.Write(row); err != nil {
 			return nil, fmt.Errorf("error al escribir fila CSV: %w", err)
@@ -143,17 +155,19 @@ func (s *auditServiceImpl) ExportarJSON(ctx context.Context, orgID uuid.UUID, fi
 	return data, nil
 }
 
-// PrepararAuditoriaTarea construye ambos registros RF-08. UPID permanece en el JSONB
-// existente: no requiere agregar columnas a la tabla particionada.
-// Un cierre sin exitstatus OK se audita FAILED, incluso si Proxmox informa
-// advertencias que el contrato de tareas/SSE considera COMPLETED.
+// PrepararAuditoriaTarea construye los registros append-only de despacho y
+// desenlace. Las creaciones se unifican como CREATE_INSTANCE y correlacionan
+// ambos registros mediante la columna UPID.
 func (s *auditServiceImpl) PrepararAuditoriaTarea(t *domain.TareaAsincrona, cierre map[string]any, ahora time.Time) ports.RegistrarAuditoriaInput {
 	acciones := map[string]string{
 		"start": ports.AccionIniciarVM, "stop": ports.AccionDetenerVM,
 		"shutdown": ports.AccionApagarVM, "reboot": ports.AccionReiniciarVM, "delete": ports.AccionEliminarVM,
-		ports.AccionProxmoxCrearVM: ports.AccionCrearVM, ports.AccionProxmoxCrearLXC: ports.AccionCrearLXC,
 	}
 	accion := acciones[strings.ToLower(t.Accion)]
+	recursoTipo, esCreacion := ports.TipoRecursoCreacion(t.Accion)
+	if esCreacion {
+		accion = ports.AccionCrearInstancia
+	}
 	if accion == "" {
 		accion = t.Accion
 	}
@@ -162,6 +176,35 @@ func (s *auditServiceImpl) PrepararAuditoriaTarea(t *domain.TareaAsincrona, cier
 		_ = json.Unmarshal([]byte(*t.Metadatos), &meta)
 	}
 	nombre, _ := meta["instanciaNombre"].(string)
+	if esCreacion {
+		detalles := map[string]any{"tareaId": t.ID.String()}
+		resultado := ports.ResultadoPendiente
+		if cierre == nil {
+			detalles["nombre"] = nombre
+			detalles["tipo"] = meta["resource_type"]
+			detalles["cores"] = meta["cores"]
+			detalles["ramMb"] = meta["ramMb"]
+			detalles["discoGb"] = meta["discoGb"]
+		} else {
+			resultado = ports.ResultadoFailed
+			if cierre["exitstatus"] == "OK" && cierre["motivo"] == nil {
+				resultado = ports.ResultadoSuccess
+			}
+			detalles["exitstatus"] = cierre["exitstatus"]
+			detalles["duracionSegundos"] = max(0, ahora.Sub(t.FechaCreacion).Seconds())
+			if motivo := cierre["motivo"]; motivo != nil {
+				detalles["motivo"] = motivo
+			}
+			if err := cierre["error"]; err != nil {
+				detalles["error"] = err
+			}
+		}
+		return ports.RegistrarAuditoriaInput{
+			UsuarioID: t.UsuarioID, Accion: accion, InstanciaID: t.InstanciaID,
+			InstanciaNombre: nombre, RecursoTipo: recursoTipo, RecursoID: t.InstanciaID,
+			Upid: t.UpidProxmox, Resultado: resultado, Detalles: detalles,
+		}
+	}
 	detalles := map[string]any{
 		"upid": t.UpidProxmox, "tareaId": t.ID.String(), "instanciaNombre": nombre,
 	}
@@ -186,6 +229,6 @@ func (s *auditServiceImpl) PrepararAuditoriaTarea(t *domain.TareaAsincrona, cier
 	}
 	return ports.RegistrarAuditoriaInput{
 		UsuarioID: t.UsuarioID, Accion: accion, InstanciaID: t.InstanciaID,
-		InstanciaNombre: nombre, Resultado: resultado, Detalles: detalles,
+		InstanciaNombre: nombre, Upid: t.UpidProxmox, Resultado: resultado, Detalles: detalles,
 	}
 }
