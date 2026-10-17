@@ -296,7 +296,7 @@ func TestSeguimiento_CreacionNormalizaEventoYConservaContexto(t *testing.T) {
 			if ev.Detalles["accion"] != "CREATE" || ev.Detalles["estado"] != ports.TareaCompleted {
 				t.Fatalf("detalles de creación incorrectos: %+v", ev.Detalles)
 			}
-			if ev.Mensaje != "La tarea de creación finalizó correctamente" {
+			if ev.Mensaje != "La creación de la instancia finalizó exitosamente" {
 				t.Fatalf("mensaje de creación incorrecto: %q", ev.Mensaje)
 			}
 
@@ -307,6 +307,51 @@ func TestSeguimiento_CreacionNormalizaEventoYConservaContexto(t *testing.T) {
 				t.Fatalf("la tarea no conservó creador y VMID reservado: %+v", persistida)
 			}
 		})
+	}
+}
+
+func TestSeguimiento_CreacionFallidaEmiteErrorDeProxmox(t *testing.T) {
+	id, repo, ev := seguirTarea(t, &proxmoxTareas{exitStatus: "unable to create VM", tipo: ports.TipoInstanciaLXC}, ports.AccionProxmoxCrearLXC)
+
+	if repo.estado(id) != ports.TareaFailed {
+		t.Fatalf("una creación sin exitstatus OK debe quedar FAILED, quedó %s", repo.estado(id))
+	}
+	if ev.Tipo != ports.EventoTareaFinalizada || ev.RecursoTipo != ports.RecursoLXC || ev.Detalles["accion"] != "CREATE" {
+		t.Fatalf("evento de creación fallida incorrecto: %+v", ev)
+	}
+	if ev.Detalles["estado"] != ports.TareaFailed || ev.Detalles["motivo"] != ports.MotivoProxmoxError ||
+		ev.Detalles["exitstatus"] != "unable to create VM" || ev.Detalles["error"] != "unable to create VM" {
+		t.Fatalf("detalles de creación fallida incorrectos: %+v", ev.Detalles)
+	}
+}
+
+func TestSeguimiento_CreacionVencidaEmiteTimeout(t *testing.T) {
+	repo := &tareasEnMemoria{tareas: map[uuid.UUID]*domain.TareaAsincrona{}}
+	pub := &publicadorFalso{publicados: make(chan ports.RealtimeEvent, 1)}
+	seg := services.NewSeguimientoTareas(&proxmoxTareas{vueltas: 1000, tipo: ports.TipoInstanciaQemu}, repo, services.NewAuditService(nil), services.ConfigSeguimiento{
+		Intervalo:   5 * time.Millisecond,
+		UpidTimeout: 15 * time.Millisecond,
+		OnTaskFinished: func(ctx context.Context, tarea *domain.TareaAsincrona, recursoTipo string, r services.ResultadoTarea) {
+			_ = pub.Publicar(ctx, services.EventoTareaFinalizada(tarea, recursoTipo, r))
+		},
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	seg.Iniciar(ctx)
+
+	id, err := seg.Seguir(context.Background(), uuid.New(), 112, ports.AccionProxmoxCrearVM, "UPID:pve1:qmcreate:112")
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case ev := <-pub.publicados:
+		if repo.estado(id) != ports.TareaFailed || ev.Detalles["accion"] != "CREATE" ||
+			ev.Detalles["estado"] != ports.TareaFailed || ev.Detalles["motivo"] != ports.MotivoTimeout ||
+			ev.Detalles["exitstatus"] != nil || ev.Detalles["error"] == nil {
+			t.Fatalf("TASK_FINISHED de timeout incorrecto: %+v", ev)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("no se publicó TASK_FINISHED para la creación vencida")
 	}
 }
 

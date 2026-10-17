@@ -59,14 +59,16 @@ func completadaConAdvertencias(exitStatus string) ResultadoTarea {
 
 // clasificarExitStatus traduce el exitstatus de Proxmox al desenlace de la tarea:
 //   - "OK": completada sin observaciones.
-//   - "WARNINGS: N": completada con advertencias (p. ej. "WARN: Systemd 257
-//     detected. You may need to enable nesting."); Proxmox la considera exitosa.
+//   - "WARNINGS: N": completada con advertencias para acciones operativas.
+//     En aprovisionamiento el contrato RF-07/RF-11 exige exitstatus exactamente
+//     "OK", por lo que una creación con advertencias se cierra como FAILED y no
+//     obtiene permisos.
 //   - cualquier otro valor: el texto del error que reportó Proxmox.
-func clasificarExitStatus(exitStatus string) ResultadoTarea {
+func clasificarExitStatus(accion, exitStatus string) ResultadoTarea {
 	if exitStatus == "OK" {
 		return completada()
 	}
-	if strings.HasPrefix(exitStatus, "WARNINGS") {
+	if _, creacion := ports.TipoRecursoCreacion(accion); !creacion && strings.HasPrefix(exitStatus, "WARNINGS") {
 		return completadaConAdvertencias(exitStatus)
 	}
 	return falloProxmox(exitStatus)
@@ -358,7 +360,7 @@ func (p *PoolSeguimiento) verificarUnaVez(t *TareaSeguimiento) {
 	resultado, err := p.proxmox.EstadoTarea(ctx, t.Tarea.UpidProxmox)
 	switch {
 	case err == nil && resultado.Terminada:
-		p.finalizar(t, clasificarExitStatus(resultado.ExitStatus))
+		p.finalizar(t, clasificarExitStatus(t.Tarea.Accion, resultado.ExitStatus))
 	default:
 		if err != nil {
 			log.Printf("[TAREAS] la tarea %s superó %s y Proxmox no respondió: %v", t.Tarea.ID, p.cfg.VentanaRecuperacion, err)
@@ -408,7 +410,7 @@ func (p *PoolSeguimiento) consultar(t *TareaSeguimiento) {
 	resultado, err := p.proxmox.EstadoTarea(ctx, t.Tarea.UpidProxmox)
 	switch {
 	case err == nil && resultado.Terminada:
-		p.finalizar(t, clasificarExitStatus(resultado.ExitStatus))
+		p.finalizar(t, clasificarExitStatus(t.Tarea.Accion, resultado.ExitStatus))
 		return
 	case err != nil:
 		t.intentosFallo++
@@ -509,7 +511,8 @@ func (p *PoolSeguimiento) reconciliar() {
 // EventoTareaFinalizada arma el TASK_FINISHED de docs/contrato-eventos.md.
 func EventoTareaFinalizada(tarea *domain.TareaAsincrona, recursoTipo string, r ResultadoTarea) ports.RealtimeEvent {
 	nombre := nombresAccion[tarea.Accion]
-	if _, creacion := ports.TipoRecursoCreacion(tarea.Accion); creacion {
+	_, creacion := ports.TipoRecursoCreacion(tarea.Accion)
+	if creacion {
 		nombre = "creación"
 	}
 	if nombre == "" {
@@ -521,6 +524,9 @@ func EventoTareaFinalizada(tarea *domain.TareaAsincrona, recursoTipo string, r R
 	severidad, mensaje := ports.SeveridadInfo, fmt.Sprintf("La tarea de %s finalizó correctamente", nombre)
 	if r.Estado != ports.TareaCompleted {
 		severidad, mensaje = ports.SeveridadWarning, fmt.Sprintf("La tarea de %s falló", nombre)
+	}
+	if creacion && r.Estado == ports.TareaCompleted {
+		mensaje = "La creación de la instancia finalizó exitosamente"
 	}
 	// NewRealtimeEvent solo falla con tipo/severidad/mensaje inválidos, y acá son constantes.
 	evento, _ := ports.NewRealtimeEvent(ports.EventoTareaFinalizada, severidad, mensaje)
