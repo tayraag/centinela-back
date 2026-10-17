@@ -19,12 +19,14 @@ const mib = int64(1024 * 1024)
 // pendiente (la config en uso no cambia), como en una VM QEMU.
 type proxmoxConfigFalso struct {
 	proxmoxTareas
-	mu       sync.Mutex
-	inst     ports.InstanciaProxmoxDTO
-	enUso    ports.ConfigInstanciaDTO
-	hotplug  bool
-	puts     int
-	digestPU string
+	mu                    sync.Mutex
+	inst                  ports.InstanciaProxmoxDTO
+	enUso                 ports.ConfigInstanciaDTO
+	hotplug               bool
+	puts                  int
+	digestPU              string
+	lecturasEnUso         int
+	errorLecturaPosterior error
 }
 
 func (p *proxmoxConfigFalso) ObtenerInstancia(context.Context, int) (*ports.InstanciaProxmoxDTO, error) {
@@ -37,6 +39,12 @@ func (p *proxmoxConfigFalso) ObtenerInstancia(context.Context, int) (*ports.Inst
 func (p *proxmoxConfigFalso) ObtenerConfig(_ context.Context, _, _ string, _ int, enUso bool) (*ports.ConfigInstanciaDTO, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if enUso {
+		p.lecturasEnUso++
+		if p.lecturasEnUso > 1 && p.errorLecturaPosterior != nil {
+			return nil, p.errorLecturaPosterior
+		}
+	}
 	c := p.enUso
 	c.Digest = "digest-actual"
 	return &c, nil
@@ -94,6 +102,9 @@ func TestReconfigurar_ApagadaNoRequiereReinicio(t *testing.T) {
 	if res.Anterior.Cores != 2 || res.Anterior.MemoriaMB != 2048 {
 		t.Errorf("Debe informar la config anterior: %+v", res.Anterior)
 	}
+	if res.Solicitada.Cores != 4 || res.Solicitada.MemoriaMB != 4096 || res.RecursoTipo != ports.RecursoVM {
+		t.Errorf("Debe informar la configuración nueva completa y el tipo: %+v", res)
+	}
 }
 
 func TestReconfigurar_EncendidaSinHotplugRequiereReinicio(t *testing.T) {
@@ -101,6 +112,9 @@ func TestReconfigurar_EncendidaSinHotplugRequiereReinicio(t *testing.T) {
 	res, err := services.NewConfiguracionInstancias(px, &ampliadorFalso{}).Reconfigurar(context.Background(), 110, 0, 4096)
 	if err != nil || !res.RequiresReboot {
 		t.Fatalf("Encendida y con el cambio pendiente: requiresReboot debe ser true: %+v %v", res, err)
+	}
+	if res.Solicitada.Cores != 2 || res.Solicitada.MemoriaMB != 4096 {
+		t.Fatalf("El recurso omitido debe conservar su valor anterior: %+v", res.Solicitada)
 	}
 }
 
@@ -110,6 +124,18 @@ func TestReconfigurar_EncendidaConHotplugNoRequiereReinicio(t *testing.T) {
 	res, err := services.NewConfiguracionInstancias(px, &ampliadorFalso{}).Reconfigurar(context.Background(), 110, 4, 4096)
 	if err != nil || res.RequiresReboot {
 		t.Fatalf("Aplicado en caliente: requiresReboot debe ser false: %+v %v", res, err)
+	}
+}
+
+func TestReconfigurar_FalloDeLecturaPosteriorConservaQueElPUTFueAplicado(t *testing.T) {
+	px := vmConfig("running", 2, 2048)
+	px.errorLecturaPosterior = errors.New("falló GET config/current")
+	res, err := services.NewConfiguracionInstancias(px, &ampliadorFalso{}).Reconfigurar(context.Background(), 110, 4, 4096)
+	if !errors.Is(err, ports.ErrVerificacionPostConfig) {
+		t.Fatalf("se esperaba ErrVerificacionPostConfig, vino %v", err)
+	}
+	if res == nil || !res.Aplicada || !res.VerificacionPendiente || px.puts != 1 {
+		t.Fatalf("debe distinguir PUT aplicado de verificación fallida: resultado=%+v puts=%d", res, px.puts)
 	}
 }
 
@@ -134,8 +160,12 @@ func TestReconfigurar_ValidaSoloElIncremento(t *testing.T) {
 func TestReconfigurar_SinMargenNoEscribeEnProxmox(t *testing.T) {
 	px := vmConfig("running", 2, 2048)
 	cuotas := &ampliadorFalso{rechazo: ports.ErrRecursosInsuficientes}
-	if _, err := services.NewConfiguracionInstancias(px, cuotas).Reconfigurar(context.Background(), 110, 2, 65536); !errors.Is(err, ports.ErrRecursosInsuficientes) {
+	resultado, err := services.NewConfiguracionInstancias(px, cuotas).Reconfigurar(context.Background(), 110, 2, 65536)
+	if !errors.Is(err, ports.ErrRecursosInsuficientes) {
 		t.Fatalf("Se esperaba ErrRecursosInsuficientes, vino %v", err)
+	}
+	if resultado == nil || resultado.Anterior.MemoriaMB != 2048 || resultado.Solicitada.MemoriaMB != 65536 {
+		t.Fatalf("El rechazo debe conservar el diferencial para auditoría: %+v", resultado)
 	}
 	if px.puts != 0 {
 		t.Errorf("Sin margen no debe haber PUT /config en Proxmox: %d", px.puts)

@@ -52,7 +52,8 @@ type ConfigInstanciaResponse struct {
 // @Failure      403 {object} ErrorResponse "INSTANCE_ACCESS_DENIED — se requiere FULL_ACCESS (READ_ONLY no alcanza) | INSTANCE_PROTECTED — infraestructura de El Centinela"
 // @Failure      404 {object} ErrorResponse "INSTANCE_NOT_FOUND"
 // @Failure      409 {object} ErrorResponse "RESOURCE_QUOTA_EXCEEDED — el incremento supera el margen del nodo; no se escribió en Proxmox | INSTANCE_BUSY — otra operación en curso o la config cambió en el medio"
-// @Failure      502 {object} ErrorResponse "PROXMOX_UNAVAILABLE"
+// @Failure      500 {object} ErrorResponse "AUDIT_PERSISTENCE_FAILED — la operación terminó, pero PostgreSQL no pudo confirmar su auditoría; verificar el estado antes de reintentar"
+// @Failure      502 {object} ErrorResponse "PROXMOX_UNAVAILABLE | CONFIG_APPLIED_VERIFICATION_FAILED — Proxmox aceptó el cambio, pero no se pudo determinar si requiere reinicio"
 // @Failure      503 {object} ErrorResponse "INSTANCE_LOCK_UNAVAILABLE | PROVISIONING_COORDINATION_UNAVAILABLE — no se pudo coordinar la validación de capacidad"
 // @Failure      504 {object} ErrorResponse "PROXMOX_TIMEOUT"
 // @Router       /instances/{vmid}/config [put]
@@ -88,15 +89,26 @@ func (h *InstanceConfigHandler) ActualizarConfig(c *gin.Context) {
 
 	resultado, err := h.servicio.Reconfigurar(c.Request.Context(), vmid, cores, ramMb)
 	if err != nil {
-		h.auditar(c, vmid, ports.ResultadoFalla, map[string]any{"cores": cores, "ramMb": ramMb, "error": err.Error()})
+		resultadoAuditoria := ports.ResultadoFailed
+		aplicada := resultado != nil && resultado.Aplicada
+		if aplicada {
+			resultadoAuditoria = ports.ResultadoSuccess
+		}
+		if auditErr := h.auditar(c, vmid, resultadoAuditoria, detallesReconfiguracion(vmid, resultado, cores, ramMb, err)); auditErr != nil {
+			mensaje := "La reconfiguración falló y no pudo persistirse su auditoría. El estado de la instancia debe verificarse antes de reintentar."
+			if aplicada {
+				mensaje = "La configuración fue aplicada, pero no pudieron confirmarse su verificación ni su auditoría. Verifique el estado antes de reintentar."
+			}
+			SendError(c, http.StatusInternalServerError, "AUDIT_PERSISTENCE_FAILED", mensaje)
+			return
+		}
 		mapearErrorProxmox(c, err)
 		return
 	}
-	h.auditar(c, vmid, ports.ResultadoExito, map[string]any{
-		"antes":          map[string]any{"cores": resultado.Anterior.Cores, "ramMb": resultado.Anterior.MemoriaMB},
-		"solicitado":     map[string]any{"cores": cores, "ramMb": ramMb},
-		"requiresReboot": resultado.RequiresReboot,
-	})
+	if auditErr := h.auditar(c, vmid, ports.ResultadoSuccess, detallesReconfiguracion(vmid, resultado, cores, ramMb, nil)); auditErr != nil {
+		SendError(c, http.StatusInternalServerError, "AUDIT_PERSISTENCE_FAILED", "La configuración fue aplicada, pero no pudo confirmarse su auditoría. Verifique el estado de la instancia antes de reintentar.")
+		return
+	}
 	respuesta := ConfigInstanciaResponse{RequiresReboot: resultado.RequiresReboot}
 	if resultado.RequiresReboot {
 		respuesta.Message = "Recursos modificados; los cambios se aplicarán tras reiniciar la instancia."
@@ -104,11 +116,40 @@ func (h *InstanceConfigHandler) ActualizarConfig(c *gin.Context) {
 	c.JSON(http.StatusOK, respuesta)
 }
 
-func (h *InstanceConfigHandler) auditar(c *gin.Context, vmid int, resultado string, detalles map[string]any) {
-	h.audit.Registrar(c.Request.Context(), ports.RegistrarAuditoriaInput{
+func detallesReconfiguracion(vmid int, resultado *ports.ResultadoReconfiguracion, cores, ramMb int, fallo error) map[string]any {
+	detalles := map[string]any{"resource_id": strconv.Itoa(vmid)}
+	if resultado == nil {
+		detalles["valoresNuevos"] = map[string]any{"cores": cores, "ramMb": ramMb}
+	} else {
+		detalles["resource_type"] = resultado.RecursoTipo
+		detalles["valoresAnteriores"] = map[string]any{
+			"cores": resultado.Anterior.Cores, "ramMb": resultado.Anterior.MemoriaMB,
+		}
+		detalles["valoresNuevos"] = map[string]any{
+			"cores": resultado.Solicitada.Cores, "ramMb": resultado.Solicitada.MemoriaMB,
+		}
+		detalles["deltaRamMb"] = resultado.Solicitada.MemoriaMB - resultado.Anterior.MemoriaMB
+		if resultado.VerificacionPendiente {
+			detalles["requiresReboot"] = nil
+			detalles["verificationStatus"] = "FAILED"
+		} else {
+			detalles["requiresReboot"] = resultado.RequiresReboot
+		}
+	}
+	if fallo != nil {
+		detalles["error"] = fallo.Error()
+	}
+	return detalles
+}
+
+func (h *InstanceConfigHandler) auditar(c *gin.Context, vmid int, resultado string, detalles map[string]any) error {
+	recursoTipo, _ := detalles["resource_type"].(string)
+	return h.audit.RegistrarEstricto(c.Request.Context(), ports.RegistrarAuditoriaInput{
 		UsuarioID:   extraerUserID(c),
 		Accion:      ports.AccionConfigurarInstancia,
 		InstanciaID: strconv.Itoa(vmid),
+		RecursoTipo: recursoTipo,
+		RecursoID:   strconv.Itoa(vmid),
 		Resultado:   resultado,
 		Detalles:    detalles,
 	})

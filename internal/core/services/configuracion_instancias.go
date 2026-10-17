@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"fmt"
 
 	"el-centinela/internal/core/ports"
 )
@@ -45,9 +46,21 @@ func (s *configuracionInstancias) Reconfigurar(ctx context.Context, vmid, cores,
 	if err != nil {
 		return nil, err
 	}
+	nueva := ports.ConfigInstanciaDTO{Cores: enUso.Cores, MemoriaMB: enUso.MemoriaMB}
+	if cores > 0 {
+		nueva.Cores = cores
+	}
+	if memoriaMB > 0 {
+		nueva.MemoriaMB = memoriaMB
+	}
+	recursoTipo := ports.RecursoVM
+	if inst.Tipo == ports.TipoInstanciaLXC {
+		recursoTipo = ports.RecursoLXC
+	}
 	resultado := &ports.ResultadoReconfiguracion{
-		Anterior:   ports.ConfigInstanciaDTO{Cores: enUso.Cores, MemoriaMB: enUso.MemoriaMB},
-		Solicitada: ports.ConfigInstanciaDTO{Cores: cores, MemoriaMB: memoriaMB},
+		RecursoTipo: recursoTipo,
+		Anterior:    ports.ConfigInstanciaDTO{Cores: enUso.Cores, MemoriaMB: enUso.MemoriaMB},
+		Solicitada:  nueva,
 	}
 
 	// Los incrementos se miden contra lo que el nodo ya tiene contado para la
@@ -69,15 +82,19 @@ func (s *configuracionInstancias) Reconfigurar(ctx context.Context, vmid, cores,
 		err = aplicar()
 	}
 	if err != nil {
-		return nil, err
+		// Conservar el diferencial para auditar también los rechazos del PUT de
+		// Proxmox. Los errores anteriores a leer la configuración retornan nil.
+		return resultado, err
 	}
+	resultado.Aplicada = true
 
 	if inst.Estado != "running" {
 		return resultado, nil
 	}
 	ahora, err := s.proxmox.ObtenerConfig(ctx, inst.Nodo, inst.Tipo, vmid, true)
 	if err != nil {
-		return nil, err
+		resultado.VerificacionPendiente = true
+		return resultado, fmt.Errorf("%w: %v", ports.ErrVerificacionPostConfig, err)
 	}
 	resultado.RequiresReboot = (cores > 0 && ahora.Cores != cores) || (memoriaMB > 0 && ahora.MemoriaMB != memoriaMB)
 	return resultado, nil
