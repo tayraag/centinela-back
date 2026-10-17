@@ -199,7 +199,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Filtrar por tipo de acción (ej: LOGIN, CREAR_USUARIO)",
+                        "description": "Filtrar por tipo de acción (ej: LOGIN, CREATE_INSTANCE, CONFIG_INSTANCE)",
                         "name": "accion",
                         "in": "query"
                     },
@@ -1858,8 +1858,14 @@ const docTemplate = `{
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
                     },
+                    "500": {
+                        "description": "AUDIT_PERSISTENCE_FAILED — la operación terminó, pero PostgreSQL no pudo confirmar su auditoría; verificar el estado antes de reintentar",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
                     "502": {
-                        "description": "PROXMOX_UNAVAILABLE",
+                        "description": "PROXMOX_UNAVAILABLE | CONFIG_APPLIED_VERIFICATION_FAILED — Proxmox aceptó el cambio, pero no se pudo determinar si requiere reinicio",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -3530,7 +3536,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "detalles": {
-                    "type": "string"
+                    "type": "object"
                 },
                 "fechaHora": {
                     "type": "string"
@@ -3548,7 +3554,16 @@ const docTemplate = `{
                     "description": "Nombre completo (JOIN con usuarios, o \"[usuario eliminado]\")",
                     "type": "string"
                 },
+                "resourceId": {
+                    "type": "string"
+                },
+                "resourceType": {
+                    "type": "string"
+                },
                 "resultado": {
+                    "type": "string"
+                },
+                "upid": {
                     "type": "string"
                 },
                 "usuarioId": {
