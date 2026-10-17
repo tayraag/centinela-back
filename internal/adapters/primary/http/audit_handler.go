@@ -34,7 +34,7 @@ func NewAuditHandler(service ports.AuditService) *AuditHandler {
 // @Produce      json
 // @Security     BearerAuth
 // @Param        usuarioId   query string  false "Filtrar por UUID de usuario"
-// @Param        accion      query string  false "Filtrar por tipo de acción (ej: LOGIN, CREAR_USUARIO)"
+// @Param        accion      query string  false "Filtrar por tipo de acción (ej: LOGIN, CREATE_INSTANCE, CONFIG_INSTANCE)"
 // @Param        instanciaId query string  false "Filtrar por ID de instancia Proxmox"
 // @Param        resultado   query string  false "Filtrar por resultado: PENDIENTE, SUCCESS, FAILED (infraestructura); EXITO o FALLA (otras acciones)"
 // @Param        desde       query string  false "Fecha desde (YYYY-MM-DD)"
