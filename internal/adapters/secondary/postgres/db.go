@@ -291,6 +291,11 @@ func migrarAuditoriaParticionada(db *gorm.DB) error {
 			sql: `CREATE INDEX IF NOT EXISTS idx_auditoria_usuario_fecha
 				  ON auditoria (usuario_id, fecha_hora DESC)`,
 		},
+		{
+			nombre: "idx_auditoria_query",
+			sql: `CREATE INDEX IF NOT EXISTS idx_auditoria_query
+				  ON auditoria (fecha_hora DESC, usuario_id, accion)`,
+		},
 	}
 	for _, idx := range indices {
 		if err := db.Exec(idx.sql).Error; err != nil {
@@ -370,8 +375,8 @@ func asegurarParticionesFuturas(db *gorm.DB) error {
 			PARTITION OF auditoria
 			FOR VALUES FROM ('%s') TO ('%s')`,
 			nombreParticion,
-			fechaInicio.Format("2006-01-02"),
-			fechaFin.Format("2006-01-02"))
+			fechaInicio.Format("2006-01-02 15:04:05Z07:00"),
+			fechaFin.Format("2006-01-02 15:04:05Z07:00"))
 
 		if err := db.Exec(sql).Error; err != nil {
 			return fmt.Errorf("error al asegurar partición futura %s: %w", nombreParticion, err)
@@ -395,19 +400,19 @@ func crearParticionesAuditoria(db *gorm.DB) error {
 			nombre: "auditoria_2026_q3",
 			sql: `CREATE TABLE IF NOT EXISTS auditoria_2026_q3
 				  PARTITION OF auditoria
-				  FOR VALUES FROM ('2026-07-01') TO ('2026-10-01')`,
+				  FOR VALUES FROM ('2026-07-01 00:00:00+00') TO ('2026-10-01 00:00:00+00')`,
 		},
 		{
 			nombre: "auditoria_2026_q4",
 			sql: `CREATE TABLE IF NOT EXISTS auditoria_2026_q4
 				  PARTITION OF auditoria
-				  FOR VALUES FROM ('2026-10-01') TO ('2027-01-01')`,
+				  FOR VALUES FROM ('2026-10-01 00:00:00+00') TO ('2027-01-01 00:00:00+00')`,
 		},
 		{
 			nombre: "auditoria_2027_q1",
 			sql: `CREATE TABLE IF NOT EXISTS auditoria_2027_q1
 				  PARTITION OF auditoria
-				  FOR VALUES FROM ('2027-01-01') TO ('2027-04-01')`,
+				  FOR VALUES FROM ('2027-01-01 00:00:00+00') TO ('2027-04-01 00:00:00+00')`,
 		},
 		{
 			nombre: "auditoria_default",
