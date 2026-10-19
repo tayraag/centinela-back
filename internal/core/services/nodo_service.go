@@ -300,7 +300,9 @@ func (s *nodoService) leerHistorial(ctx context.Context, clave string) ([]ports.
 
 // normalizarHistorialNodo pasa la muestra cruda a los tres porcentajes que
 // dibuja el gráfico, acotados a 0–100 para que un valor raro de Proxmox no
-// rompa la escala.
+// rompa la escala. Cuando el punto no trae el total (o el uso) de una métrica,
+// esa métrica se omite en vez de publicarse como 0%: un cero inventado hacía que
+// el Dashboard dibujara RAM y almacenamiento cayendo al piso.
 func normalizarHistorialNodo(muestras []ports.MuestraNodoRRD) []ports.PuntoHistorialNodo {
 	serie := make([]ports.PuntoHistorialNodo, 0, len(muestras))
 	for _, m := range muestras {
@@ -308,11 +310,13 @@ func normalizarHistorialNodo(muestras []ports.MuestraNodoRRD) []ports.PuntoHisto
 			Timestamp:  m.Timestamp,
 			CPUPercent: porcentajeAcotado(m.CPU * 100),
 		}
-		if m.MemTotal > 0 {
-			punto.RAMPercent = porcentajeAcotado(float64(m.MemUsada) / float64(m.MemTotal) * 100)
+		if m.MemTotal > 0 && m.MemUsada > 0 {
+			ram := porcentajeAcotado(float64(m.MemUsada) / float64(m.MemTotal) * 100)
+			punto.RAMPercent = &ram
 		}
-		if m.DiscoTotal > 0 {
-			punto.StoragePercent = porcentajeAcotado(float64(m.DiscoUsado) / float64(m.DiscoTotal) * 100)
+		if m.DiscoTotal > 0 && m.DiscoUsado > 0 {
+			disco := porcentajeAcotado(float64(m.DiscoUsado) / float64(m.DiscoTotal) * 100)
+			punto.StoragePercent = &disco
 		}
 		serie = append(serie, punto)
 	}
