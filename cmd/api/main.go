@@ -347,9 +347,10 @@ func main() {
 
 	// 9. Encender el servidor en el puerto 8080 con timeouts explícitos
 	srv := &http.Server{
-		Addr:         ":8080",
-		Handler:      router,
-		ReadTimeout:  15 * time.Second,
+		Addr:        ":8080",
+		Handler:     router,
+		ReadTimeout: 15 * time.Second,
+		// Los streams SSE son de larga vida y anulan este deadline en su handler.
 		WriteTimeout: 15 * time.Second,
 		IdleTimeout:  60 * time.Second,
 	}

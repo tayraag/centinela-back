@@ -110,6 +110,14 @@ func (h *EventsHandler) Stream(c *gin.Context) {
 	}
 	defer conexion.Cerrar()
 
+	// El servidor HTTP tiene un WriteTimeout global de 15 s, pensado para
+	// respuestas cortas. Un stream SSE es de larga vida: si no anulamos el
+	// deadline para esta conexión, el navegador la ve cortada antes del primer
+	// latido y reconecta sin parar. El latido y el cierre controlan su vida.
+	if err := http.NewResponseController(c.Writer).SetWriteDeadline(time.Time{}); err != nil {
+		log.Printf("[EVENTOS] no se pudo anular el deadline de escritura del stream: %v", err)
+	}
+
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")

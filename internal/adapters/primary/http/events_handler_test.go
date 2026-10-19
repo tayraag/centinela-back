@@ -42,8 +42,7 @@ func (f *eventosFalso) Conectar(_ context.Context, ticket string) (*ports.Conexi
 }
 func (f *eventosFalso) Publicar(context.Context, ports.RealtimeEvent) error { return nil }
 
-func servidorEventos(t *testing.T, f *eventosFalso) *httptest.Server {
-	t.Helper()
+func routerEventos(f *eventosFalso) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	h := NewEventsHandler(f)
 	r := gin.New()
@@ -52,7 +51,21 @@ func servidorEventos(t *testing.T, f *eventosFalso) *httptest.Server {
 		c.Set(middleware.ContextKeyUserID, uuid.MustParse("11111111-1111-4111-8111-111111111111").String())
 		c.Set(middleware.ContextKeySesionID, uuid.MustParse("22222222-2222-4222-8222-222222222222"))
 	}, h.EmitirTicket)
-	srv := httptest.NewServer(r)
+	return r
+}
+
+func servidorEventos(t *testing.T, f *eventosFalso) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(routerEventos(f))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func servidorEventosConTimeout(t *testing.T, f *eventosFalso, timeout time.Duration) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewUnstartedServer(routerEventos(f))
+	srv.Config.WriteTimeout = timeout
+	srv.Start()
 	t.Cleanup(srv.Close)
 	return srv
 }
@@ -166,5 +179,57 @@ func TestStream_EnviaEventosLatidosYCorte(t *testing.T) {
 	case <-f.cerrado:
 	case <-time.After(2 * time.Second):
 		t.Fatal("Al cortar, el handler debe liberar la conexión (Cerrar)")
+	}
+}
+
+func TestStream_SobreviveAlWriteTimeoutDelServidor(t *testing.T) {
+	anterior := latidoSSE
+	latidoSSE = 40 * time.Millisecond
+	defer func() { latidoSSE = anterior }()
+
+	f := nuevoEventosFalso()
+	// El deadline global de 15 s cortaría un SSE de larga vida antes del primer
+	// latido. El handler debe anularlo solo para esta conexión.
+	srv := servidorEventosConTimeout(t, f, 100*time.Millisecond)
+	resp, err := http.Get(srv.URL + "/api/events?ticket=valido")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	lineas := make(chan string, 64)
+	go func() {
+		lector := bufio.NewReader(resp.Body)
+		for {
+			l, err := lector.ReadString('\n')
+			if err != nil {
+				close(lineas)
+				return
+			}
+			lineas <- l
+		}
+	}()
+
+	leerHasta := func(buscado string) {
+		t.Helper()
+		fin := time.After(2 * time.Second)
+		for {
+			select {
+			case l, ok := <-lineas:
+				if !ok {
+					t.Fatalf("El stream terminó antes de ver %q", buscado)
+				}
+				if strings.Contains(l, buscado) {
+					return
+				}
+			case <-fin:
+				t.Fatalf("No llegó %q dentro del plazo", buscado)
+			}
+		}
+	}
+
+	leerHasta(": conectado")
+	for i := 0; i < 3; i++ {
+		leerHasta(": ping")
 	}
 }
