@@ -199,7 +199,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Filtrar por tipo de acción (ej: LOGIN, CREAR_USUARIO)",
+                        "description": "Filtrar por tipo de acción (ej: LOGIN, CREATE_INSTANCE, CONFIG_INSTANCE)",
                         "name": "accion",
                         "in": "query"
                     },
@@ -211,7 +211,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Filtrar por resultado: EXITO o FALLA",
+                        "description": "Filtrar por resultado: PENDIENTE, SUCCESS, FAILED (infraestructura); EXITO o FALLA (otras acciones)",
                         "name": "resultado",
                         "in": "query"
                     },
@@ -317,7 +317,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "EXITO o FALLA",
+                        "description": "PENDIENTE, SUCCESS, FAILED (infraestructura); EXITO o FALLA (otras acciones)",
                         "name": "resultado",
                         "in": "query"
                     },
@@ -1350,6 +1350,43 @@ const docTemplate = `{
                 }
             }
         },
+        "/auth/ws-ticket": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Genera un UUID criptográfico de un solo uso con TTL de 30 segundos almacenado en Redis bajo la clave ` + "`" + `ws:ticket:\u003cuuid\u003e` + "`" + `. Permite autenticar el handshake de WebSocket sin exponer el JWT en los query parameters.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Autenticación"
+                ],
+                "summary": "Generar ticket efímero para WebSocket",
+                "responses": {
+                    "200": {
+                        "description": "Ticket efímero válido por 30 segundos",
+                        "schema": {
+                            "$ref": "#/definitions/http.WsTicketResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "MISSING_TOKEN | INVALID_TOKEN | TOKEN_REVOKED",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "INTERNAL_ERROR",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/events": {
             "get": {
                 "description": "Abre un stream ` + "`" + `text/event-stream` + "`" + ` autenticado con el ticket de ` + "`" + `POST /api/events/ticket` + "`" + `, que es de un solo uso y vence a los 30 s: si se conecta dos veces o después de vencer, responde 401 y hay que pedir otro. El ticket se consume con ` + "`" + `GETDEL` + "`" + ` al abrir el stream y el servidor manda ` + "`" + `Cache-Control: no-cache` + "`" + `, ` + "`" + `Connection: keep-alive` + "`" + ` y ` + "`" + `X-Accel-Buffering: no` + "`" + ` para que un proxy nginx no acumule el stream. El framing tiene cuatro formas: (1) ` + "`" + `: conectado` + "`" + ` apenas se abre, que ` + "`" + `EventSource` + "`" + ` ignora; (2) un frame ` + "`" + `id: \u003cevento.id\u003e` + "`" + ` seguido de ` + "`" + `data: \u003chttp.SSEEventPayload en JSON\u003e` + "`" + ` por cada evento, que ` + "`" + `EventSource` + "`" + ` entrega en ` + "`" + `onmessage` + "`" + `; (3) ` + "`" + `: ping` + "`" + ` cada 25 s para que ningún proxy corte la conexión por inactividad; (4) ` + "`" + `event: cierre` + "`" + ` con ` + "`" + `{\"motivo\": ...}` + "`" + ` cuando el backend corta el stream, con motivo ` + "`" + `LOGOUT` + "`" + `, ` + "`" + `SESSIONS_REVOKED` + "`" + ` o ` + "`" + `USER_INACTIVE` + "`" + `. Importante: ` + "`" + `EventSource` + "`" + ` reconecta solo con la misma URL, y el ticket ya fue consumido, por lo que hay que cerrar la fuente y abrir un stream nuevo con un ticket nuevo.",
@@ -1499,6 +1536,91 @@ const docTemplate = `{
                         }
                     }
                 }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "ADMIN ONLY. El contrato plano RF-07 descrito en el body es el formato canónico. Durante la migración del frontend también se acepta el payload anidado anterior con ` + "`" + `type` + "`" + `, ` + "`" + `node` + "`" + `, ` + "`" + `name` + "`" + `, ` + "`" + `cpu.cores` + "`" + `, ` + "`" + `ram.memoryMb` + "`" + `, ` + "`" + `disk.storageId/sizeGb` + "`" + `, ` + "`" + `network.bridge/vlan/firewall/ipv4` + "`" + ` y ` + "`" + `os.templateId` + "`" + `; para LXC ese formato requiere ` + "`" + `password` + "`" + `. CuotasService usa el lock Redis ` + "`" + `lock:instance:provisioning` + "`" + ` con TTL de 30 s y hasta 2 s de espera. Consulta la capacidad cacheada (o Proxmox si falta), valida CPU lógica, RAM con 15% de headroom y disco contra ` + "`" + `avail` + "`" + ` del storage, y registra una reserva temporal. Luego obtiene el VMID mediante ` + "`" + `/cluster/nextid` + "`" + `, despacha la creación QEMU o LXC y solo responde 202 con vmid y tareaId después de persistir la tarea RUNNING y su auditoría inicial. El UPID permanece privado en el backend. El resultado llega por TASK_FINISHED con accion CREATE; cuando Proxmox finaliza con exitstatus OK, el creador recibe FULL_ACCESS y se vuelve a invalidar la capacidad.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Instancias Proxmox"
+                ],
+                "summary": "Crear una VM o contenedor",
+                "parameters": [
+                    {
+                        "description": "Configuración de la instancia",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/http.CrearInstanciaRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Accepted",
+                        "schema": {
+                            "$ref": "#/definitions/http.CreacionAceptadaResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "INVALID_REQUEST",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "MISSING_TOKEN | INVALID_TOKEN | TOKEN_REVOKED",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "WRONG_TOKEN_TYPE | 2FA_REQUIRED | INSUFFICIENT_PERMISSIONS",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "RESOURCE_QUOTA_EXCEEDED",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "TASK_TRACKING_UNAVAILABLE",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "502": {
+                        "description": "PROXMOX_UNAVAILABLE",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "PROVISIONING_COORDINATION_UNAVAILABLE",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "504": {
+                        "description": "PROXMOX_TIMEOUT",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    }
+                }
             }
         },
         "/instances/{vmid}": {
@@ -1508,7 +1630,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Devuelve el estado actual (running/stopped, tipo, nodo, telemetría) de una VM o contenedor leído en vivo desde Proxmox VE.",
+                "description": "Devuelve el estado actual (running/stopped, tipo, nodo, telemetría) de una VM o contenedor leído en vivo desde Proxmox VE. ` + "`" + `cpu` + "`" + ` es un porcentaje de 0 a 100; ` + "`" + `cpu` + "`" + ` y ` + "`" + `mem` + "`" + ` valen null si la instancia no está encendida.",
                 "produces": [
                     "application/json"
                 ],
@@ -1529,7 +1651,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/ports.InstanciaProxmoxDTO"
+                            "$ref": "#/definitions/http.InstanciaDetalleResponse"
                         }
                     },
                     "400": {
@@ -1582,7 +1704,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "OPERATIVO. Solo ADMIN. Elimina permanentemente una VM o contenedor de Proxmox. La instancia debe estar detenida (stopped); si no, responde 409. La operación es asíncrona, igual que las acciones de energía: responde 202 Accepted con el UPID de la tarea de borrado y el tareaId; el resultado llega en el evento TASK_FINISHED con accion DELETE.",
+                "description": "OPERATIVO. Solo ADMIN. Elimina permanentemente una VM o contenedor de Proxmox. La instancia debe estar detenida (stopped); si no, responde 409. La operación es asíncrona: responde 202 Accepted con un tareaId público; el UPID permanece privado. El resultado llega en TASK_FINISHED con accion DELETE.",
                 "produces": [
                     "application/json"
                 ],
@@ -1601,7 +1723,7 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "202": {
-                        "description": "Borrado aceptado: upid de la tarea en Proxmox y tareaId. tareaId se omite si no se pudo registrar la tarea",
+                        "description": "Borrado aceptado: tareaId público para correlacionar TASK_FINISHED",
                         "schema": {
                             "$ref": "#/definitions/http.AccionAceptadaResponse"
                         }
@@ -1631,13 +1753,13 @@ const docTemplate = `{
                         }
                     },
                     "409": {
-                        "description": "INSTANCE_INVALID_STATE — la instancia debe estar detenida | INSTANCE_BUSY — la instancia está ejecutando otra tarea",
+                        "description": "INSTANCE_INVALID_STATE — la instancia debe estar detenida | INSTANCE_BUSY — la instancia está ejecutando otra tarea (tarea RUNNING o lock lock:instance:{vmid}:operation); se responde sin contactar a Proxmox",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
                     },
                     "500": {
-                        "description": "INTERNAL_ERROR — error inesperado de Proxmox",
+                        "description": "INTERNAL_ERROR — error inesperado | TASK_TRACKING_UNAVAILABLE — Proxmox aceptó el borrado pero no se pudo persistir su seguimiento",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -1648,8 +1770,114 @@ const docTemplate = `{
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
                     },
+                    "503": {
+                        "description": "INSTANCE_LOCK_UNAVAILABLE — no se pudo verificar si la instancia está ocupada; no se envió nada a Proxmox",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
                     "504": {
                         "description": "PROXMOX_TIMEOUT — Proxmox no respondió a tiempo; el borrado puede haberse aplicado",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/instances/{vmid}/config": {
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "ADMIN o FULL_ACCESS sobre la instancia. Cambia ` + "`" + `cores` + "`" + ` y/o ` + "`" + `ramMb` + "`" + ` (al menos uno, enteros positivos; ` + "`" + `ramMb` + "`" + ` mínimo 16). Los incrementos se validan contra el margen del nodo (RAM con 15% de headroom y vCPU), comparando con lo que la instancia ya tiene asignado (DeltaRAM): si no alcanza responde 409 RESOURCE_QUOTA_EXCEEDED sin escribir en Proxmox. Las reducciones no se validan. Si la instancia está apagada el cambio queda aplicado (` + "`" + `requiresReboot: false` + "`" + `). Si está encendida y Proxmox lo dejó pendiente porque la instancia no admite hot-plug (lo habitual en VMs QEMU), responde ` + "`" + `requiresReboot: true` + "`" + `: se aplica al reiniciarla. En LXC, CPU y RAM se aplican en caliente. Pasa por la guarda de exclusión mutua (409 INSTANCE_BUSY si la instancia tiene otra operación en curso).",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Instancias Proxmox"
+                ],
+                "summary": "Cambiar CPU y RAM de una instancia",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "VMID de la instancia",
+                        "name": "vmid",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Nuevos cores y/o RAM",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/http.ConfigInstanciaRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/http.ConfigInstanciaResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "INVALID_VMID | INVALID_REQUEST — sin cores ni ramMb, o valores no enteros, menores a 1 o RAM menor a 16 MiB",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "MISSING_TOKEN | INVALID_TOKEN | TOKEN_REVOKED",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "INSTANCE_ACCESS_DENIED — se requiere FULL_ACCESS (READ_ONLY no alcanza) | INSTANCE_PROTECTED — infraestructura de El Centinela",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "INSTANCE_NOT_FOUND",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "RESOURCE_QUOTA_EXCEEDED — el incremento supera el margen del nodo; no se escribió en Proxmox | INSTANCE_BUSY — otra operación en curso o la config cambió en el medio",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "AUDIT_PERSISTENCE_FAILED — la operación terminó, pero PostgreSQL no pudo confirmar su auditoría; verificar el estado antes de reintentar",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "502": {
+                        "description": "PROXMOX_UNAVAILABLE | CONFIG_APPLIED_VERIFICATION_FAILED — Proxmox aceptó el cambio, pero no se pudo determinar si requiere reinicio",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "INSTANCE_LOCK_UNAVAILABLE | PROVISIONING_COORDINATION_UNAVAILABLE — no se pudo coordinar la validación de capacidad",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "504": {
+                        "description": "PROXMOX_TIMEOUT",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -1683,7 +1911,7 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "202": {
-                        "description": "Acción aceptada: upid de la tarea en Proxmox y tareaId",
+                        "description": "Acción aceptada: tareaId público para correlacionar TASK_FINISHED",
                         "schema": {
                             "$ref": "#/definitions/http.AccionAceptadaResponse"
                         }
@@ -1747,7 +1975,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "OPERATIVO. Dispara el arranque de una VM o contenedor en Proxmox VE. La operación es asíncrona: responde 202 Accepted con el UPID de la tarea creada en Proxmox. No espera a que la instancia quede encedida.",
+                "description": "OPERATIVO. Dispara el arranque de una VM o contenedor en Proxmox VE. La operación es asíncrona: responde 202 Accepted con un tareaId público; el UPID permanece privado. No espera a que la instancia quede encendida.",
                 "produces": [
                     "application/json"
                 ],
@@ -1766,7 +1994,7 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "202": {
-                        "description": "Acción aceptada: upid de la tarea en Proxmox y tareaId. tareaId se omite si no se pudo registrar la tarea",
+                        "description": "Acción aceptada: tareaId público para correlacionar TASK_FINISHED",
                         "schema": {
                             "$ref": "#/definitions/http.AccionAceptadaResponse"
                         }
@@ -1796,19 +2024,25 @@ const docTemplate = `{
                         }
                     },
                     "409": {
-                        "description": "INSTANCE_INVALID_STATE: La instancia se encuentra en un estado incompatible para la acción solicitada | INSTANCE_BUSY — la instancia está ejecutando otra tarea; reintentar al recibir TASK_FINISHED",
+                        "description": "INSTANCE_INVALID_STATE: La instancia se encuentra en un estado incompatible para la acción solicitada | INSTANCE_BUSY — la instancia está ejecutando otra tarea (tarea RUNNING o lock lock:instance:{vmid}:operation); se responde sin contactar a Proxmox; reintentar al recibir TASK_FINISHED",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
                     },
                     "500": {
-                        "description": "INTERNAL_ERROR — al verificar permisos de acceso o error inesperado de Proxmox",
+                        "description": "INTERNAL_ERROR — al verificar permisos o error inesperado | TASK_TRACKING_UNAVAILABLE — Proxmox aceptó la orden pero no se pudo persistir su seguimiento",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
                     },
                     "502": {
                         "description": "PROXMOX_UNAVAILABLE — Proxmox caído, sin red o token rechazado; la orden NO llegó a aplicarse",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "INSTANCE_LOCK_UNAVAILABLE — no se pudo verificar si la instancia está ocupada; no se envió nada a Proxmox",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -1855,7 +2089,7 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "202": {
-                        "description": "Acción aceptada: upid de la tarea en Proxmox y tareaId. tareaId se omite si no se pudo registrar la tarea",
+                        "description": "Acción aceptada: tareaId público para correlacionar TASK_FINISHED",
                         "schema": {
                             "$ref": "#/definitions/http.AccionAceptadaResponse"
                         }
@@ -1885,19 +2119,25 @@ const docTemplate = `{
                         }
                     },
                     "409": {
-                        "description": "INSTANCE_INVALID_STATE: La instancia se encuentra en un estado incompatible para la acción solicitada | INSTANCE_BUSY — la instancia está ejecutando otra tarea; reintentar al recibir TASK_FINISHED",
+                        "description": "INSTANCE_INVALID_STATE: La instancia se encuentra en un estado incompatible para la acción solicitada | INSTANCE_BUSY — la instancia está ejecutando otra tarea (tarea RUNNING o lock lock:instance:{vmid}:operation); se responde sin contactar a Proxmox; reintentar al recibir TASK_FINISHED",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
                     },
                     "500": {
-                        "description": "INTERNAL_ERROR — al verificar permisos de acceso o error inesperado de Proxmox",
+                        "description": "INTERNAL_ERROR — al verificar permisos o error inesperado | TASK_TRACKING_UNAVAILABLE — Proxmox aceptó la orden pero no se pudo persistir su seguimiento",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
                     },
                     "502": {
                         "description": "PROXMOX_UNAVAILABLE — Proxmox caído, sin red o token rechazado; la orden NO llegó a aplicarse",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "INSTANCE_LOCK_UNAVAILABLE — no se pudo verificar si la instancia está ocupada; no se envió nada a Proxmox",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -1918,7 +2158,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "OPERATIVO. Dispara el apagado forzado de una VM o contenedor en Proxmox VE. La operación es asíncrona: responde 202 Accepted con el UPID de la tarea creada en Proxmox. No espera a que la instancia quede detenida.",
+                "description": "OPERATIVO. Dispara el apagado forzado de una VM o contenedor en Proxmox VE. La operación es asíncrona: responde 202 Accepted con un tareaId público; el UPID permanece privado. No espera a que la instancia quede detenida.",
                 "produces": [
                     "application/json"
                 ],
@@ -1937,7 +2177,7 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "202": {
-                        "description": "Acción aceptada: upid de la tarea en Proxmox y tareaId. tareaId se omite si no se pudo registrar la tarea",
+                        "description": "Acción aceptada: tareaId público para correlacionar TASK_FINISHED",
                         "schema": {
                             "$ref": "#/definitions/http.AccionAceptadaResponse"
                         }
@@ -1967,19 +2207,25 @@ const docTemplate = `{
                         }
                     },
                     "409": {
-                        "description": "INSTANCE_INVALID_STATE: La instancia se encuentra en un estado incompatible para la acción solicitada | INSTANCE_BUSY — la instancia está ejecutando otra tarea; reintentar al recibir TASK_FINISHED",
+                        "description": "INSTANCE_INVALID_STATE: La instancia se encuentra en un estado incompatible para la acción solicitada | INSTANCE_BUSY — la instancia está ejecutando otra tarea (tarea RUNNING o lock lock:instance:{vmid}:operation); se responde sin contactar a Proxmox; reintentar al recibir TASK_FINISHED",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
                     },
                     "500": {
-                        "description": "INTERNAL_ERROR — al verificar permisos de acceso o error inesperado de Proxmox",
+                        "description": "INTERNAL_ERROR — al verificar permisos o error inesperado | TASK_TRACKING_UNAVAILABLE — Proxmox aceptó la orden pero no se pudo persistir su seguimiento",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
                     },
                     "502": {
                         "description": "PROXMOX_UNAVAILABLE — Proxmox caído, sin red o token rechazado; la orden NO llegó a aplicarse",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "INSTANCE_LOCK_UNAVAILABLE — no se pudo verificar si la instancia está ocupada; no se envió nada a Proxmox",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -2000,7 +2246,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "OPERATIVO. Disponible para ADMIN y OPERATOR autenticados (no se filtra por permisos de instancia). La lectura se cachea en Redis 10 s (node:status:current): mientras está vigente se responde sin consultar Proxmox. Incluye también instancesSummary, que agrupa el recuento de VMs y contenedores LXC según su estado (running, stopped, paused). Si Proxmox no responde se devuelve la última lectura conocida (node:status:last_known) con ` + "`" + `stale: true` + "`" + `; ` + "`" + `fetchedAt` + "`" + ` indica cuándo se obtuvo. Solo si no hay ninguna lectura previa responde 502 o 504. RAM y almacenamiento en GB (1024³ bytes) con 2 decimales; ` + "`" + `storage` + "`" + ` es el disco raíz del nodo; ` + "`" + `cores` + "`" + ` son los hilos lógicos sobre los que se calcula ` + "`" + `usagePercent` + "`" + `.",
+                "description": "OPERATIVO. Disponible para ADMIN y OPERATOR autenticados (no se filtra por permisos de instancia). La lectura se cachea en Redis 10 s (node:status:current): mientras está vigente se responde sin consultar Proxmox. Incluye ` + "`" + `allocatable` + "`" + `, con núcleos físicos totales, almacenamiento disponible y RAM libre segura luego de reservar estrictamente 15% para Proxmox. Incluye también instancesSummary, que agrupa el recuento de VMs y contenedores LXC según su estado (running, stopped, paused). Si Proxmox no responde se devuelve la última lectura conocida (node:status:last_known) con ` + "`" + `stale: true` + "`" + `; ` + "`" + `fetchedAt` + "`" + ` indica cuándo se obtuvo. Solo si no hay ninguna lectura previa responde 502 o 504. RAM y almacenamiento en GB (1024³ bytes) con 2 decimales; ` + "`" + `storage` + "`" + ` es el disco raíz del nodo; ` + "`" + `cores` + "`" + ` son los hilos lógicos sobre los que se calcula ` + "`" + `usagePercent` + "`" + `.",
                 "produces": [
                     "application/json"
                 ],
@@ -2035,6 +2281,110 @@ const docTemplate = `{
                     },
                     "504": {
                         "description": "PROXMOX_TIMEOUT — Proxmox no respondió a tiempo y no hay lectura previa",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/node/storages": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "ADMIN ONLY. Retorna las unidades de almacenamiento activas en el nodo, filtradas y normalizadas con sus capacidades en bytes y tipos de contenidos permitidos.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Estado del nodo"
+                ],
+                "summary": "Consultar catálogo de almacenamiento del nodo",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/http.StorageResponse"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "MISSING_TOKEN | INVALID_TOKEN | TOKEN_REVOKED",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "WRONG_TOKEN_TYPE | 2FA_REQUIRED | INSUFFICIENT_PERMISSIONS",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "502": {
+                        "description": "PROXMOX_UNAVAILABLE — Proxmox caído, sin red o token rechazado",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "504": {
+                        "description": "PROXMOX_TIMEOUT — Proxmox no respondió a tiempo",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/node/templates": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "ADMIN ONLY. Consolida imágenes ISO de instalación y plantillas LXC de todos los storages activos que admiten dichos contenidos, formateando sus identificadores, nombres y tamaños.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Estado del nodo"
+                ],
+                "summary": "Consultar catálogo de plantillas e imágenes ISO",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/http.TemplateResponse"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "MISSING_TOKEN | INVALID_TOKEN | TOKEN_REVOKED",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "WRONG_TOKEN_TYPE | 2FA_REQUIRED | INSUFFICIENT_PERMISSIONS",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "502": {
+                        "description": "PROXMOX_UNAVAILABLE — Proxmox caído, sin red o token rechazado",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "504": {
+                        "description": "PROXMOX_TIMEOUT — Proxmox no respondió a tiempo",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -2087,22 +2437,102 @@ const docTemplate = `{
                     }
                 }
             }
+        },
+        "/ws/instances/{vmid}/metrics": {
+            "get": {
+                "description": "Establece un canal bidireccional vía WebSocket que emite métricas instantáneas cada 2 segundos. Requiere parámetro query ` + "`" + `?ticket=\u003cuuid\u003e` + "`" + ` emitido previamente vía POST /api/auth/ws-ticket. El servidor cierra el canal con código 1008 y el motivo como reason cuando el usuario pierde el acceso: ` + "`" + `LOGOUT` + "`" + ` (cerró sesión; corta todas sus conexiones WebSocket), ` + "`" + `SESSIONS_REVOKED` + "`" + ` (baja, suspensión o reset de credenciales), ` + "`" + `USER_INACTIVE` + "`" + ` (suspendido o eliminado), ` + "`" + `INSTANCE_ACCESS_DENIED` + "`" + ` (le quitaron el permiso sobre la instancia) o ` + "`" + `EVENTS_UNAVAILABLE` + "`" + ` (se perdió el canal de avisos; reconectar con un ticket nuevo). Al apagarse el servidor cierra con 1001; si la instancia deja de existir, con 1000 e ` + "`" + `INSTANCE_NOT_FOUND` + "`" + `. Cada mensaje es un JSON de métricas: ` + "`" + `cpu` + "`" + ` en porcentaje (0 a 100) y ` + "`" + `cpu` + "`" + ` y ` + "`" + `mem` + "`" + ` en null si la instancia no está encendida; si Proxmox falla en un intervalo, el mensaje no trae métricas sino ` + "`" + `{\"timestamp\",\"vmid\",\"status\":\"unavailable\",\"error\":{\"errorCode\":\"PROXMOX_UNAVAILABLE|PROXMOX_TIMEOUT\",\"message\"}}` + "`" + ` y la conexión sigue. Solo acepta el Origin del front (ALLOWED_ORIGINS), hasta 10 conexiones simultáneas por usuario y mensajes del cliente de hasta 512 bytes; el servidor manda un ping cada 25 s y libera la conexión si no tiene respuesta en 60 s.",
+                "tags": [
+                    "Métricas en tiempo real"
+                ],
+                "summary": "Canal WebSocket de métricas de instancia en tiempo real",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Identificador de instancia (VMID)",
+                        "name": "vmid",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Ticket efímero de un solo uso",
+                        "name": "ticket",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "101": {
+                        "description": "Switching Protocols a WebSocket"
+                    },
+                    "400": {
+                        "description": "INVALID_VMID",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "UNAUTHORIZED",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "ORIGIN_NOT_ALLOWED — el Origin no es el del front | INSTANCE_ACCESS_DENIED | USER_INACTIVE",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "INSTANCE_NOT_FOUND",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "TOO_MANY_CONNECTIONS — el usuario ya tiene 10 WebSockets abiertos",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "INTERNAL_ERROR — no se pudo comprobar el acceso",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "502": {
+                        "description": "PROXMOX_UNAVAILABLE",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "EVENTS_UNAVAILABLE — no se pudo abrir el canal de avisos de corte",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "504": {
+                        "description": "PROXMOX_TIMEOUT",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    }
+                }
+            }
         }
     },
     "definitions": {
         "http.AccionAceptadaResponse": {
             "type": "object",
             "required": [
-                "upid"
+                "tareaId"
             ],
             "properties": {
                 "tareaId": {
                     "type": "string",
                     "example": "3f2504e0-4f89-11d3-9a0c-0305e82c3301"
-                },
-                "upid": {
-                    "type": "string",
-                    "example": "UPID:pve:0008380E:0131F1BF:6A84EA54:vzstart:110:root@pam:ctid=110:starttime=6934A2E3:"
                 }
             }
         },
@@ -2121,7 +2551,8 @@ const docTemplate = `{
                         "STOP",
                         "SHUTDOWN",
                         "REBOOT",
-                        "DELETE"
+                        "DELETE",
+                        "CREATE"
                     ],
                     "example": "START"
                 },
@@ -2135,6 +2566,190 @@ const docTemplate = `{
                 "tareaId": {
                     "type": "string",
                     "example": "3f2504e0-4f89-11d3-9a0c-0305e82c3301"
+                }
+            }
+        },
+        "http.ConfigInstanciaRequest": {
+            "type": "object",
+            "properties": {
+                "cores": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "example": 4
+                },
+                "ramMb": {
+                    "type": "integer",
+                    "minimum": 16,
+                    "example": 4096
+                }
+            }
+        },
+        "http.ConfigInstanciaResponse": {
+            "type": "object",
+            "required": [
+                "requiresReboot"
+            ],
+            "properties": {
+                "message": {
+                    "type": "string",
+                    "example": "Recursos modificados; los cambios se aplicarán tras reiniciar la instancia."
+                },
+                "requiresReboot": {
+                    "type": "boolean",
+                    "example": true
+                }
+            }
+        },
+        "http.CreacionAceptadaResponse": {
+            "type": "object",
+            "required": [
+                "tareaId",
+                "vmid"
+            ],
+            "properties": {
+                "tareaId": {
+                    "type": "string",
+                    "example": "0192a8b3-4f89-7e23-9a0c-0305e82c3301"
+                },
+                "vmid": {
+                    "type": "integer",
+                    "minimum": 100,
+                    "example": 115
+                }
+            }
+        },
+        "http.CrearInstanciaRedRequest": {
+            "type": "object",
+            "required": [
+                "modo"
+            ],
+            "properties": {
+                "bridge": {
+                    "type": "string",
+                    "example": "vmbr0"
+                },
+                "firewall": {
+                    "type": "boolean",
+                    "example": true
+                },
+                "gateway": {
+                    "type": "string",
+                    "example": "192.168.1.1"
+                },
+                "ip": {
+                    "type": "string",
+                    "example": "192.168.1.50/24"
+                },
+                "mascara": {
+                    "type": "string",
+                    "example": "24"
+                },
+                "modo": {
+                    "type": "string",
+                    "enum": [
+                        "dhcp",
+                        "static",
+                        "DHCP",
+                        "STATIC"
+                    ],
+                    "example": "dhcp"
+                },
+                "vlan": {
+                    "type": "integer",
+                    "example": 100
+                }
+            }
+        },
+        "http.CrearInstanciaRequest": {
+            "type": "object",
+            "required": [
+                "cores",
+                "discoGb",
+                "nombre",
+                "ramMb",
+                "red",
+                "storageId",
+                "templateOso",
+                "tipo"
+            ],
+            "properties": {
+                "cores": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "example": 2
+                },
+                "descripcion": {
+                    "type": "string",
+                    "example": "Servidor web principal"
+                },
+                "discoGb": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "example": 20
+                },
+                "nodo": {
+                    "type": "string",
+                    "example": "pve1"
+                },
+                "nombre": {
+                    "type": "string",
+                    "example": "srv-prod-01"
+                },
+                "password": {
+                    "type": "string"
+                },
+                "ramMb": {
+                    "type": "integer",
+                    "minimum": 16,
+                    "example": 2048
+                },
+                "red": {
+                    "$ref": "#/definitions/http.CrearInstanciaRedRequest"
+                },
+                "storageId": {
+                    "type": "string",
+                    "example": "local-lvm"
+                },
+                "templateOso": {
+                    "type": "string",
+                    "example": "local:iso/debian-12.iso"
+                },
+                "tipo": {
+                    "type": "string",
+                    "example": "vm"
+                }
+            }
+        },
+        "http.CuotaAsignableNode": {
+            "type": "object",
+            "required": [
+                "freeRamMb",
+                "freeStorageGb",
+                "headroomPercent",
+                "maxCpuCores"
+            ],
+            "properties": {
+                "freeRamMb": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "example": 14336
+                },
+                "freeStorageGb": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "example": 280
+                },
+                "headroomPercent": {
+                    "type": "integer",
+                    "enum": [
+                        15
+                    ],
+                    "example": 15
+                },
+                "maxCpuCores": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "example": 8
                 }
             }
         },
@@ -2154,6 +2769,7 @@ const docTemplate = `{
         "http.EstadoNodeResponse": {
             "type": "object",
             "required": [
+                "allocatable",
                 "cpu",
                 "fetchedAt",
                 "instancesSummary",
@@ -2163,6 +2779,9 @@ const docTemplate = `{
                 "uptimeSeconds"
             ],
             "properties": {
+                "allocatable": {
+                    "$ref": "#/definitions/http.CuotaAsignableNode"
+                },
                 "cpu": {
                     "$ref": "#/definitions/http.MetricaCPUNode"
                 },
@@ -2188,6 +2807,56 @@ const docTemplate = `{
                     "type": "integer",
                     "minimum": 0,
                     "example": 86400
+                }
+            }
+        },
+        "http.InstanciaDetalleResponse": {
+            "type": "object",
+            "properties": {
+                "cpu": {
+                    "type": "number",
+                    "maximum": 100,
+                    "minimum": 0,
+                    "x-nullable": true,
+                    "example": 24.5
+                },
+                "estado": {
+                    "type": "string",
+                    "example": "running"
+                },
+                "maxCpu": {
+                    "type": "integer",
+                    "example": 2
+                },
+                "maxMem": {
+                    "type": "integer",
+                    "example": 4294967296
+                },
+                "mem": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "x-nullable": true,
+                    "example": 2147483648
+                },
+                "nodo": {
+                    "type": "string",
+                    "example": "pve-01"
+                },
+                "nombre": {
+                    "type": "string",
+                    "example": "api-produccion"
+                },
+                "tipo": {
+                    "type": "string",
+                    "enum": [
+                        "qemu",
+                        "lxc"
+                    ],
+                    "example": "qemu"
+                },
+                "vmid": {
+                    "type": "integer",
+                    "example": 110
                 }
             }
         },
@@ -2217,9 +2886,10 @@ const docTemplate = `{
                 },
                 "cpuUsage": {
                     "type": "number",
-                    "maximum": 1,
+                    "maximum": 100,
                     "minimum": 0,
-                    "example": 0.24
+                    "x-nullable": true,
+                    "example": 24.5
                 },
                 "id": {
                     "type": "integer",
@@ -2254,6 +2924,7 @@ const docTemplate = `{
                 "ramUsage": {
                     "type": "integer",
                     "minimum": 0,
+                    "x-nullable": true,
                     "example": 2147483648
                 },
                 "status": {
@@ -2404,7 +3075,8 @@ const docTemplate = `{
                         "STOP",
                         "SHUTDOWN",
                         "REBOOT",
-                        "DELETE"
+                        "DELETE",
+                        "CREATE"
                     ],
                     "example": "START"
                 },
@@ -2447,7 +3119,6 @@ const docTemplate = `{
                 "fechaHora",
                 "id",
                 "mensaje",
-                "recursoId",
                 "recursoTipo",
                 "severidad",
                 "tipo"
@@ -2478,7 +3149,7 @@ const docTemplate = `{
                     "enum": [
                         "VM",
                         "LXC",
-                        "NODE"
+                        "HOST"
                     ],
                     "example": "VM"
                 },
@@ -2497,7 +3168,8 @@ const docTemplate = `{
                         "INSTANCE_STATE_CHANGED",
                         "INSTANCE_CREATED",
                         "RESOURCE_SATURATION",
-                        "TASK_FINISHED"
+                        "TASK_FINISHED",
+                        "ALERT_TRIGGERED"
                     ],
                     "example": "TASK_FINISHED"
                 }
@@ -2534,6 +3206,44 @@ const docTemplate = `{
                 }
             }
         },
+        "http.StorageResponse": {
+            "type": "object",
+            "required": [
+                "contentTypes",
+                "freeBytes",
+                "name",
+                "totalBytes",
+                "type"
+            ],
+            "properties": {
+                "contentTypes": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "example": [
+                        "images",
+                        "rootdir"
+                    ]
+                },
+                "freeBytes": {
+                    "type": "integer",
+                    "example": 320000000000
+                },
+                "name": {
+                    "type": "string",
+                    "example": "local-lvm"
+                },
+                "totalBytes": {
+                    "type": "integer",
+                    "example": 500000000000
+                },
+                "type": {
+                    "type": "string",
+                    "example": "lvmthin"
+                }
+            }
+        },
         "http.TaskFailed": {
             "type": "object",
             "required": [
@@ -2552,7 +3262,8 @@ const docTemplate = `{
                         "STOP",
                         "SHUTDOWN",
                         "REBOOT",
-                        "DELETE"
+                        "DELETE",
+                        "CREATE"
                     ],
                     "example": "STOP"
                 },
@@ -2605,7 +3316,8 @@ const docTemplate = `{
                         "STOP",
                         "SHUTDOWN",
                         "REBOOT",
-                        "DELETE"
+                        "DELETE",
+                        "CREATE"
                     ],
                     "example": "START"
                 },
@@ -2634,6 +3346,48 @@ const docTemplate = `{
                 "tareaId": {
                     "type": "string",
                     "example": "3f2504e0-4f89-11d3-9a0c-0305e82c3301"
+                }
+            }
+        },
+        "http.TemplateResponse": {
+            "type": "object",
+            "required": [
+                "id",
+                "name",
+                "sizeBytes",
+                "type"
+            ],
+            "properties": {
+                "id": {
+                    "type": "string",
+                    "example": "local:iso/ubuntu-24.04.iso"
+                },
+                "name": {
+                    "type": "string",
+                    "example": "ubuntu-24.04.iso"
+                },
+                "sizeBytes": {
+                    "type": "integer",
+                    "example": 2100000000
+                },
+                "type": {
+                    "type": "string",
+                    "enum": [
+                        "ISO",
+                        "LXC_TEMPLATE"
+                    ],
+                    "example": "ISO"
+                }
+            }
+        },
+        "http.WsTicketResponse": {
+            "type": "object",
+            "properties": {
+                "expiresIn": {
+                    "type": "integer"
+                },
+                "ticket": {
+                    "type": "string"
                 }
             }
         },
@@ -2773,7 +3527,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "detalles": {
-                    "type": "string"
+                    "type": "object"
                 },
                 "fechaHora": {
                     "type": "string"
@@ -2789,6 +3543,12 @@ const docTemplate = `{
                 },
                 "nombreUsuario": {
                     "description": "Nombre completo (JOIN con usuarios, o \"[usuario eliminado]\")",
+                    "type": "string"
+                },
+                "resourceId": {
+                    "type": "string"
+                },
+                "resourceType": {
                     "type": "string"
                 },
                 "resultado": {
@@ -2859,44 +3619,6 @@ const docTemplate = `{
                 },
                 "rol": {
                     "type": "string"
-                }
-            }
-        },
-        "ports.InstanciaProxmoxDTO": {
-            "type": "object",
-            "properties": {
-                "cpu": {
-                    "description": "Telemetría en tiempo real (0 cuando la instancia está detenida)",
-                    "type": "number"
-                },
-                "estado": {
-                    "description": "\"running\" | \"stopped\" | ...",
-                    "type": "string"
-                },
-                "maxCpu": {
-                    "description": "cantidad de vCPUs asignadas",
-                    "type": "integer"
-                },
-                "maxMem": {
-                    "description": "RAM máxima asignada (bytes)",
-                    "type": "integer"
-                },
-                "mem": {
-                    "description": "RAM usada (bytes)",
-                    "type": "integer"
-                },
-                "nodo": {
-                    "type": "string"
-                },
-                "nombre": {
-                    "type": "string"
-                },
-                "tipo": {
-                    "description": "\"qemu\" | \"lxc\"",
-                    "type": "string"
-                },
-                "vmid": {
-                    "type": "integer"
                 }
             }
         },

@@ -3,6 +3,8 @@ package ports
 import (
 	"context"
 	"errors"
+
+	"el-centinela/internal/core/domain"
 )
 
 // ==========================================
@@ -38,6 +40,19 @@ var ErrProxmoxCredenciales = errors.New("credenciales de Proxmox rechazadas o no
 // junto con ErrProxmoxNoDisponible; hacia el cliente HTTP se responde 504.
 var ErrProxmoxTimeout = errors.New("Proxmox VE no respondió a tiempo")
 
+// ErrRecursosInsuficientes indica que la cuota solicitada supera la capacidad
+// disponible del nodo o storage. Se traduce a 409 RESOURCE_QUOTA_EXCEEDED.
+var ErrRecursosInsuficientes = errors.New("recursos insuficientes para aprovisionar la instancia")
+
+// ErrCoordinacionAprovisionamiento indica que no pudo mantenerse la reserva
+// compartida que evita carreras entre solicitudes concurrentes.
+var ErrCoordinacionAprovisionamiento = errors.New("no se pudo coordinar la reserva de aprovisionamiento")
+
+// ErrCreacionNoDespachada indica que el cliente falló antes de enviar el POST
+// de creación. Permite liberar una reserva con certeza sin confundir ese caso
+// con una respuesta perdida después de que Proxmox pudo aceptar la operación.
+var ErrCreacionNoDespachada = errors.New("la creación no fue despachada a Proxmox")
+
 // InstanciaProxmoxDTO proyecta el estado de una instancia (VM o contenedor)
 // leído desde la API de Proxmox. Los campos de telemetría (Cpu, Mem, MaxMem)
 // provienen directamente de cluster/resources y solo tienen valor cuando la
@@ -49,7 +64,9 @@ type InstanciaProxmoxDTO struct {
 	Nodo   string `json:"nodo"`
 	Estado string `json:"estado"` // "running" | "stopped" | ...
 
-	// Telemetría en tiempo real (0 cuando la instancia está detenida)
+	// Telemetría en tiempo real, en las unidades de Proxmox (0 cuando la
+	// instancia está detenida). Uso interno: hacia el front sale convertida
+	// (ver domain.PorcentajeCPU e InstanciaDetalleResponse).
 	Cpu    float64 `json:"cpu"`    // uso de CPU: fracción [0,1]
 	Mem    int64   `json:"mem"`    // RAM usada (bytes)
 	MaxMem int64   `json:"maxMem"` // RAM máxima asignada (bytes)
@@ -69,8 +86,8 @@ type InstanciaListadaDTO struct {
 
 	// Campos extendidos de telemetría (retrocompatibles: omitempty)
 	Ip          *string        `json:"ip"`          // dirección IP de la instancia (si está disponible)
-	CpuUsage    *float64       `json:"cpuUsage"`    // fracción [0,1]
-	RamUsage    *int64         `json:"ramUsage"`    // bytes usados
+	CpuUsage    *float64       `json:"cpuUsage"`    // porcentaje 0 a 100; null si no está encendida
+	RamUsage    *int64         `json:"ramUsage"`    // bytes usados; null si no está encendida
 	MaxRam      *int64         `json:"maxRam"`      // bytes máximos
 	NivelAcceso string         `json:"nivelAcceso"` // "FULL_ACCESS" | "READ_ONLY" (o "FULL_ACCESS" para ADMIN)
 	ActiveTask  *ActiveTaskDTO `json:"activeTask"`  // tarea en curso o null
@@ -126,6 +143,64 @@ type ProxmoxPort interface {
 	// Un contenedor apagado devuelve una lista vacía sin error (Proxmox responde
 	// {"data": null}). Una VM apagada o sin agente devuelve el error de Proxmox.
 	ObtenerInterfaces(ctx context.Context, node, tipo string, vmid int) ([]InterfazRed, error)
+
+	// ObtenerStorages consulta GET /nodes/{node}/storage.
+	ObtenerStorages(ctx context.Context, node string) ([]StorageDTO, error)
+
+	// ObtenerContenidoStorage consulta GET /nodes/{node}/storage/{storage}/content.
+	ObtenerContenidoStorage(ctx context.Context, node, storage string) ([]StorageContentDTO, error)
+
+	// ObtenerMetricasRRD consulta GET /nodes/{node}/{tipo}/{vmid}/rrddata?timeframe={timeframe}.
+	ObtenerMetricasRRD(ctx context.Context, nodo, tipo string, vmid int, timeframe string) ([]domain.PuntoMetricaDTO, error)
+
+	// ObtenerMetricasNodoRRD consulta GET /nodes/{node}/rrddata?timeframe={timeframe}:
+	// el histórico del host (CPU, memoria y rootfs). Es la fuente del backfill que
+	// hace que el gráfico del Dashboard ya esté formado al entrar en vez de
+	// arrancar de cero.
+	ObtenerMetricasNodoRRD(ctx context.Context, nodo, timeframe string) ([]MuestraNodoRRD, error)
+
+	// ObtenerEstadoActual consulta GET /nodes/{node}/{tipo}/{vmid}/status/current.
+	ObtenerEstadoActual(ctx context.Context, nodo, tipo string, vmid int) (*domain.MetricasEnVivoDTO, error)
+
+	// ObtenerConfig consulta GET /nodes/{node}/{tipo}/{vmid}/config. Con enUso
+	// = true (current=1) devuelve la configuración que la instancia está usando;
+	// con false, la que tendrá después de aplicar los cambios pendientes.
+	ObtenerConfig(ctx context.Context, nodo, tipo string, vmid int, enUso bool) (*ConfigInstanciaDTO, error)
+
+	// ActualizarConfig hace PUT /nodes/{node}/{tipo}/{vmid}/config con los
+	// cores y la memoria (MiB) dados; 0 = no se cambia. digest (el de
+	// ObtenerConfig) hace que Proxmox rechace el cambio si la configuración se
+	// modificó en el medio.
+	ActualizarConfig(ctx context.Context, nodo, tipo string, vmid int, cores, memoriaMB int, digest string) error
+}
+
+// ConfigInstanciaDTO es la CPU y RAM configuradas de una instancia.
+type ConfigInstanciaDTO struct {
+	Cores     int    // vCPU (cores); en un LXC sin límite de CPU vale 0
+	MemoriaMB int    // RAM en MiB
+	Digest    string // huella del archivo de configuración (control de concurrencia)
+}
+
+// StorageDTO representa un almacenamiento tal como lo informa Proxmox en /nodes/{node}/storage.
+type StorageDTO struct {
+	Storage string `json:"storage"`
+	Type    string `json:"type"`
+	Total   int64  `json:"total"`
+	Used    int64  `json:"used"`
+	Avail   int64  `json:"avail"`
+	Active  int    `json:"active"`
+	Content string `json:"content"`
+	Shared  int    `json:"shared"`
+	Enabled int    `json:"enabled"`
+}
+
+// StorageContentDTO representa un elemento de contenido en un storage (ISO, plantilla, etc.).
+type StorageContentDTO struct {
+	Volid   string `json:"volid"`
+	Content string `json:"content"`
+	Format  string `json:"format"`
+	Size    int64  `json:"size"`
+	CTime   int64  `json:"ctime,omitempty"`
 }
 
 // InterfazRed es una interfaz de red de una instancia, normalizada: el formato
@@ -148,17 +223,56 @@ type DireccionIP struct {
 // normalizar (bytes y fracciones). La normalización a GB y porcentajes la hace
 // el servicio de estado del nodo.
 type NodeStatusDTO struct {
-	CPU        float64 // uso de CPU: fracción [0,1] sobre CPUs
-	CPUs       int     // hilos lógicos (cpuinfo.cpus): sobre estos se calcula CPU
-	MemTotal   int64   // bytes
-	MemUsada   int64   // bytes
-	DiscoTotal int64   // bytes del rootfs del nodo
-	DiscoUsado int64   // bytes del rootfs del nodo
-	UptimeSegs int64
+	CPU             float64 // uso de CPU: fracción [0,1] sobre CPUs
+	CPUs            int     // hilos lógicos (cpuinfo.cpus): sobre estos se calcula CPU
+	PhysicalCores   int     // núcleos físicos totales (cpuinfo.cores ya suma todos los sockets)
+	MemTotal        int64   // bytes
+	MemUsada        int64   // bytes
+	DiscoTotal      int64   // bytes del rootfs del nodo
+	DiscoUsado      int64   // bytes del rootfs del nodo
+	DiscoDisponible int64   // bytes asignables del rootfs (rootfs.avail)
+	UptimeSegs      int64
 }
 
 // EstadoTareaDTO es el estado de una tarea asíncrona de Proxmox.
 type EstadoTareaDTO struct {
 	Terminada  bool   // Proxmox reporta status "stopped"
 	ExitStatus string // "OK" si salió bien; si no, el mensaje de error de Proxmox
+}
+
+// CrearInstanciaProxmoxInput contiene la configuración normalizada que el
+// adaptador traduce a los parámetros form-urlencoded de qemu o lxc.
+type CrearInstanciaProxmoxInput struct {
+	Tipo        string // qemu | lxc
+	Nodo        string
+	Nombre      string
+	Descripcion string
+	Password    string // obligatorio solo para LXC
+	Cores       int
+	MemoriaMB   int
+	StorageID   string
+	DiscoGB     int
+	TemplateID  string
+	Bridge      string
+	VLAN        *int
+	Firewall    bool
+	IPv4Tipo    string // dhcp | static
+	IPv4Address string
+	IPv4Mask    string
+	IPv4Gateway string
+}
+
+// ResultadoAprovisionamiento vincula el VMID reservado con el UPID que debe
+// registrar el worker. Accion contiene qmcreate o vzcreate.
+type ResultadoAprovisionamiento struct {
+	VMID      int
+	UPID      string
+	Accion    string
+	ReservaID string
+}
+
+// AprovisionamientoPort separa las escrituras de creación del contrato de
+// consulta/operación de instancias existente. El cliente real implementa ambos.
+type AprovisionamientoPort interface {
+	AprovisionarInstancia(ctx context.Context, input CrearInstanciaProxmoxInput) (*ResultadoAprovisionamiento, error)
 }

@@ -143,3 +143,97 @@ func (s *Simulador) estabaEncendida(inst *instancia, t int64) bool {
 	}
 	return !inst.Iniciada.IsZero() && t >= inst.Iniciada.Unix() && t <= inst.DetenidaEn.Unix()
 }
+
+// ==========================================
+// GET /nodes/{node}/rrddata?timeframe=... (nodo)
+// ==========================================
+
+// discoUsadoNodoEn es el rootfs del nodo en el instante t. Antes era una
+// constante hardcodeada, y por eso el gráfico de almacenamiento del Dashboard
+// no podía moverse nunca: la serie era siempre el mismo valor. Ahora deriva
+// lento (como los logs y temporales de un host real) y suma el disco de las
+// instancias que estaban encendidas en ese momento.
+func (s *Simulador) discoUsadoNodoEn(t int64) int64 {
+	const base = int64(5477761024)
+	deriva := int64(50 * 1024 * 1024 * onda(99, t)) // hasta ~50 MB
+	var deInstancias int64
+	for _, inst := range s.instancias {
+		if s.estabaEncendida(inst, t) {
+			deInstancias += inst.DiscoUso / 20
+		}
+	}
+	return base + deriva + deInstancias
+}
+
+// resumenNodoEn evalúa el resumen del nodo en un instante cualquiera, para
+// poder reconstruir la serie histórica. La lectura "de ahora" del endpoint de
+// estado sale de acá, así que el valor vivo y el último punto del histórico
+// siempre coinciden.
+func (s *Simulador) resumenNodoEn(t int64) (cpu float64, memUsada, discoUsado int64) {
+	memUsada = int64(2339323904)
+	cpu = 0.004 + 0.003*ruido(0, t)
+	for _, inst := range s.instancias {
+		if !s.estabaEncendida(inst, t) {
+			continue
+		}
+		cpu += (0.004 + 0.03*onda(inst.Vmid, t)) * float64(inst.Cores) / 12
+		memUsada += int64(float64(inst.MemUso) * (0.9 + 0.2*onda(inst.Vmid+7, t)))
+	}
+	discoUsado = s.discoUsadoNodoEn(t)
+	return cpu, memUsada, discoUsado
+}
+
+// rrddataNodo responde el histórico del nodo con los mismos campos que Proxmox
+// VE en /nodes/{node}/rrddata. Es la fuente del backfill que hace que el
+// gráfico del Dashboard ya esté formado al entrar, en vez de arrancar de cero.
+func (s *Simulador) rrddataNodo(w http.ResponseWriter, r *http.Request) {
+	timeframe := r.URL.Query().Get("timeframe")
+	if timeframe == "" {
+		errorParametros(w, map[string]string{"timeframe": "property is missing and it is not optional"})
+		return
+	}
+	paso, ok := pasoPorTimeframe[timeframe]
+	if !ok {
+		errorParametros(w, map[string]string{"timeframe": "value '" + timeframe + "' does not have a value in the enumeration 'hour, day, week, month, year'"})
+		return
+	}
+	if cf := r.URL.Query().Get("cf"); cf != "" && cf != "AVERAGE" && cf != "MAX" {
+		errorParametros(w, map[string]string{"cf": "value '" + cf + "' does not have a value in the enumeration 'AVERAGE, MAX'"})
+		return
+	}
+	if !s.validarNodoYTipo(w, r) {
+		return
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	ahora := s.ahora().Unix()
+	ultimo := ahora - ahora%paso
+	puntos := make([]map[string]any, 0, puntosRRD)
+	for i := int64(puntosRRD - 1); i >= 0; i-- {
+		puntos = append(puntos, s.puntoRRDNodo(ultimo-i*paso))
+	}
+	responder(w, puntos)
+}
+
+// puntoRRDNodo arma un punto del nodo con los campos de la captura de Proxmox:
+// cpu en fracción [0,1] sobre los hilos del host, memoria usada y total, y el
+// rootfs del nodo.
+func (s *Simulador) puntoRRDNodo(t int64) map[string]any {
+	cpu, memUsada, discoUsado := s.resumenNodoEn(t)
+	return map[string]any{
+		"time":      t,
+		"cpu":       cpu,
+		"memused":   float64(memUsada),
+		"memtotal":  float64(16423432192),
+		"rootused":  float64(discoUsado),
+		"roottotal": float64(72722055168),
+		"netin":     math.Round(ruido(1, t)*12*100) / 100,
+		"netout":    math.Round(ruido(2, t)*1.5*100) / 100,
+		"diskread":  float64(0),
+		"diskwrite": math.Round(ruido(3, t)*273*100) / 100,
+		"loadavg":   math.Round(ruido(4, t)*40) / 100,
+		"iowait":    math.Round(ruido(5, t)*20) / 100,
+	}
+}

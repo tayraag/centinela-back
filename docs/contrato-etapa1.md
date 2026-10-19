@@ -27,6 +27,14 @@ solo los de sus instancias asignadas.
 
 - `cpu`: `usagePercent` entre 0 y 100 y `cores` como cantidad de núcleos.
 - `ram` y `storage`: `usedGb`, `totalGb` y `usagePercent` entre 0 y 100.
+- `allocatable`: cuotas seguras para el asistente de creación:
+  - `maxCpuCores`: total de núcleos físicos del host (`cpuinfo.cores`, que ya
+    incluye todos los sockets); se diferencia de `cpu.cores`, que informa los
+    hilos lógicos;
+  - `freeRamMb`: RAM libre asignable en MiB, después de descontar el uso actual
+    y reservar estrictamente el 15% de la RAM física para Proxmox;
+  - `freeStorageGb`: espacio asignable del disco raíz (`rootfs.avail`) en GiB;
+  - `headroomPercent`: porcentaje reservado, actualmente `15`.
 - `uptimeSeconds`: tiempo activo del nodo, entero no negativo en segundos.
 - `instancesSummary`: grupos `vms` y `lxc`; cada uno contiene `running`,
   `stopped`, `paused` y `total` como enteros no negativos.
@@ -57,6 +65,12 @@ nodo. `cores` son los hilos lógicos del nodo, sobre los que Proxmox calcula
   "cpu": { "usagePercent": 37.5, "cores": 16 },
   "ram": { "usedGb": 42.25, "totalGb": 128, "usagePercent": 33.01 },
   "storage": { "usedGb": 380, "totalGb": 1024, "usagePercent": 37.11 },
+  "allocatable": {
+    "maxCpuCores": 16,
+    "freeRamMb": 68147,
+    "freeStorageGb": 644,
+    "headroomPercent": 15
+  },
   "uptimeSeconds": 86400,
   "instancesSummary": {
     "vms": { "running": 6, "stopped": 2, "paused": 1, "total": 9 },
@@ -77,8 +91,11 @@ nodo. `cores` son los hilos lógicos del nodo, sobre los que Proxmox calcula
   (sin contar loopback) o, si no hay, la primera IPv6 global. Vale `null` si la
   instancia está apagada, no tiene agente o red, o no respondió a tiempo (2 s por
   instancia y 2,2 s para todo el listado): nunca provoca un error.
-- `cpuUsage`: fracción entre 0 y 1; vale 0 cuando la instancia está detenida.
-- `ramUsage` y `maxRam`: bytes usados y bytes máximos asignados.
+- `cpuUsage`: porcentaje de 0 a 100, con 2 decimales.
+- `ramUsage`: bytes usados.
+- `maxRam`: bytes máximos asignados; se informa también con la instancia apagada.
+- Con la instancia apagada (`status` distinto de `running`), `cpuUsage` y
+  `ramUsage` valen `null`, nunca 0: para el front, `null` significa apagada.
 - `nivelAcceso`: `FULL_ACCESS` o `READ_ONLY`; para `ADMIN` siempre se informa
   `FULL_ACCESS`.
 - `activeTask`: objeto `{ tareaId, action, status }` con la tarea en curso de la
@@ -91,7 +108,14 @@ nodo. `cores` son los hilos lógicos del nodo, sobre los que Proxmox calcula
     `null`.
 
 `type` usa `vm` o `lxc`. La respuesta no omite telemetría, `nivelAcceso`, `ip` ni
-`activeTask`; estos dos últimos expresan ausencia con `null`.
+`activeTask`; `ip`, `activeTask`, `cpuUsage` y `ramUsage` expresan ausencia con
+`null`.
+
+**Convención de CPU y RAM en toda la API** (definida por la PM): la CPU viaja
+siempre en porcentaje de 0 a 100, y CPU y RAM usada valen `null` con la instancia
+apagada. Vale para el inventario, el detalle (`GET /api/instances/:vmid`, campos
+`cpu` y `mem`), el WebSocket de métricas (`cpu` y `mem`) y el estado del nodo
+(`cpu.usagePercent`).
 
 ```json
 [
@@ -102,7 +126,7 @@ nodo. `cores` son los hilos lógicos del nodo, sobre los que Proxmox calcula
     "node": "pve-01",
     "status": "running",
     "ip": null,
-    "cpuUsage": 0.24,
+    "cpuUsage": 24.5,
     "ramUsage": 2147483648,
     "maxRam": 4294967296,
     "nivelAcceso": "FULL_ACCESS",
@@ -115,8 +139,8 @@ nodo. `cores` son los hilos lógicos del nodo, sobre los que Proxmox calcula
     "node": "pve-01",
     "status": "stopped",
     "ip": null,
-    "cpuUsage": 0,
-    "ramUsage": 0,
+    "cpuUsage": null,
+    "ramUsage": null,
     "maxRam": 1073741824,
     "nivelAcceso": "FULL_ACCESS",
     "activeTask": {
@@ -132,6 +156,79 @@ La operación lee Proxmox en vivo. Si la consulta de tareas activas falla, el
 inventario sigue respondiendo y `activeTask` queda en `null`; si falla Proxmox o
 la consulta de permisos, se usa el sobre de error `{ "errorCode", "message" }`
 ya vigente.
+
+## Aprovisionamiento — operativo, solo ADMIN
+
+`POST /api/instances` crea de forma asíncrona una VM o un LXC. Solo lo puede
+invocar un `ADMIN`; un `OPERATOR` recibe `403 INSUFFICIENT_PERMISSIONS`.
+
+El contrato RF-07 es plano; `nodo` es opcional y, si se omite, usa
+`PROXMOX_NODE`. `red.modo` acepta `dhcp` o `static`. Una IP estática puede
+incluir el prefijo CIDR en `ip` o enviarlo en `mascara` (por defecto `/24`).
+Para no cortar la migración del frontend también se acepta temporalmente el
+payload anidado anterior del wizard: `type`, `node`, `name`, `cpu.cores`,
+`ram.memoryMb`, `disk.storageId/sizeGb`,
+`network.bridge/vlan/firewall/ipv4` y `os.templateId`. En ese formato, LXC
+requiere `password`. Las integraciones nuevas deben usar el contrato plano.
+
+```json
+{
+  "tipo": "vm",
+  "nombre": "srv-prod-01",
+  "cores": 2,
+  "ramMb": 2048,
+  "discoGb": 20,
+  "storageId": "local-lvm",
+  "templateOso": "debian-12.iso",
+  "red": { "modo": "dhcp" }
+}
+```
+
+Antes de llamar a Proxmox, `CuotasService` toma el lock distribuido
+`lock:instance:provisioning` (`SET NX`, TTL 30 s), valida la capacidad
+disponible de CPU lógica, RAM y disco y registra una reserva temporal. Si otra
+creación posee el lock, espera y reintenta durante un máximo de 2 s. El lock se
+libera mediante comparación atómica de su UUID para no borrar el de otro
+request si el anterior venció.
+
+La RAM asignable descuenta el mayor valor entre el consumo actual y la RAM ya
+configurada en las instancias, reserva además el 15% de la RAM física para
+Proxmox y descuenta las solicitudes aceptadas aún no consolidadas. La CPU usa
+los procesadores lógicos de `cpuinfo.cpus`; el disco usa `avail` del storage
+seleccionado. Las solicitudes concurrentes descuentan sus reservas para no
+aprobar dos veces el mismo remanente. Si la capacidad no alcanza responde
+`409 RESOURCE_QUOTA_EXCEEDED`; si no puede mantener la coordinación compartida,
+responde `503 PROVISIONING_COORDINATION_UNAVAILABLE` sin crear la instancia.
+La validación consulta primero la foto compartida
+`aprovisionamiento:capacidad:{node}` en Redis; ante ausencia o vencimiento lee
+Proxmox y la conserva 10 segundos. Una orden aceptada invalida esa clave y
+`node:status:current`; el worker repite la invalidación al cerrar la tarea para
+que la siguiente lectura refleje el estado definitivo. No se vacía Redis
+completo, porque también contiene sesiones y tickets SSE.
+
+Después de validar, el backend consulta `GET /cluster/nextid` y envía la orden
+a `/nodes/{node}/qemu` o `/nodes/{node}/lxc`. Solo responde `202` después de
+insertar el UPID con estado `RUNNING` en `tareas_asincronas` y su auditoría
+inicial dentro de la misma transacción:
+
+```json
+{
+  "vmid": 115,
+  "tareaId": "0192a8b3-4f89-7e23-9a0c-0305e82c3301"
+}
+```
+
+`tareaId` es la referencia pública opaca administrada por Centinela. El UPID
+real se conserva en PostgreSQL para que el worker consulte Proxmox y correlacione
+la auditoría, pero no se incluye en respuestas HTTP, listados administrativos ni
+exportaciones.
+
+Si falla ese registro luego de que Proxmox aceptó la orden, devuelve
+`500 TASK_TRACKING_UNAVAILABLE` y advierte que no se debe reintentar sin
+verificar el estado. Al terminar, el worker libera la reserva y publica
+`TASK_FINISHED` con `accion: "CREATE"` y el VMID en `recursoId`. Un resultado
+`OK` o `WARNINGS` asigna atómicamente `FULL_ACCESS` al usuario creador antes de
+publicar el evento.
 
 ## Acciones aceptadas — operativo
 
@@ -157,12 +254,12 @@ las tres responden `202` con `AccionAceptadaResponse`. La cuarta,
 
 El cuerpo `202` es el esquema `http.AccionAceptadaResponse`:
 
-- `upid`: obligatorio. Es el UPID de la tarea que Proxmox crea para la acción.
-- `tareaId`: **opcional**. Es el identificador de la tarea registrada por el
-  backend y es el mismo valor que llega en el evento `TASK_FINISHED`.
+- `tareaId`: **obligatorio**. Es el identificador opaco de la tarea registrada
+  por el backend y es el mismo valor que llega en el evento `TASK_FINISHED`.
+- El UPID de Proxmox permanece privado y nunca se entrega al frontend.
 
 ```json
-{ "upid": "UPID:pve:0008380E:0131F1BF:6A84EA54:vzstart:110:root@pam:ctid=110:starttime=6934A2E3:", "tareaId": "3f2504e0-4f89-11d3-9a0c-0305e82c3301" }
+{ "tareaId": "3f2504e0-4f89-11d3-9a0c-0305e82c3301" }
 ```
 
 La acción es asíncrona: el `202` confirma que Proxmox aceptó la orden, **no** que
@@ -185,7 +282,7 @@ tarea de borrado y el servidor responde `202` con el mismo
 `AccionAceptadaResponse` que las acciones de energía:
 
 ```json
-{ "upid": "UPID:pve:0008381A:0131F2C0:6A84EB10:qmdestroy:110:centinela-api@pve!backend-token:", "tareaId": "3f2504e0-4f89-11d3-9a0c-0305e82c3303" }
+{ "tareaId": "3f2504e0-4f89-11d3-9a0c-0305e82c3303" }
 ```
 
 El borrado es asíncrono: mientras dura, la instancia aparece en el inventario con
@@ -227,7 +324,18 @@ Estos son los pares error/status que las acciones de energía pueden devolver
 | 409  | `INSTANCE_INVALID_STATE`   | Estado incompatible con la acción         |
 | 500  | `INTERNAL_ERROR`           | Permisos o error inesperado de Proxmox    |
 | 502  | `PROXMOX_UNAVAILABLE`      | Proxmox caído, sin red o token rechazado  |
+| 503  | `INSTANCE_LOCK_UNAVAILABLE`| No se pudo verificar si está ocupada      |
 | 504  | `PROXMOX_TIMEOUT`          | Proxmox no respondió a tiempo             |
+
+**Exclusión mutua (`RequireInstanceIdle`).** Las operaciones que modifican una
+instancia (`start`, `stop`, `status/{action}` y el borrado; también la edición
+de configuración y los snapshots, cuando existan) pasan por una guarda que
+permite **una sola operación a la vez por instancia**. Si hay una tarea
+`RUNNING` de esa instancia o el lock `lock:instance:{vmid}:operation` está
+tomado, responde `409 INSTANCE_BUSY` **sin contactar a Proxmox**. Ante una
+ráfaga de pedidos simultáneos, pasa uno solo y el resto recibe `409`. Si no se
+puede consultar la base, responde `503 INSTANCE_LOCK_UNAVAILABLE` y tampoco se
+envía nada a Proxmox.
 
 **Códigos adicionales que emite el servidor para el mismo estado:**
 
@@ -282,18 +390,18 @@ contrato documenta el comportamiento real, no el solicitado.
 | Campo `error` de tipo `string` | No existe en el sobre real        |
 | Acción `Pause`                 | No implementada; `404 NOT_FOUND`  |
 | `TOKEN_MISSING` y afines       | El servidor emite `MISSING_TOKEN` |
-| `202` con `tareaId` siempre    | Se omite si el registro falla     |
+| UPID visible en el frontend   | Se reemplaza por `tareaId` opaco  |
 
 **Detalle:** el sobre real es `{ "errorCode", "message" }`, no `{ "error" }`. Los
 códigos de autenticación reales son `MISSING_TOKEN`, `INVALID_TOKEN` y
 `TOKEN_REVOKED`; no existe un código propio para expiración.
 
-**Seguimiento opcional.** Si el registro de la tarea falla, la acción ya se
-aplicó en Proxmox y la respuesta `202` conserva únicamente `upid`. El cliente no
-debe tratar la ausencia de `tareaId` como error ni esperar un `TASK_FINISHED`
-correlacionable; en ese caso debe reconciliar por `upid`. Esto vale también para
-el borrado, que antes respondía `204` sin cuerpo y ahora es asíncrono como las
-demás acciones.
+**Seguimiento obligatorio.** El servidor solo responde `202` cuando pudo
+persistir la tarea y generar su `tareaId`. Si Proxmox aceptó la orden pero falla
+el registro local, responde `500 TASK_TRACKING_UNAVAILABLE`; el cliente debe
+verificar el estado antes de reintentar. El UPID no se usa como alternativa
+pública. Esto vale también para el borrado, que antes respondía `204` sin cuerpo
+y ahora es asíncrono como las demás acciones.
 
 ## Canal de eventos en tiempo real — operativo
 
@@ -372,7 +480,7 @@ El `data:` de cada evento es el esquema `http.SSEEventPayload`:
 | `tipo`        | enum           | sí          |
 | `severidad`   | enum           | sí          |
 | `recursoTipo` | enum           | sí          |
-| `recursoId`   | string         | sí          |
+| `recursoId`   | string         | no          |
 | `mensaje`     | string         | sí          |
 | `fechaHora`   | string RFC3339 | sí          |
 | `detalles`    | object         | no          |
@@ -383,9 +491,14 @@ El `data:` de cada evento es el esquema `http.SSEEventPayload`:
 - `fechaHora` es RFC3339, declarado en Swagger con `format: date-time`.
 - `detalles` se omite cuando el evento no trae datos extra.
 - `tipo` admite `INSTANCE_STATE_CHANGED`, `INSTANCE_CREATED`,
-  `RESOURCE_SATURATION` y `TASK_FINISHED`.
+  `RESOURCE_SATURATION`, `TASK_FINISHED` y `ALERT_TRIGGERED`.
 - `severidad` admite `INFO`, `WARNING` y `CRITICAL`.
-- `recursoTipo` admite `VM`, `LXC` y `NODE`.
+- `recursoTipo` admite `VM`, `LXC` y `HOST` (el servidor físico; reemplaza al
+  antiguo `NODE`).
+- `recursoId` es el VMID en los eventos de VM y LXC; se omite en los del `HOST`.
+- Los eventos de `HOST`, como las alertas `ALERT_TRIGGERED`, solo llegan a
+  usuarios `ADMIN`; un `OPERATOR` no los recibe aunque tenga permisos sobre
+  instancias. Ejemplos en `contrato-eventos.md`.
 
 `detalles` tiene forma `http.SSEDetallesEvento`: todos sus campos son
 opcionales porque la forma depende del `tipo` del evento. Hoy el único tipo que
@@ -399,7 +512,7 @@ aplican valen `null`, nunca se omiten:
 | Campo        | Tipo             | Valor                                                  |
 |--------------|------------------|--------------------------------------------------------|
 | `tareaId`    | string           | El `tareaId` del `202`                                 |
-| `accion`     | enum             | `START`, `STOP`, `SHUTDOWN`, `REBOOT` o `DELETE`       |
+| `accion`     | enum             | `START`, `STOP`, `SHUTDOWN`, `REBOOT`, `DELETE` o `CREATE` |
 | `estado`     | enum             | `COMPLETED` o `FAILED`                                 |
 | `exitstatus` | string o `null`  | Lo que informó Proxmox; `null` si no la cerró          |
 | `motivo`     | enum o `null`    | `null` salvo con `estado` `FAILED`                     |

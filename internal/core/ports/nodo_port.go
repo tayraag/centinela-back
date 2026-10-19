@@ -36,12 +36,22 @@ type ResumenInstancias struct {
 	LXC ResumenEstado `json:"lxc"`
 }
 
+// CuotaAsignable contiene los recursos que el asistente puede ofrecer para
+// nuevas instancias. FreeRamMb excluye siempre el headroom del hipervisor.
+type CuotaAsignable struct {
+	MaxCPUCores     int   `json:"maxCpuCores"`
+	FreeRamMB       int64 `json:"freeRamMb"`
+	FreeStorageGB   int64 `json:"freeStorageGb"`
+	HeadroomPercent int   `json:"headroomPercent"`
+}
+
 // EstadoNodo es la lectura normalizada del nodo. Es lo que se guarda en Redis
 // (node:status:current y node:status:last_known).
 type EstadoNodo struct {
 	CPU              MetricaCPU        `json:"cpu"`
 	RAM              MetricaCapacidad  `json:"ram"`
 	Storage          MetricaCapacidad  `json:"storage"`
+	Allocatable      CuotaAsignable    `json:"allocatable"`
 	UptimeSeconds    int64             `json:"uptimeSeconds"`
 	InstancesSummary ResumenInstancias `json:"instancesSummary"`
 	FetchedAt        time.Time         `json:"fetchedAt"` // cuándo se leyó de Proxmox
@@ -53,4 +63,38 @@ type NodoService interface {
 	// responde, la última conocida (stale = true). Si tampoco hay una lectura
 	// previa devuelve el error de Proxmox (ErrProxmoxNoDisponible / ErrProxmoxTimeout).
 	ObtenerEstado(ctx context.Context) (estado *EstadoNodo, stale bool, err error)
+
+	// ObtenerHistorial devuelve la serie histórica del host para el gráfico del
+	// Dashboard, ya normalizada a los tres porcentajes que muestra el panel. El
+	// gráfico la carga al entrar, así que no arranca de cero: la fuente es el RRD
+	// de Proxmox, cacheado en Redis para no golpear la infraestructura en cada
+	// visita.
+	ObtenerHistorial(ctx context.Context) ([]PuntoHistorialNodo, error)
+}
+
+// ==========================================
+// Histórico del nodo (GET /api/node/history)
+// ==========================================
+
+// MuestraNodoRRD es una muestra cruda del histórico del host, tal como sale de
+// Proxmox en /nodes/{node}/rrddata. La normaliza el servicio.
+type MuestraNodoRRD struct {
+	Timestamp  int64   // segundos UNIX
+	CPU        float64 // fracción [0,1] sobre los hilos lógicos del host
+	MemUsada   int64   // bytes
+	MemTotal   int64   // bytes
+	DiscoUsado int64   // bytes del rootfs del nodo
+	DiscoTotal int64   // bytes del rootfs del nodo
+}
+
+// PuntoHistorialNodo es una muestra del histórico ya normalizada: los tres
+// porcentajes que dibuja el gráfico del Dashboard.
+//
+// RAM y almacenamiento se omiten cuando el punto del RRD no trae su total
+// (maxmem/maxdisk): publicar 0% hacía que el gráfico mostrara una caída al piso.
+type PuntoHistorialNodo struct {
+	Timestamp      int64    `json:"timestamp"`                // segundos UNIX
+	CPUPercent     float64  `json:"cpuPercent"`               // 0–100, 2 decimales
+	RAMPercent     *float64 `json:"ramPercent,omitempty"`     // 0–100, 2 decimales; ausente = sin dato
+	StoragePercent *float64 `json:"storagePercent,omitempty"` // 0–100, 2 decimales; ausente = sin dato
 }

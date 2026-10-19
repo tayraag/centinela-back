@@ -58,12 +58,6 @@ func InitDB() (*gorm.DB, error) {
 	}
 	log.Println("✅ Migración completada exitosamente")
 
-	// Eliminación lógica de usuarios y unicidad del correo solo entre los no
-	// eliminados (idempotente; ver migrar_usuarios.go).
-	if err := migrarUnicidadEmail(db); err != nil {
-		return nil, err
-	}
-
 	// Crear tabla auditoria particionada e índices locales (idempotente)
 	if err := migrarAuditoriaParticionada(db); err != nil {
 		return nil, err
@@ -71,6 +65,14 @@ func InitDB() (*gorm.DB, error) {
 
 	// Asegurar la existencia proactiva de las particiones actuales y futuras
 	if err := asegurarParticionesFuturas(db); err != nil {
+		return nil, err
+	}
+
+	// Eliminación lógica de usuarios y unicidad del correo solo entre los no
+	// eliminados (idempotente; ver migrar_usuarios.go). Va DESPUÉS de crear
+	// auditoria: clasifica a los usuarios eliminados leyendo esa tabla, que en
+	// una base nueva todavía no existe antes de migrarAuditoriaParticionada.
+	if err := migrarUnicidadEmail(db); err != nil {
 		return nil, err
 	}
 
@@ -244,6 +246,9 @@ func migrarAuditoriaParticionada(db *gorm.DB) error {
 				accion           VARCHAR(100) NOT NULL,
 				instancia_id     VARCHAR(100),
 				instancia_nombre VARCHAR(255),
+				resource_type     VARCHAR(30),
+				resource_id       VARCHAR(100),
+				upid             VARCHAR(255),
 				resultado        VARCHAR(50)  NOT NULL,
 				detalles         JSONB,
 				fecha_hora       TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
@@ -253,6 +258,17 @@ func migrarAuditoriaParticionada(db *gorm.DB) error {
 			return fmt.Errorf("error al crear tabla auditoria particionada: %w", err)
 		}
 		log.Println("🗂️  Tabla auditoria creada con particionamiento declarativo RANGE (fecha_hora)")
+	}
+	// RF-08: instalaciones ya migradas también reciben el campo de correlación.
+	// En PostgreSQL, agregarlo a la madre lo propaga a todas sus particiones.
+	if err := db.Exec(`ALTER TABLE auditoria ADD COLUMN IF NOT EXISTS upid VARCHAR(255)`).Error; err != nil {
+		return fmt.Errorf("error al agregar UPID a auditoria: %w", err)
+	}
+	if err := db.Exec(`ALTER TABLE auditoria ADD COLUMN IF NOT EXISTS resource_type VARCHAR(30)`).Error; err != nil {
+		return fmt.Errorf("error al agregar resource_type a auditoria: %w", err)
+	}
+	if err := db.Exec(`ALTER TABLE auditoria ADD COLUMN IF NOT EXISTS resource_id VARCHAR(100)`).Error; err != nil {
+		return fmt.Errorf("error al agregar resource_id a auditoria: %w", err)
 	}
 
 	// 2. Crear particiones trimestrales e idempotentes.
@@ -275,6 +291,11 @@ func migrarAuditoriaParticionada(db *gorm.DB) error {
 			sql: `CREATE INDEX IF NOT EXISTS idx_auditoria_usuario_fecha
 				  ON auditoria (usuario_id, fecha_hora DESC)`,
 		},
+		{
+			nombre: "idx_auditoria_query",
+			sql: `CREATE INDEX IF NOT EXISTS idx_auditoria_query
+				  ON auditoria (fecha_hora DESC, usuario_id, accion)`,
+		},
 	}
 	for _, idx := range indices {
 		if err := db.Exec(idx.sql).Error; err != nil {
@@ -295,32 +316,27 @@ func migrarAuditoriaParticionada(db *gorm.DB) error {
 
 	if legacyExiste > 0 {
 		log.Println("🔄 Traspasando historial desde auditoria_legacy hacia la nueva tabla particionada auditoria...")
-		
-		tx := db.Begin()
-		defer func() {
-			if r := recover(); r != nil {
-				tx.Rollback()
+
+		// Traspaso y borrado de la legacy en una sola transacción: si el volcado
+		// falla, la legacy queda intacta. db.Transaction (no db.Begin) funciona
+		// también si db ya es una transacción (usa un savepoint), como en los tests.
+		err := db.Transaction(func(tx *gorm.DB) error {
+			if err := tx.Exec(`
+				INSERT INTO auditoria (id, fecha_hora, usuario_id, accion, instancia_id, instancia_nombre, resultado, detalles)
+				SELECT id, fecha_hora, usuario_id, accion, instancia_id, instancia_nombre, resultado, detalles
+				FROM auditoria_legacy
+				ON CONFLICT DO NOTHING
+			`).Error; err != nil {
+				return fmt.Errorf("error al volcar datos desde auditoria_legacy: %w", err)
 			}
-		}()
-
-		if err := tx.Exec(`
-			INSERT INTO auditoria (id, fecha_hora, usuario_id, accion, instancia_id, instancia_nombre, resultado, detalles)
-			SELECT id, fecha_hora, usuario_id, accion, instancia_id, instancia_nombre, resultado, detalles
-			FROM auditoria_legacy
-			ON CONFLICT DO NOTHING
-		`).Error; err != nil {
-			tx.Rollback()
-			return fmt.Errorf("error al volcar datos desde auditoria_legacy: %w", err)
-		}
-
-		log.Println("🗑️  Traspaso exitoso. Eliminando tabla transitoria auditoria_legacy...")
-		if err := tx.Exec(`DROP TABLE IF EXISTS auditoria_legacy CASCADE`).Error; err != nil {
-			tx.Rollback()
-			return fmt.Errorf("error al eliminar auditoria_legacy: %w", err)
-		}
-
-		if err := tx.Commit().Error; err != nil {
-			return fmt.Errorf("error al confirmar migración de auditoria_legacy: %w", err)
+			log.Println("🗑️  Traspaso exitoso. Eliminando tabla transitoria auditoria_legacy...")
+			if err := tx.Exec(`DROP TABLE IF EXISTS auditoria_legacy CASCADE`).Error; err != nil {
+				return fmt.Errorf("error al eliminar auditoria_legacy: %w", err)
+			}
+			return nil
+		})
+		if err != nil {
+			return err
 		}
 	}
 
@@ -331,7 +347,7 @@ func migrarAuditoriaParticionada(db *gorm.DB) error {
 // trimestre en curso y del siguiente, evitando que los registros caigan en la default.
 func asegurarParticionesFuturas(db *gorm.DB) error {
 	ahora := time.Now()
-	qActual := int((ahora.Month() - 1) / 3 + 1)
+	qActual := int((ahora.Month()-1)/3 + 1)
 	yActual := ahora.Year()
 
 	qSiguiente := qActual + 1
@@ -350,7 +366,7 @@ func asegurarParticionesFuturas(db *gorm.DB) error {
 	}
 
 	for _, t := range trimestres {
-		mesInicio := time.Month((t.q - 1) * 3 + 1)
+		mesInicio := time.Month((t.q-1)*3 + 1)
 		fechaInicio := time.Date(t.year, mesInicio, 1, 0, 0, 0, 0, time.UTC)
 		fechaFin := fechaInicio.AddDate(0, 3, 0)
 
@@ -359,14 +375,14 @@ func asegurarParticionesFuturas(db *gorm.DB) error {
 			PARTITION OF auditoria
 			FOR VALUES FROM ('%s') TO ('%s')`,
 			nombreParticion,
-			fechaInicio.Format("2006-01-02"),
-			fechaFin.Format("2006-01-02"))
+			fechaInicio.Format("2006-01-02 15:04:05Z07:00"),
+			fechaFin.Format("2006-01-02 15:04:05Z07:00"))
 
 		if err := db.Exec(sql).Error; err != nil {
 			return fmt.Errorf("error al asegurar partición futura %s: %w", nombreParticion, err)
 		}
 	}
-	
+
 	log.Println("📅 Particiones trimestrales dinámicas aseguradas (actual y próximo)")
 	return nil
 }
@@ -384,19 +400,19 @@ func crearParticionesAuditoria(db *gorm.DB) error {
 			nombre: "auditoria_2026_q3",
 			sql: `CREATE TABLE IF NOT EXISTS auditoria_2026_q3
 				  PARTITION OF auditoria
-				  FOR VALUES FROM ('2026-07-01') TO ('2026-10-01')`,
+				  FOR VALUES FROM ('2026-07-01 00:00:00+00') TO ('2026-10-01 00:00:00+00')`,
 		},
 		{
 			nombre: "auditoria_2026_q4",
 			sql: `CREATE TABLE IF NOT EXISTS auditoria_2026_q4
 				  PARTITION OF auditoria
-				  FOR VALUES FROM ('2026-10-01') TO ('2027-01-01')`,
+				  FOR VALUES FROM ('2026-10-01 00:00:00+00') TO ('2027-01-01 00:00:00+00')`,
 		},
 		{
 			nombre: "auditoria_2027_q1",
 			sql: `CREATE TABLE IF NOT EXISTS auditoria_2027_q1
 				  PARTITION OF auditoria
-				  FOR VALUES FROM ('2027-01-01') TO ('2027-04-01')`,
+				  FOR VALUES FROM ('2027-01-01 00:00:00+00') TO ('2027-04-01 00:00:00+00')`,
 		},
 		{
 			nombre: "auditoria_default",

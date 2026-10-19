@@ -24,6 +24,7 @@ const (
 	EventoInstanciaCreada = "INSTANCE_CREATED"       // se creó una instancia
 	EventoSaturacion      = "RESOURCE_SATURATION"    // un recurso superó su umbral de uso
 	EventoTareaFinalizada = "TASK_FINISHED"          // terminó una tarea asincrónica
+	EventoAlerta          = "ALERT_TRIGGERED"        // se disparó una alerta de infraestructura (p. ej. del host)
 )
 
 // Niveles de severidad permitidos para un evento.
@@ -33,11 +34,13 @@ const (
 	SeveridadCritical = "CRITICAL"
 )
 
-// Tipos de recurso que puede referenciar un evento.
+// Tipos de recurso que puede referenciar un evento. Define quién lo recibe:
+//   - VM y LXC: ADMIN y los OPERATOR con permiso sobre esa instancia (cualquier nivel).
+//   - HOST: el servidor físico (nodo de Proxmox); solo ADMIN. No lleva recursoId.
 const (
 	RecursoVM   = "VM"
 	RecursoLXC  = "LXC"
-	RecursoNodo = "NODE"
+	RecursoHost = "HOST"
 )
 
 // Estados posibles de una tarea asincrónica reportados en el evento.
@@ -60,6 +63,7 @@ var tiposEventoPermitidos = []string{
 	EventoInstanciaCreada,
 	EventoSaturacion,
 	EventoTareaFinalizada,
+	EventoAlerta,
 }
 
 // severidadesPermitidas reúne los valores válidos de severidad para validar entradas.
@@ -86,7 +90,7 @@ type RealtimeEvent struct {
 	Tipo        string         `json:"tipo"`
 	Severidad   string         `json:"severidad"`
 	RecursoTipo string         `json:"recursoTipo"`
-	RecursoID   string         `json:"recursoId"`
+	RecursoID   string         `json:"recursoId,omitempty"` // VMID en VM y LXC; se omite en HOST
 	Mensaje     string         `json:"mensaje"`
 	FechaHora   time.Time      `json:"fechaHora"`
 	Detalles    map[string]any `json:"detalles,omitempty"`
@@ -124,6 +128,7 @@ func NewRealtimeEvent(tipo, severidad, mensaje string) (RealtimeEvent, error) {
 }
 
 // ConRecurso devuelve una copia del evento con el recurso afectado completado.
+// Para un evento del host: ConRecurso(RecursoHost, "") (sin recursoId).
 func (e RealtimeEvent) ConRecurso(tipoRecurso, recursoID string) RealtimeEvent {
 	e.RecursoTipo = tipoRecurso
 	e.RecursoID = recursoID

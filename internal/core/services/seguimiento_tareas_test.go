@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -54,26 +53,57 @@ func (p *proxmoxTareas) ListarInstancias(context.Context) ([]ports.InstanciaProx
 }
 func (p *proxmoxTareas) IniciarInstancia(context.Context, int) (string, error) { return "", nil }
 func (p *proxmoxTareas) DetenerInstancia(context.Context, int) (string, error) { return "", nil }
-func (p *proxmoxTareas) Shutdown(context.Context, string, int, string) (string, error) { return "", nil }
+func (p *proxmoxTareas) Shutdown(context.Context, string, int, string) (string, error) {
+	return "", nil
+}
 func (p *proxmoxTareas) Reboot(context.Context, string, int, string) (string, error) { return "", nil }
-func (p *proxmoxTareas) EliminarInstancia(context.Context, string, int, string) (string, error) { return "", nil }
-
-type tareasEnMemoria struct {
-	mu     sync.Mutex
-	tareas map[uuid.UUID]*domain.TareaAsincrona
+func (p *proxmoxTareas) ObtenerConfig(context.Context, string, string, int, bool) (*ports.ConfigInstanciaDTO, error) {
+	return &ports.ConfigInstanciaDTO{}, nil
+}
+func (p *proxmoxTareas) ActualizarConfig(context.Context, string, string, int, int, int, string) error {
+	return nil
+}
+func (p *proxmoxTareas) EliminarInstancia(context.Context, string, int, string) (string, error) {
+	return "", nil
+}
+func (p *proxmoxTareas) ObtenerStorages(context.Context, string) ([]ports.StorageDTO, error) {
+	return nil, nil
+}
+func (p *proxmoxTareas) ObtenerContenidoStorage(context.Context, string, string) ([]ports.StorageContentDTO, error) {
+	return nil, nil
+}
+func (p *proxmoxTareas) ObtenerMetricasRRD(context.Context, string, string, int, string) ([]domain.PuntoMetricaDTO, error) {
+	return nil, nil
+}
+func (p *proxmoxTareas) ObtenerMetricasNodoRRD(context.Context, string, string) ([]ports.MuestraNodoRRD, error) {
+	return nil, nil
+}
+func (p *proxmoxTareas) ObtenerEstadoActual(context.Context, string, string, int) (*domain.MetricasEnVivoDTO, error) {
+	return nil, nil
 }
 
-func (r *tareasEnMemoria) Crear(_ context.Context, t *domain.TareaAsincrona) error {
+type tareasEnMemoria struct {
+	mu               sync.Mutex
+	tareas           map[uuid.UUID]*domain.TareaAsincrona
+	audit            *auditoriaGrabadora
+	auditoriaInicial ports.RegistrarAuditoriaInput
+}
+
+func (r *tareasEnMemoria) Crear(_ context.Context, t *domain.TareaAsincrona, auditoria ports.RegistrarAuditoriaInput) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	copia := *t
 	r.tareas[t.ID] = &copia
+	r.auditoriaInicial = auditoria
 	return nil
 }
-func (r *tareasEnMemoria) ActualizarEstado(_ context.Context, id uuid.UUID, estado string, metadatos map[string]any) error {
+func (r *tareasEnMemoria) ActualizarEstado(_ context.Context, id uuid.UUID, estado string, metadatos map[string]any, auditoria ports.RegistrarAuditoriaInput) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if t, ok := r.tareas[id]; ok {
+		if r.audit != nil {
+			r.audit.Registrar(context.Background(), auditoria)
+		}
 		t.Estado = estado
 		if metadatos != nil {
 			crudo, _ := json.Marshal(metadatos)
@@ -114,6 +144,32 @@ func (r *tareasEnMemoria) estado(id uuid.UUID) string {
 	return r.tareas[id].Estado
 }
 
+func TestSeguimiento_RegistraCreacionRunningConUPIDYAuditoriaInicial(t *testing.T) {
+	repo := &tareasEnMemoria{tareas: map[uuid.UUID]*domain.TareaAsincrona{}}
+	pool := services.NewSeguimientoTareas(&proxmoxTareas{}, repo, services.NewAuditService(nil), services.ConfigSeguimiento{})
+	usuarioID := uuid.New()
+	upid := "UPID:pve1:00000001:00000002:00000003:qmcreate:115:root@pam:"
+
+	tareaID, err := pool.Seguir(context.Background(), usuarioID, 115, ports.AccionProxmoxCrearVM, upid, map[string]any{
+		"instanciaNombre": "srv-prod-01",
+		"resource_type":   ports.TipoInstanciaQemu,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	repo.mu.Lock()
+	tarea := *repo.tareas[tareaID]
+	auditoria := repo.auditoriaInicial
+	repo.mu.Unlock()
+	if tarea.Estado != ports.TareaRunning || tarea.UpidProxmox != upid || tarea.InstanciaID != "115" || tarea.UsuarioID != usuarioID {
+		t.Fatalf("tarea inicial incorrecta: %+v", tarea)
+	}
+	if auditoria.Accion != ports.AccionCrearInstancia || auditoria.Resultado != ports.ResultadoPendiente || auditoria.InstanciaID != "115" || auditoria.InstanciaNombre != "srv-prod-01" || auditoria.Upid != upid {
+		t.Fatalf("auditoría inicial incorrecta: %+v", auditoria)
+	}
+}
+
 // publicadorFalso captura los eventos publicados.
 type publicadorFalso struct {
 	ports.EventosService
@@ -129,22 +185,13 @@ func seguirTarea(t *testing.T, px *proxmoxTareas, accion string) (uuid.UUID, *ta
 	t.Helper()
 	repo := &tareasEnMemoria{tareas: map[uuid.UUID]*domain.TareaAsincrona{}}
 	pub := &publicadorFalso{publicados: make(chan ports.RealtimeEvent, 1)}
-	audit := &auditoriaGrabadora{}
 	cfg := services.ConfigSeguimiento{
 		Intervalo: 10 * time.Millisecond,
 		OnTaskFinished: func(ctx context.Context, tarea *domain.TareaAsincrona, recursoTipo string, r services.ResultadoTarea) {
-			resultado := ports.ResultadoExito
-			if r.Estado != ports.TareaCompleted {
-				resultado = ports.ResultadoFalla
-			}
-			audit.Registrar(ctx, ports.RegistrarAuditoriaInput{
-				UsuarioID: tarea.UsuarioID, Accion: strings.ToUpper(tarea.Accion),
-				InstanciaID: tarea.InstanciaID, Resultado: resultado, Detalles: r.Detalles(tarea),
-			})
 			_ = pub.Publicar(ctx, services.EventoTareaFinalizada(tarea, recursoTipo, r))
 		},
 	}
-	seg := services.NewSeguimientoTareas(px, repo, cfg)
+	seg := services.NewSeguimientoTareas(px, repo, services.NewAuditService(nil), cfg)
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	seg.Iniciar(ctx)
@@ -227,6 +274,87 @@ func TestSeguimiento_BorradoUsaAccionDelete(t *testing.T) {
 	_, _, ev := seguirTarea(t, &proxmoxTareas{exitStatus: "OK", tipo: "qemu"}, "delete")
 	if ev.Mensaje != "La tarea de eliminación finalizó correctamente" || ev.Detalles["accion"] != "DELETE" {
 		t.Errorf("Evento del borrado: %q %+v", ev.Mensaje, ev.Detalles)
+	}
+}
+
+func TestSeguimiento_CreacionNormalizaEventoYConservaContexto(t *testing.T) {
+	casos := []struct {
+		nombre      string
+		accion      string
+		tipoProxmox string
+		recursoTipo string
+	}{
+		{"código de dominio VM", ports.AccionCrearVM, ports.TipoInstanciaQemu, ports.RecursoVM},
+		{"operación UPID VM", ports.AccionProxmoxCrearVM, ports.TipoInstanciaQemu, ports.RecursoVM},
+		{"código de dominio LXC", ports.AccionCrearLXC, ports.TipoInstanciaLXC, ports.RecursoLXC},
+		{"operación UPID LXC", ports.AccionProxmoxCrearLXC, ports.TipoInstanciaLXC, ports.RecursoLXC},
+	}
+	for _, caso := range casos {
+		t.Run(caso.nombre, func(t *testing.T) {
+			id, repo, ev := seguirTarea(t, &proxmoxTareas{exitStatus: "OK", tipo: caso.tipoProxmox}, caso.accion)
+
+			if ev.RecursoTipo != caso.recursoTipo || ev.RecursoID != "110" {
+				t.Fatalf("recurso de creación incorrecto: %+v", ev)
+			}
+			if ev.Detalles["accion"] != "CREATE" || ev.Detalles["estado"] != ports.TareaCompleted {
+				t.Fatalf("detalles de creación incorrectos: %+v", ev.Detalles)
+			}
+			if ev.Mensaje != "La creación de la instancia finalizó exitosamente" {
+				t.Fatalf("mensaje de creación incorrecto: %q", ev.Mensaje)
+			}
+
+			repo.mu.Lock()
+			persistida := *repo.tareas[id]
+			repo.mu.Unlock()
+			if persistida.UsuarioID == uuid.Nil || persistida.InstanciaID != "110" {
+				t.Fatalf("la tarea no conservó creador y VMID reservado: %+v", persistida)
+			}
+		})
+	}
+}
+
+func TestSeguimiento_CreacionFallidaEmiteErrorDeProxmox(t *testing.T) {
+	id, repo, ev := seguirTarea(t, &proxmoxTareas{exitStatus: "unable to create VM", tipo: ports.TipoInstanciaLXC}, ports.AccionProxmoxCrearLXC)
+
+	if repo.estado(id) != ports.TareaFailed {
+		t.Fatalf("una creación sin exitstatus OK debe quedar FAILED, quedó %s", repo.estado(id))
+	}
+	if ev.Tipo != ports.EventoTareaFinalizada || ev.RecursoTipo != ports.RecursoLXC || ev.Detalles["accion"] != "CREATE" {
+		t.Fatalf("evento de creación fallida incorrecto: %+v", ev)
+	}
+	if ev.Detalles["estado"] != ports.TareaFailed || ev.Detalles["motivo"] != ports.MotivoProxmoxError ||
+		ev.Detalles["exitstatus"] != "unable to create VM" || ev.Detalles["error"] != "unable to create VM" {
+		t.Fatalf("detalles de creación fallida incorrectos: %+v", ev.Detalles)
+	}
+}
+
+func TestSeguimiento_CreacionVencidaEmiteTimeout(t *testing.T) {
+	repo := &tareasEnMemoria{tareas: map[uuid.UUID]*domain.TareaAsincrona{}}
+	pub := &publicadorFalso{publicados: make(chan ports.RealtimeEvent, 1)}
+	seg := services.NewSeguimientoTareas(&proxmoxTareas{vueltas: 1000, tipo: ports.TipoInstanciaQemu}, repo, services.NewAuditService(nil), services.ConfigSeguimiento{
+		Intervalo:   5 * time.Millisecond,
+		UpidTimeout: 15 * time.Millisecond,
+		OnTaskFinished: func(ctx context.Context, tarea *domain.TareaAsincrona, recursoTipo string, r services.ResultadoTarea) {
+			_ = pub.Publicar(ctx, services.EventoTareaFinalizada(tarea, recursoTipo, r))
+		},
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	seg.Iniciar(ctx)
+
+	id, err := seg.Seguir(context.Background(), uuid.New(), 112, ports.AccionProxmoxCrearVM, "UPID:pve1:qmcreate:112")
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case ev := <-pub.publicados:
+		if repo.estado(id) != ports.TareaFailed || ev.Detalles["accion"] != "CREATE" ||
+			ev.Detalles["estado"] != ports.TareaFailed || ev.Detalles["motivo"] != ports.MotivoTimeout ||
+			ev.Detalles["exitstatus"] != nil || ev.Detalles["error"] == nil {
+			t.Fatalf("TASK_FINISHED de timeout incorrecto: %+v", ev)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("no se publicó TASK_FINISHED para la creación vencida")
 	}
 }
 

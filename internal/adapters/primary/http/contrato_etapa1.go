@@ -27,27 +27,38 @@ type ResumenInstanciasNode struct {
 	LXC ResumenEstadoInstancias `json:"lxc" binding:"required"`
 }
 
+// CuotaAsignableNode documenta los límites seguros para crear instancias.
+type CuotaAsignableNode struct {
+	MaxCPUCores     int   `json:"maxCpuCores" binding:"required" minimum:"0" example:"8"`
+	FreeRamMB       int64 `json:"freeRamMb" binding:"required" minimum:"0" example:"14336"`
+	FreeStorageGB   int64 `json:"freeStorageGb" binding:"required" minimum:"0" example:"280"`
+	HeadroomPercent int   `json:"headroomPercent" binding:"required" enums:"15" example:"15"`
+}
+
 // EstadoNodeResponse es el contrato objetivo del endpoint planificado de estado del nodo.
 type EstadoNodeResponse struct {
 	CPU              MetricaCPUNode        `json:"cpu" binding:"required"`
 	RAM              MetricaCapacidadNode  `json:"ram" binding:"required"`
 	Storage          MetricaCapacidadNode  `json:"storage" binding:"required"`
+	Allocatable      CuotaAsignableNode    `json:"allocatable" binding:"required"`
 	UptimeSeconds    int64                 `json:"uptimeSeconds" binding:"required" minimum:"0" example:"86400"`
 	InstancesSummary ResumenInstanciasNode `json:"instancesSummary" binding:"required"`
 	Stale            bool                  `json:"stale" binding:"required" example:"false"`
 	FetchedAt        string                `json:"fetchedAt" binding:"required" format:"date-time" example:"2026-10-03T14:30:05Z"`
 }
 
-// AccionAceptadaResponse es el cuerpo 202 de las acciones de ciclo de vida aceptadas.
-// upid identifica la tarea creada en Proxmox; tareaId identifica la tarea registrada
-// por el backend y es el mismo valor que recibe el evento TASK_FINISHED al terminar.
-//
-// tareaId se omite cuando el registro de la tarea falla. La acción ya se aplicó en
-// Proxmox para ese momento, por lo que la respuesta conserva únicamente upid y el
-// cliente no puede correlacionar el evento: debe reconciliar por upid.
+// AccionAceptadaResponse es el cuerpo 202 de las acciones asíncronas aceptadas.
+// tareaId es el identificador público opaco que recibe TASK_FINISHED; el UPID
+// técnico de Proxmox permanece exclusivamente en el backend.
 type AccionAceptadaResponse struct {
-	Upid    string  `json:"upid" binding:"required" example:"UPID:pve:0008380E:0131F1BF:6A84EA54:vzstart:110:root@pam:ctid=110:starttime=6934A2E3:"`
-	TareaID *string `json:"tareaId,omitempty" example:"3f2504e0-4f89-11d3-9a0c-0305e82c3301"`
+	TareaID string `json:"tareaId" binding:"required" example:"3f2504e0-4f89-11d3-9a0c-0305e82c3301"`
+}
+
+// CreacionAceptadaResponse confirma que Proxmox aceptó la creación y que su
+// UPID privado quedó registrado antes de devolver el tareaId público.
+type CreacionAceptadaResponse struct {
+	VMID    int    `json:"vmid" binding:"required" minimum:"100" example:"115"`
+	TareaID string `json:"tareaId" binding:"required" example:"0192a8b3-4f89-7e23-9a0c-0305e82c3301"`
 }
 
 // InstanciaInventarioResponse documenta cada elemento del inventario operativo.
@@ -58,8 +69,8 @@ type InstanciaInventarioResponse struct {
 	Node        string              `json:"node" binding:"required" example:"pve-01"`
 	Status      string              `json:"status" binding:"required" example:"running"`
 	IP          *string             `json:"ip" binding:"required" extensions:"x-nullable" example:"192.0.2.10"`
-	CPUUsage    float64             `json:"cpuUsage" binding:"required" minimum:"0" maximum:"1" example:"0.24"`
-	RAMUsage    int64               `json:"ramUsage" binding:"required" minimum:"0" example:"2147483648"`
+	CPUUsage    *float64            `json:"cpuUsage" binding:"required" extensions:"x-nullable" minimum:"0" maximum:"100" example:"24.5"`
+	RAMUsage    *int64              `json:"ramUsage" binding:"required" extensions:"x-nullable" minimum:"0" example:"2147483648"`
 	MaxRAM      int64               `json:"maxRam" binding:"required" minimum:"0" example:"4294967296"`
 	NivelAcceso string              `json:"nivelAcceso" binding:"required" enums:"FULL_ACCESS,READ_ONLY" example:"FULL_ACCESS"`
 	ActiveTask  *ActiveTaskResponse `json:"activeTask" binding:"required" extensions:"x-nullable"`
@@ -71,7 +82,7 @@ type InstanciaInventarioResponse struct {
 // TASK_FINISHED; action es la acción en mayúsculas, igual que detalles.accion.
 type ActiveTaskResponse struct {
 	TareaID string `json:"tareaId" binding:"required" example:"3f2504e0-4f89-11d3-9a0c-0305e82c3301"`
-	Action  string `json:"action" binding:"required" enums:"START,STOP,SHUTDOWN,REBOOT,DELETE" example:"START"`
+	Action  string `json:"action" binding:"required" enums:"START,STOP,SHUTDOWN,REBOOT,DELETE,CREATE" example:"START"`
 	Status  string `json:"status" binding:"required" enums:"RUNNING" example:"RUNNING"`
 }
 
@@ -95,7 +106,7 @@ type ActiveTaskResponse struct {
 // no aplican.
 type SSEDetallesEvento struct {
 	TareaID    string  `json:"tareaId,omitempty" example:"3f2504e0-4f89-11d3-9a0c-0305e82c3301"`
-	Accion     string  `json:"accion,omitempty" enums:"START,STOP,SHUTDOWN,REBOOT,DELETE" example:"START"`
+	Accion     string  `json:"accion,omitempty" enums:"START,STOP,SHUTDOWN,REBOOT,DELETE,CREATE" example:"START"`
 	Estado     string  `json:"estado,omitempty" enums:"RUNNING,COMPLETED,FAILED" example:"COMPLETED"`
 	ExitStatus *string `json:"exitstatus,omitempty" extensions:"x-nullable" example:"OK"`
 	Motivo     *string `json:"motivo,omitempty" enums:"PROXMOX_ERROR,TIMEOUT" extensions:"x-nullable"`
@@ -106,13 +117,15 @@ type SSEDetallesEvento struct {
 //
 // El mismo `id` viaja también en la línea `id:` del frame SSE, para que el
 // cliente pueda deduplicar. `detalles` se omite cuando el evento no trae datos
-// extra.
+// extra. `recursoId` se omite en los eventos del HOST (el servidor físico), que
+// no refieren a una instancia: esos eventos, como ALERT_TRIGGERED, solo llegan
+// a usuarios ADMIN.
 type SSEEventPayload struct {
 	ID          string             `json:"id" binding:"required" example:"75d0322d-1d76-4dbf-ad0d-2571c458aa63"`
-	Tipo        string             `json:"tipo" binding:"required" enums:"INSTANCE_STATE_CHANGED,INSTANCE_CREATED,RESOURCE_SATURATION,TASK_FINISHED" example:"TASK_FINISHED"`
+	Tipo        string             `json:"tipo" binding:"required" enums:"INSTANCE_STATE_CHANGED,INSTANCE_CREATED,RESOURCE_SATURATION,TASK_FINISHED,ALERT_TRIGGERED" example:"TASK_FINISHED"`
 	Severidad   string             `json:"severidad" binding:"required" enums:"INFO,WARNING,CRITICAL" example:"INFO"`
-	RecursoTipo string             `json:"recursoTipo" binding:"required" enums:"VM,LXC,NODE" example:"VM"`
-	RecursoID   string             `json:"recursoId" binding:"required" example:"110"`
+	RecursoTipo string             `json:"recursoTipo" binding:"required" enums:"VM,LXC,HOST" example:"VM"`
+	RecursoID   string             `json:"recursoId,omitempty" example:"110"`
 	Mensaje     string             `json:"mensaje" binding:"required" example:"La tarea de encendido finalizó correctamente"`
 	FechaHora   string             `json:"fechaHora" binding:"required" format:"date-time" example:"2026-09-30T11:24:03-03:00"`
 	Detalles    *SSEDetallesEvento `json:"detalles,omitempty"`
@@ -123,7 +136,7 @@ type SSEEventPayload struct {
 // `error` en null. Las seis claves viajan siempre.
 type TaskSuccess struct {
 	TareaID    string  `json:"tareaId" binding:"required" example:"3f2504e0-4f89-11d3-9a0c-0305e82c3301"`
-	Accion     string  `json:"accion" binding:"required" enums:"START,STOP,SHUTDOWN,REBOOT,DELETE" example:"START"`
+	Accion     string  `json:"accion" binding:"required" enums:"START,STOP,SHUTDOWN,REBOOT,DELETE,CREATE" example:"START"`
 	Estado     string  `json:"estado" binding:"required" enums:"COMPLETED" example:"COMPLETED"`
 	ExitStatus string  `json:"exitstatus" binding:"required" enums:"OK" example:"OK"`
 	Motivo     *string `json:"motivo" binding:"required" extensions:"x-nullable"`
@@ -140,7 +153,7 @@ type TaskSuccess struct {
 //     `exitstatus` es null y `error` lo explica.
 type TaskFailed struct {
 	TareaID    string  `json:"tareaId" binding:"required" example:"3f2504e0-4f89-11d3-9a0c-0305e82c3301"`
-	Accion     string  `json:"accion" binding:"required" enums:"START,STOP,SHUTDOWN,REBOOT,DELETE" example:"STOP"`
+	Accion     string  `json:"accion" binding:"required" enums:"START,STOP,SHUTDOWN,REBOOT,DELETE,CREATE" example:"STOP"`
 	Estado     string  `json:"estado" binding:"required" enums:"FAILED" example:"FAILED"`
 	ExitStatus *string `json:"exitstatus" binding:"required" extensions:"x-nullable" example:"CT 201 not running"`
 	Motivo     string  `json:"motivo" binding:"required" enums:"PROXMOX_ERROR,TIMEOUT" example:"PROXMOX_ERROR"`
@@ -203,3 +216,24 @@ type SSETiposPayload struct {
 // @x-implementation-status "documentation-only"
 // @Router       /events/contrato-sse [get]
 func SSEDetallesTareaFinDocumentacion() {}
+
+// ==========================================
+// RF-07 — Inventario de Almacenamiento y Plantillas
+// ==========================================
+
+// StorageResponse documenta una unidad de almacenamiento disponible en el nodo.
+type StorageResponse struct {
+	Name         string   `json:"name" binding:"required" example:"local-lvm"`
+	Type         string   `json:"type" binding:"required" example:"lvmthin"`
+	TotalBytes   int64    `json:"totalBytes" binding:"required" example:"500000000000"`
+	FreeBytes    int64    `json:"freeBytes" binding:"required" example:"320000000000"`
+	ContentTypes []string `json:"contentTypes" binding:"required" example:"images,rootdir"`
+}
+
+// TemplateResponse documenta una imagen ISO o plantilla LXC disponible para crear instancias.
+type TemplateResponse struct {
+	ID        string `json:"id" binding:"required" example:"local:iso/ubuntu-24.04.iso"`
+	Name      string `json:"name" binding:"required" example:"ubuntu-24.04.iso"`
+	Type      string `json:"type" binding:"required" enums:"ISO,LXC_TEMPLATE" example:"ISO"`
+	SizeBytes int64  `json:"sizeBytes" binding:"required" example:"2100000000"`
+}

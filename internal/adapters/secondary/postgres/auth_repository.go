@@ -49,7 +49,7 @@ func (r *AuthRepository) BuscarUsuarioPorID(ctx context.Context, id uuid.UUID) (
 
 	if result.Error != nil {
 		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
-			return nil, fmt.Errorf("usuario no encontrado")
+			return nil, ports.ErrUsuarioNoEncontrado
 		}
 		return nil, fmt.Errorf("error al buscar usuario por ID: %w", result.Error)
 	}

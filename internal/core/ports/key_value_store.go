@@ -47,6 +47,12 @@ type KeyValueStore interface {
 	// Del borra las claves indicadas (las inexistentes se ignoran).
 	Del(ctx context.Context, keys ...string) error
 
+	// AcquireLock toma un lock distribuido identificado por key. Espera hasta
+	// adquirirlo, vencer el contexto o producirse un error del almacén. El TTL
+	// evita locks huérfanos si el proceso cae; release solo libera el lock si
+	// todavía pertenece a quien lo adquirió.
+	AcquireLock(ctx context.Context, key string, ttl time.Duration) (release func(context.Context) error, err error)
+
 	// Publish envía message a todos los suscriptores de channel.
 	// message se serializa según SerializarValor.
 	Publish(ctx context.Context, channel string, message interface{}) error

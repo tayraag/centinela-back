@@ -11,10 +11,13 @@ package memoria
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
 	"el-centinela/internal/core/ports"
+
+	"github.com/google/uuid"
 )
 
 const (
@@ -103,6 +106,43 @@ func (s *KVStore) Del(_ context.Context, keys ...string) error {
 		delete(s.datos, k)
 	}
 	return nil
+}
+
+// AcquireLock replica en memoria la semántica del lock distribuido. Es útil en
+// desarrollo y modo degradado, aunque naturalmente solo coordina este proceso.
+func (s *KVStore) AcquireLock(ctx context.Context, key string, ttl time.Duration) (func(context.Context) error, error) {
+	if ttl <= 0 {
+		return nil, errors.New("el TTL del lock debe ser mayor que cero")
+	}
+	token := uuid.NewString()
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		s.mu.Lock()
+		ahora := s.ahora()
+		e, existe := s.datos[key]
+		if !existe || s.vencida(e, ahora) {
+			s.datos[key] = entrada{valor: token, vence: ahora.Add(ttl)}
+			s.mu.Unlock()
+			var once sync.Once
+			return func(context.Context) error {
+				once.Do(func() {
+					s.mu.Lock()
+					defer s.mu.Unlock()
+					if actual, ok := s.datos[key]; ok && actual.valor == token {
+						delete(s.datos, key)
+					}
+				})
+				return nil
+			}, nil
+		}
+		s.mu.Unlock()
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+		}
+	}
 }
 
 // leer debe llamarse con s.mu tomado.

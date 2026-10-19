@@ -4,28 +4,38 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"el-centinela/internal/adapters/secondary/memoria"
+	"el-centinela/internal/core/domain"
 	"el-centinela/internal/core/ports"
 	"el-centinela/internal/core/services"
 
 	"github.com/google/uuid"
 )
 
-// permisosFalsos implementa ports.InstanceRepository: el usuario tiene permiso
-// sobre los vmid del mapa.
+// permisosFalsos implementa ports.InstanceRepository: el usuario tiene asignado
+// un nivel de acceso ("FULL_ACCESS" o "READ_ONLY") sobre los vmid del mapa.
 type permisosFalsos struct {
 	mu       sync.Mutex
-	permisos map[int]bool
+	permisos map[int]string
 }
 
-func (p *permisosFalsos) VerificarAcceso(_ context.Context, _ uuid.UUID, vmid int, _ string) (bool, error) {
+func (p *permisosFalsos) VerificarAcceso(_ context.Context, _ uuid.UUID, vmid int, nivelRequerido string) (bool, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return p.permisos[vmid], nil
+	nivel, existe := p.permisos[vmid]
+	if !existe {
+		return false, nil
+	}
+	if nivelRequerido == ports.NivelAccesoFullAccess {
+		return nivel == ports.NivelAccesoFullAccess, nil
+	}
+	return nivel == ports.NivelAccesoFullAccess || nivel == ports.NivelAccesoReadOnly, nil
 }
 
 func (p *permisosFalsos) PurgarPermisosPorVmid(_ context.Context, vmid int, _ string, _ *uuid.UUID) ([]string, error) {
@@ -79,7 +89,7 @@ func nuevoEntornoEventos(t *testing.T, rol string) *entornoEventos {
 
 	e := &entornoEventos{
 		entornoAuth: base,
-		permisos:    &permisosFalsos{permisos: map[int]bool{}},
+		permisos:    &permisosFalsos{permisos: map[int]string{}},
 		auditoria:   &auditoriaGrabadora{},
 		avanzar:     func(d time.Duration) { mu.Lock(); reloj = reloj.Add(d); mu.Unlock() },
 	}
@@ -111,6 +121,16 @@ func eventoDe(t *testing.T, recursoTipo, recursoID string) ports.RealtimeEvent {
 		t.Fatal(err)
 	}
 	return ev.ConRecurso(recursoTipo, recursoID)
+}
+
+// alertaDelHost es un ALERT_TRIGGERED del servidor físico: sin recursoId.
+func alertaDelHost(t *testing.T) ports.RealtimeEvent {
+	t.Helper()
+	ev, err := ports.NewRealtimeEvent(ports.EventoAlerta, ports.SeveridadCritical, "El uso de CPU del host superó el 90%")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ev.ConRecurso(ports.RecursoHost, "").ConDetalles(map[string]any{"metrica": "cpu", "valor": 92.4, "umbral": 90})
 }
 
 func recibeEvento(t *testing.T, c *ports.ConexionEventos, esperado ports.RealtimeEvent) {
@@ -228,7 +248,7 @@ func TestTicket_DeUnaSesionCerradaNoSirve(t *testing.T) {
 func TestEventos_AdminRecibeTodo(t *testing.T) {
 	e := nuevoEntornoEventos(t, "ADMIN")
 	conexion, _ := e.conectar(t)
-	for _, ev := range []ports.RealtimeEvent{eventoDe(t, ports.RecursoVM, "110"), eventoDe(t, ports.RecursoNodo, "proxmox")} {
+	for _, ev := range []ports.RealtimeEvent{eventoDe(t, ports.RecursoVM, "110"), alertaDelHost(t)} {
 		_ = e.eventos.Publicar(context.Background(), ev)
 		recibeEvento(t, conexion, ev)
 	}
@@ -236,7 +256,7 @@ func TestEventos_AdminRecibeTodo(t *testing.T) {
 
 func TestEventos_OperatorSoloSusInstanciasYEnVivo(t *testing.T) {
 	e := nuevoEntornoEventos(t, "OPERATOR")
-	e.permisos.permisos[110] = true
+	e.permisos.permisos[110] = ports.NivelAccesoReadOnly
 	conexion, _ := e.conectar(t)
 	ctx := context.Background()
 
@@ -245,15 +265,264 @@ func TestEventos_OperatorSoloSusInstanciasYEnVivo(t *testing.T) {
 	recibeEvento(t, conexion, propio)
 
 	_ = e.eventos.Publicar(ctx, eventoDe(t, ports.RecursoLXC, "201")) // sin permiso
-	_ = e.eventos.Publicar(ctx, eventoDe(t, ports.RecursoNodo, "proxmox"))
+	_ = e.eventos.Publicar(ctx, alertaDelHost(t))
 	noRecibeNada(t, conexion)
 
 	// Revocación en vivo: le sacan el permiso sobre la 110 y deja de recibir sus eventos.
 	e.permisos.mu.Lock()
-	e.permisos.permisos[110] = false
+	delete(e.permisos.permisos, 110)
 	e.permisos.mu.Unlock()
 	_ = e.eventos.Publicar(ctx, eventoDe(t, ports.RecursoVM, "110"))
 	noRecibeNada(t, conexion)
+}
+
+// ALERT_TRIGGERED del HOST: llega al ADMIN y se descarta para el OPERATOR,
+// aunque tenga permisos sobre instancias. El TASK_FINISHED de una de sus
+// instancias le sigue llegando (retrocompatibilidad).
+func TestEventos_AlertaDelHostSoloParaAdmin(t *testing.T) {
+	ctx := context.Background()
+
+	admin := nuevoEntornoEventos(t, "ADMIN")
+	conAdmin, _ := admin.conectar(t)
+	alerta := alertaDelHost(t)
+	_ = admin.eventos.Publicar(ctx, alerta)
+	recibeEvento(t, conAdmin, alerta)
+
+	operador := nuevoEntornoEventos(t, "OPERATOR")
+	operador.permisos.permisos[110] = ports.NivelAccesoFullAccess
+	conOperador, _ := operador.conectar(t)
+	_ = operador.eventos.Publicar(ctx, alertaDelHost(t))
+	noRecibeNada(t, conOperador)
+	tarea := eventoDe(t, ports.RecursoVM, "110")
+	_ = operador.eventos.Publicar(ctx, tarea)
+	recibeEvento(t, conOperador, tarea)
+}
+
+// El evento del HOST viaja sin recursoId (omitempty) y los de instancia lo
+// mantienen.
+func TestEventos_RecursoIdOpcional(t *testing.T) {
+	serializar := func(ev ports.RealtimeEvent) map[string]any {
+		crudo, _ := json.Marshal(ev)
+		var m map[string]any
+		_ = json.Unmarshal(crudo, &m)
+		return m
+	}
+	host := serializar(alertaDelHost(t))
+	if _, tiene := host["recursoId"]; tiene || host["recursoTipo"] != "HOST" || host["tipo"] != "ALERT_TRIGGERED" {
+		t.Errorf("Alerta del host: %v", host)
+	}
+	if vm := serializar(eventoDe(t, ports.RecursoVM, "110")); vm["recursoId"] != "110" {
+		t.Errorf("Un evento de VM debe conservar su recursoId: %v", vm)
+	}
+}
+
+func TestEventos_TASK_FINISHED_CincoAccionesCanonicas(t *testing.T) {
+	// Validar que el worker o generador despache TASK_FINISHED con las 5 acciones canónicas
+	// ("START", "SHUTDOWN", "STOP", "REBOOT", "DELETE") cumpliendo el esquema unificado.
+	acciones := []struct {
+		accionInterna string
+		accionSSE     string
+		nombreMensaje string
+	}{
+		{"start", "START", "encendido"},
+		{"shutdown", "SHUTDOWN", "apagado ordenado"},
+		{"stop", "STOP", "apagado"},
+		{"reboot", "REBOOT", "reinicio"},
+		{"delete", "DELETE", "eliminación"},
+	}
+
+	for _, c := range acciones {
+		t.Run(c.accionInterna, func(t *testing.T) {
+			tareaID := uuid.New()
+			tarea := &domain.TareaAsincrona{
+				ID:          tareaID,
+				InstanciaID: "101",
+				Accion:      c.accionInterna,
+			}
+			res := services.ResultadoTarea{
+				Estado:     ports.TareaCompleted,
+				ExitStatus: "OK",
+			}
+			ev := services.EventoTareaFinalizada(tarea, ports.RecursoVM, res)
+
+			if ev.Tipo != ports.EventoTareaFinalizada {
+				t.Fatalf("tipo = %s, se esperaba %s", ev.Tipo, ports.EventoTareaFinalizada)
+			}
+			if ev.Severidad != ports.SeveridadInfo {
+				t.Fatalf("severidad = %s, se esperaba INFO", ev.Severidad)
+			}
+			if ev.RecursoTipo != ports.RecursoVM || ev.RecursoID != "101" {
+				t.Fatalf("recursoTipo/Id = %s/%s, se esperaba VM/101", ev.RecursoTipo, ev.RecursoID)
+			}
+			esperadoMensaje := fmt.Sprintf("La tarea de %s finalizó correctamente", c.nombreMensaje)
+			if ev.Mensaje != esperadoMensaje {
+				t.Fatalf("mensaje = %q, se esperaba %q", ev.Mensaje, esperadoMensaje)
+			}
+
+			// Validar las 6 claves del payload de detalles
+			d := ev.Detalles
+			if len(d) != 6 {
+				t.Fatalf("detalles debe tener 6 claves, tiene %d: %v", len(d), d)
+			}
+			if d["tareaId"] != tareaID.String() {
+				t.Errorf("tareaId = %v, se esperaba %s", d["tareaId"], tareaID)
+			}
+			if d["accion"] != c.accionSSE {
+				t.Errorf("accion = %v, se esperaba %s", d["accion"], c.accionSSE)
+			}
+			if d["estado"] != ports.TareaCompleted {
+				t.Errorf("estado = %v, se esperaba COMPLETED", d["estado"])
+			}
+			if d["exitstatus"] != "OK" {
+				t.Errorf("exitstatus = %v, se esperaba OK", d["exitstatus"])
+			}
+			if d["motivo"] != nil {
+				t.Errorf("motivo = %v, se esperaba nil", d["motivo"])
+			}
+			if d["error"] != nil {
+				t.Errorf("error = %v, se esperaba nil", d["error"])
+			}
+		})
+	}
+}
+
+func TestEventos_TASK_FINISHED_CasosDeFallo(t *testing.T) {
+	// Fallo por PROXMOX_ERROR
+	t.Run("fallo_proxmox_error", func(t *testing.T) {
+		tareaID := uuid.New()
+		tarea := &domain.TareaAsincrona{
+			ID:          tareaID,
+			InstanciaID: "201",
+			Accion:      "stop",
+		}
+		res := services.ResultadoTarea{
+			Estado:     ports.TareaFailed,
+			ExitStatus: "CT 201 not running",
+			Motivo:     ports.MotivoProxmoxError,
+			Error:      "CT 201 not running",
+		}
+		ev := services.EventoTareaFinalizada(tarea, ports.RecursoLXC, res)
+
+		if ev.Tipo != ports.EventoTareaFinalizada {
+			t.Fatalf("tipo = %s", ev.Tipo)
+		}
+		if ev.Severidad != ports.SeveridadWarning {
+			t.Fatalf("severidad = %s, se esperaba WARNING", ev.Severidad)
+		}
+		if ev.RecursoTipo != ports.RecursoLXC || ev.RecursoID != "201" {
+			t.Fatalf("recursoTipo/Id = %s/%s", ev.RecursoTipo, ev.RecursoID)
+		}
+		if ev.Mensaje != "La tarea de apagado falló" {
+			t.Fatalf("mensaje = %q", ev.Mensaje)
+		}
+
+		d := ev.Detalles
+		if d["tareaId"] != tareaID.String() || d["accion"] != "STOP" || d["estado"] != ports.TareaFailed {
+			t.Fatalf("identificadores incorrectos: %v", d)
+		}
+		if d["exitstatus"] != "CT 201 not running" {
+			t.Errorf("exitstatus = %v", d["exitstatus"])
+		}
+		if d["motivo"] != ports.MotivoProxmoxError {
+			t.Errorf("motivo = %v, se esperaba PROXMOX_ERROR", d["motivo"])
+		}
+		if d["error"] != "CT 201 not running" {
+			t.Errorf("error = %v", d["error"])
+		}
+	})
+
+	// Fallo por TIMEOUT
+	t.Run("fallo_timeout", func(t *testing.T) {
+		tareaID := uuid.New()
+		tarea := &domain.TareaAsincrona{
+			ID:          tareaID,
+			InstanciaID: "100",
+			Accion:      "start",
+		}
+		res := services.ResultadoTarea{
+			Estado: ports.TareaFailed,
+			Motivo: ports.MotivoTimeout,
+			Error:  "Excedido el límite máximo de ejecución de 10 minutos",
+		}
+		ev := services.EventoTareaFinalizada(tarea, ports.RecursoVM, res)
+
+		if ev.Severidad != ports.SeveridadWarning {
+			t.Fatalf("severidad = %s, se esperaba WARNING", ev.Severidad)
+		}
+		d := ev.Detalles
+		if d["estado"] != ports.TareaFailed {
+			t.Errorf("estado = %v", d["estado"])
+		}
+		if d["motivo"] != ports.MotivoTimeout {
+			t.Errorf("motivo = %v, se esperaba TIMEOUT", d["motivo"])
+		}
+		if d["exitstatus"] != nil {
+			t.Errorf("exitstatus = %v, se esperaba nil", d["exitstatus"])
+		}
+		if d["error"] == nil || !strings.Contains(d["error"].(string), "Excedido el límite") {
+			t.Errorf("error = %v, se esperaba mensaje de timeout", d["error"])
+		}
+	})
+}
+
+func TestEventos_TASK_FINISHED_MatrizDistribucionRBAC(t *testing.T) {
+	ctx := context.Background()
+	ev101 := services.EventoTareaFinalizada(&domain.TareaAsincrona{
+		ID:          uuid.New(),
+		InstanciaID: "101",
+		Accion:      "start",
+	}, ports.RecursoVM, services.ResultadoTarea{Estado: ports.TareaCompleted, ExitStatus: "OK"})
+
+	ev202 := services.EventoTareaFinalizada(&domain.TareaAsincrona{
+		ID:          uuid.New(),
+		InstanciaID: "202",
+		Accion:      "delete",
+	}, ports.RecursoLXC, services.ResultadoTarea{Estado: ports.TareaCompleted, ExitStatus: "OK"})
+
+	// 1. ADMIN recibe eventos de cualquier instancia
+	t.Run("AdminRecibeCualquierInstancia", func(t *testing.T) {
+		eAdmin := nuevoEntornoEventos(t, "ADMIN")
+		conexionAdmin, _ := eAdmin.conectar(t)
+		_ = eAdmin.eventos.Publicar(ctx, ev101)
+		recibeEvento(t, conexionAdmin, ev101)
+		_ = eAdmin.eventos.Publicar(ctx, ev202)
+		recibeEvento(t, conexionAdmin, ev202)
+	})
+
+	// 2. OPERATOR con READ_ONLY recibe evento de su instancia
+	t.Run("OperatorReadOnlyRecibeSuInstancia", func(t *testing.T) {
+		eOpRO := nuevoEntornoEventos(t, "OPERATOR")
+		eOpRO.permisos.permisos[101] = ports.NivelAccesoReadOnly
+		conexionOpRO, _ := eOpRO.conectar(t)
+		_ = eOpRO.eventos.Publicar(ctx, ev101)
+		recibeEvento(t, conexionOpRO, ev101)
+
+		// No debe recibir evento de la 202 (sin permiso)
+		_ = eOpRO.eventos.Publicar(ctx, ev202)
+		noRecibeNada(t, conexionOpRO)
+	})
+
+	// 3. OPERATOR con FULL_ACCESS recibe evento de su instancia
+	t.Run("OperatorFullAccessRecibeSuInstancia", func(t *testing.T) {
+		eOpFA := nuevoEntornoEventos(t, "OPERATOR")
+		eOpFA.permisos.permisos[202] = ports.NivelAccesoFullAccess
+		conexionOpFA, _ := eOpFA.conectar(t)
+		_ = eOpFA.eventos.Publicar(ctx, ev202)
+		recibeEvento(t, conexionOpFA, ev202)
+
+		// No debe recibir evento de la 101 (sin permiso)
+		_ = eOpFA.eventos.Publicar(ctx, ev101)
+		noRecibeNada(t, conexionOpFA)
+	})
+
+	// 4. OPERATOR sin asignación no recibe eventos bajo ningún concepto
+	t.Run("OperatorSinPermisosNoRecibeNada", func(t *testing.T) {
+		eOpNone := nuevoEntornoEventos(t, "OPERATOR")
+		conexionOpNone, _ := eOpNone.conectar(t)
+		_ = eOpNone.eventos.Publicar(ctx, ev101)
+		_ = eOpNone.eventos.Publicar(ctx, ev202)
+		noRecibeNada(t, conexionOpNone)
+	})
 }
 
 // ==========================================

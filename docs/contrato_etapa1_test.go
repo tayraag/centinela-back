@@ -40,7 +40,10 @@ func TestContratoEtapa1(t *testing.T) {
 
 	definitions := objeto(t, swagger, "definitions")
 	verificarObjetoRequerido(t, definitions, "http.EstadoNodeResponse", []string{
-		"cpu", "ram", "storage", "uptimeSeconds", "instancesSummary", "stale", "fetchedAt",
+		"cpu", "ram", "storage", "allocatable", "uptimeSeconds", "instancesSummary", "stale", "fetchedAt",
+	})
+	verificarObjetoRequerido(t, definitions, "http.CuotaAsignableNode", []string{
+		"maxCpuCores", "freeRamMb", "freeStorageGb", "headroomPercent",
 	})
 	verificarObjetoRequerido(t, definitions, "http.MetricaCPUNode", []string{
 		"usagePercent", "cores",
@@ -92,7 +95,7 @@ func TestContratoEtapa1(t *testing.T) {
 	}
 	const activeTaskDef = "http.ActiveTaskResponse"
 	verificarObjetoRequerido(t, definitions, activeTaskDef, []string{"tareaId", "action", "status"})
-	verificarEnum(t, definitions, activeTaskDef, "action", "START", "STOP", "SHUTDOWN", "REBOOT", "DELETE")
+	verificarEnum(t, definitions, activeTaskDef, "action", "START", "STOP", "SHUTDOWN", "REBOOT", "DELETE", "CREATE")
 	verificarEnum(t, definitions, activeTaskDef, "status", ports.TareaRunning)
 
 	// ==========================================================
@@ -110,17 +113,51 @@ func TestContratoEtapa1(t *testing.T) {
 		}
 	}
 
-	// 202: upid obligatorio, tareaId opcional (se omite si el registro falla).
-	verificarObjetoRequerido(t, definitions, acceptedDef, []string{"upid"})
+	// Las acciones exponen solamente el identificador opaco administrado por el
+	// backend. El UPID de Proxmox queda reservado para la correlación interna.
+	verificarObjetoRequerido(t, definitions, acceptedDef, []string{"tareaId"})
 	tareaID := propiedad(t, definitions, acceptedDef, "tareaId")
 	if tipo := cadena(t, tareaID, "type"); tipo != "string" {
 		t.Errorf("tareaId debe ser string, obtuvo %q", tipo)
 	}
-	if requeridosDe(t, objeto(t, definitions, acceptedDef))["tareaId"] {
-		t.Error("tareaId no debe ser obligatorio: se omite cuando no se puede registrar la tarea")
+	if _, expuesto := objeto(t, objeto(t, definitions, acceptedDef), "properties")["upid"]; expuesto {
+		t.Error("AccionAceptadaResponse no debe exponer el UPID de Proxmox")
 	}
 
-	// Los ocho pares error/status observados en las acciones aceptadas.
+	// Aprovisionamiento: solo ADMIN, reserva de cuotas y errores específicos.
+	creacion := objeto(t, objeto(t, paths, "/instances"), "post")
+	verificarBearer(t, creacion)
+	const creacionAcceptedDef = "http.CreacionAceptadaResponse"
+	verificarRespuesta(t, creacion, "202", creacionAcceptedDef)
+	verificarObjetoRequerido(t, definitions, creacionAcceptedDef, []string{"vmid", "tareaId"})
+	if _, expuesto := objeto(t, objeto(t, definitions, creacionAcceptedDef), "properties")["upid"]; expuesto {
+		t.Error("CreacionAceptadaResponse no debe exponer el UPID de Proxmox")
+	}
+	verificarObjetoRequerido(t, definitions, "http.CrearInstanciaRequest", []string{
+		"tipo", "nombre", "cores", "ramMb", "discoGb", "storageId", "templateOso", "red",
+	})
+	descripcionCreacion := cadena(t, creacion, "description")
+	for _, esperado := range []string{
+		"ADMIN ONLY", "contrato plano RF-07", "payload anidado anterior",
+		"cpu.cores", "ram.memoryMb", "os.templateId", "reserva",
+		"CPU", "RAM", "disco", "TASK_FINISHED", "CREATE", "FULL_ACCESS",
+	} {
+		if !strings.Contains(descripcionCreacion, esperado) {
+			t.Errorf("POST /instances debe documentar %q: %q", esperado, descripcionCreacion)
+		}
+	}
+	if r409 := descripcionRespuesta(t, paths, "/instances", "post", "409"); !strings.Contains(r409, "RESOURCE_QUOTA_EXCEEDED") {
+		t.Errorf("POST /instances 409 debe documentar RESOURCE_QUOTA_EXCEEDED: %q", r409)
+	}
+	if r503 := descripcionRespuesta(t, paths, "/instances", "post", "503"); !strings.Contains(r503, "PROVISIONING_COORDINATION_UNAVAILABLE") {
+		t.Errorf("POST /instances 503 debe documentar PROVISIONING_COORDINATION_UNAVAILABLE: %q", r503)
+	}
+	if r500 := descripcionRespuesta(t, paths, "/instances", "post", "500"); !strings.Contains(r500, "TASK_TRACKING_UNAVAILABLE") {
+		t.Errorf("POST /instances 500 debe documentar TASK_TRACKING_UNAVAILABLE: %q", r500)
+	}
+
+	// Los pares error/status observados en las acciones aceptadas (503 lo
+	// agrega la guarda de exclusión mutua RequireInstanceIdle).
 	pares := []struct{ codigo, errorCode string }{
 		{"400", "INVALID_VMID"},
 		{"401", "MISSING_TOKEN"},
@@ -129,6 +166,7 @@ func TestContratoEtapa1(t *testing.T) {
 		{"409", "INSTANCE_BUSY"},
 		{"500", "INTERNAL_ERROR"},
 		{"502", "PROXMOX_UNAVAILABLE"},
+		{"503", "INSTANCE_LOCK_UNAVAILABLE"},
 		{"504", "PROXMOX_TIMEOUT"},
 	}
 
@@ -192,7 +230,7 @@ func TestContratoEtapa1(t *testing.T) {
 		}
 	}
 
-	// DELETE: solo ADMIN y asíncrono, con el mismo 202 { upid, tareaId }.
+	// DELETE: solo ADMIN y asíncrono, con el mismo 202 { tareaId }.
 	borrado := objeto(t, objeto(t, paths, "/instances/{vmid}"), "delete")
 	verificarBearer(t, borrado)
 	verificarRespuesta(t, borrado, "202", acceptedDef)
@@ -254,8 +292,13 @@ func TestContratoEtapa1(t *testing.T) {
 
 	const payloadDef = "http.SSEEventPayload"
 	verificarObjetoRequerido(t, definitions, payloadDef, []string{
-		"id", "tipo", "severidad", "recursoTipo", "recursoId", "mensaje", "fechaHora",
+		"id", "tipo", "severidad", "recursoTipo", "mensaje", "fechaHora",
 	})
+
+	// recursoId se omite en los eventos del HOST (no refieren a una instancia).
+	if requeridosDe(t, objeto(t, definitions, payloadDef))["recursoId"] {
+		t.Error("recursoId no debe ser obligatorio: los eventos del HOST no lo traen")
+	}
 
 	// detalles se omite cuando el evento no trae datos extra.
 	if requeridosDe(t, objeto(t, definitions, payloadDef))["detalles"] {
@@ -268,9 +311,9 @@ func TestContratoEtapa1(t *testing.T) {
 
 	// Los tres enums traveling en el sobre, con los valores exactos de ports.
 	verificarEnum(t, definitions, payloadDef, "tipo",
-		"INSTANCE_STATE_CHANGED", "INSTANCE_CREATED", "RESOURCE_SATURATION", "TASK_FINISHED")
+		"INSTANCE_STATE_CHANGED", "INSTANCE_CREATED", "RESOURCE_SATURATION", "TASK_FINISHED", "ALERT_TRIGGERED")
 	verificarEnum(t, definitions, payloadDef, "severidad", "INFO", "WARNING", "CRITICAL")
-	verificarEnum(t, definitions, payloadDef, "recursoTipo", "VM", "LXC", "NODE")
+	verificarEnum(t, definitions, payloadDef, "recursoTipo", "VM", "LXC", "HOST")
 
 	// detalles es un objeto propio y todas sus claves son opcionales: su forma
 	// depende del tipo de evento.
@@ -295,7 +338,7 @@ func TestContratoEtapa1(t *testing.T) {
 	// Las dos formas concretas de detalles en TASK_FINISHED. El servidor manda
 	// siempre las seis claves; las que no aplican van en null.
 	camposTarea := []string{"tareaId", "accion", "estado", "exitstatus", "motivo", "error"}
-	acciones := []string{"START", "STOP", "SHUTDOWN", "REBOOT", "DELETE"}
+	acciones := []string{"START", "STOP", "SHUTDOWN", "REBOOT", "DELETE", "CREATE"}
 
 	const successDef = "http.TaskSuccess"
 	verificarObjetoRequerido(t, definitions, successDef, camposTarea)
@@ -387,13 +430,13 @@ func TestContratoEtapa1(t *testing.T) {
 	// valor, esta comparación lo delata.
 	tipos := []string{
 		ports.EventoInstanciaEstado, ports.EventoInstanciaCreada,
-		ports.EventoSaturacion, ports.EventoTareaFinalizada,
+		ports.EventoSaturacion, ports.EventoTareaFinalizada, ports.EventoAlerta,
 	}
 	verificarEnum(t, definitions, payloadDef, "tipo", tipos...)
 	verificarEnum(t, definitions, payloadDef, "severidad",
 		ports.SeveridadInfo, ports.SeveridadWarning, ports.SeveridadCritical)
 	verificarEnum(t, definitions, payloadDef, "recursoTipo",
-		ports.RecursoVM, ports.RecursoLXC, ports.RecursoNodo)
+		ports.RecursoVM, ports.RecursoLXC, ports.RecursoHost)
 	verificarEnum(t, definitions, detallesDef, "estado",
 		ports.TareaRunning, ports.TareaCompleted, ports.TareaFailed)
 
@@ -454,6 +497,18 @@ func TestContratoEtapa1(t *testing.T) {
 	compararTodasLasClaves(t, serializar(eventoOk)["detalles"], successDef, definitions, "detalles de éxito")
 	compararTodasLasClaves(t, serializar(eventoFallo)["detalles"], failedDef, definitions, "detalles de fallo")
 
+	// Una alerta del HOST (ALERT_TRIGGERED) cumple el mismo sobre, sin recursoId.
+	alerta, err := ports.NewRealtimeEvent(ports.EventoAlerta, ports.SeveridadCritical, "El uso de CPU del host superó el 90%")
+	if err != nil {
+		t.Fatalf("construir la alerta del host: %v", err)
+	}
+	sobreAlerta := serializar(alerta.ConRecurso(ports.RecursoHost, ""))
+	compararClaves(t, sobreAlerta, payloadDef, definitions, "sobre de alerta del host")
+	compararTodasLasClaves(t, sobreAlerta, payloadDef, definitions, "sobre de alerta del host")
+	if _, tiene := sobreAlerta["recursoId"]; tiene {
+		t.Errorf("La alerta del host no debe traer recursoId: %v", sobreAlerta)
+	}
+
 	contenidoContrato, err := os.ReadFile("contrato-etapa1.md")
 	if err != nil {
 		t.Fatalf("leer contrato-etapa1.md: %v", err)
@@ -469,8 +524,9 @@ func TestContratoEtapa1(t *testing.T) {
 		`"action": "START"`, `"status": "RUNNING"`,
 		"usagePercent", "instancesSummary", "fetchedAt", "nivelAcceso", "activeTask",
 		// T02 — acciones aceptadas.
+		"POST /api/instances", "RESOURCE_QUOTA_EXCEEDED", "PROVISIONING_COORDINATION_UNAVAILABLE",
 		"POST /api/instances/:vmid/start", "POST /api/instances/:vmid/stop",
-		"202", "upid", "tareaId", "pause",
+		"202", "El UPID de Proxmox permanece privado", "tareaId", "pause",
 		// T02 — los ocho pares error/status.
 		"INVALID_VMID", "MISSING_TOKEN", "INSTANCE_ACCESS_DENIED", "INSTANCE_PROTECTED",
 		"INSTANCE_NOT_FOUND", "INSTANCE_BUSY", "INTERNAL_ERROR",

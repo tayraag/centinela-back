@@ -114,19 +114,12 @@ type resumenNodo struct {
 }
 
 func (s *Simulador) resumenNodo(ahora time.Time) resumenNodo {
-	// Base de la captura: ~2.3 GB usados por el propio host.
-	memUsada := int64(2339323904)
-	cpu := 0.004 + 0.003*ruido(0, ahora.Unix())
-	for _, inst := range s.instancias {
-		if inst.encendida() {
-			m := s.metricasActuales(inst, ahora)
-			memUsada += m.mem
-			cpu += m.cpu * float64(inst.Cores) / 12
-		}
-	}
+	// El cálculo vive en resumenNodoEn para que la lectura "de ahora" y el
+	// último punto del histórico salgan de la misma fórmula.
+	cpu, memUsada, discoUsado := s.resumenNodoEn(ahora.Unix())
 	return resumenNodo{
 		cpus: 12, cpu: cpu, memTotal: 16423432192, memUsada: memUsada,
-		discoTotal: 72722055168, discoUsado: 5477761024,
+		discoTotal: 72722055168, discoUsado: discoUsado,
 		uptime: 199252 + int64(ahora.Sub(s.inicio).Seconds()),
 	}
 }

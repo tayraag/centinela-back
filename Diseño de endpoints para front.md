@@ -512,7 +512,7 @@ Este endpoint carga de forma instantánea los números principales, el estado de
   "permissions": ["instance:start", "instance:stop", "instance:reboot"],
   "activeOperations": [
     {
-      "taskId": "UPID:pve1:0001:...",
+      "taskId": "3f2504e0-4f89-11d3-9a0c-0305e82c3301",
       "type": "BACKUP",
       "resource": "web-server",
       "status": "RUNNING",
@@ -668,6 +668,8 @@ Requiere `Authorization: Bearer <accessToken>`. Devuelve un ticket temporal de u
 **GET /api/events?ticket=uuid-xyz**
 Abre un stream persistente de tipo `text/event-stream` donde el backend envía notificaciones en tiempo real (estado de VMs, tareas en curso, notificaciones del sistema) sin necesidad de polling por parte del frontend.
 
+> **OPERATIVO ETAPA-1:** `recursoTipo` es `VM`, `LXC` o `HOST` (el servidor físico; reemplaza a `NODE`). Los eventos de `HOST`, como las alertas `ALERT_TRIGGERED`, no traen `recursoId` y solo llegan a usuarios ADMIN; a un OPERATOR se le descartan aunque tenga permisos sobre instancias. Los de VM/LXC (por ejemplo `TASK_FINISHED`) llegan a ADMIN y a los OPERATOR con permiso sobre ese VMID. Ver `docs/contrato-eventos.md`.
+
 #### 7\. Inventario de instancias
 
 El contrato centraliza el resumen numérico y la lista de recursos en una única respuesta estructurada. Las búsquedas por ID o nombre, junto con los filtros por estado, tipo y nodo exigidos por el documento, se manejan enviándolos como Query Parameters.
@@ -677,6 +679,8 @@ El uso de Query Parameters en el requerimiento 7 cumple la función de delegar e
 &nbsp;
 
 **GET /api/instances?search=web\&type=VM\&status=running\&node=pve1**
+
+> **OPERATIVO ETAPA-1 (código actual): `GET /api/instances` no acepta query params (`search/type/status/node` son planificados, el backend los ignora) y devuelve un array directo `[]`, sin wrapper `{summary, instances}`. `type` es `vm|lxc` (mapea `qemu→vm`), `cpuUsage` es porcentaje 0-100 con 2 decimales (`null` si `stopped`), `ramUsage/maxRam` en bytes (`null` si `stopped`, salvo `maxRam` que va siempre que Proxmox informe `>0`), y `activeTask` es objeto `{tareaId, action: START|STOP|SHUTDOWN|REBOOT|DELETE, status: RUNNING}|null` (no string UPID). ADMIN ve todo, OPERATOR solo sus asignadas. Ver `instance_handler.go:ListarInstancias` y `docs/contrato-etapa1.md`.
 
 Con respecto a los query params en la url DE EJEMPLO de arriba:
 
@@ -727,11 +731,13 @@ Con respecto a los query params en la url DE EJEMPLO de arriba:
       "ramUsage": null,
       "maxRam": 4294967296,
       "nivelAcceso": "READ_ONLY",
-      "activeTask": "UPID:pve1:0001:start..."
+      "activeTask": {"tareaId": "3f2504e0-4f89-11d3-9a0c-0305e82c3302", "action": "START", "status": "RUNNING"}
     }
   ]
 }
 ```
+
+> **OPERATIVO ETAPA-1:** el wrapper `{summary, instances}` del ejemplo anterior es diseño futuro. El código devuelve `[]` directo y `activeTask` objeto o `null`, ej: `"activeTask": {"tareaId": "uuid", "action": "START", "status": "RUNNING"}`. Ningún contrato público incluye el UPID.
 
 #### 8.0 Detalle de instancia
 
@@ -740,6 +746,8 @@ Este es el primer endpoint que el frontend consume al entrar al detalle. Aliment
 &nbsp;
 
 **GET /api/instances/{id}**&nbsp;
+
+> **OPERATIVO ETAPA-1 (código actual): `GET /api/instances/:vmid` (`:vmid` entero, `400 INVALID_VMID` si no lo es) devuelve la lectura en vivo `InstanciaDetalleResponse` (`{vmid, nombre, tipo: qemu|lxc, nodo, estado, cpu: porcentaje 0-100, mem, maxMem, maxCpu}`; `cpu` y `mem` son `null` si la instancia no está `running`), no el detalle rico del ejemplo siguiente (`os, qemuAgentActive, permissions, availableActions, recentTasks...`, que queda como planificado).
 
 ```json
 {
@@ -777,7 +785,7 @@ Este es el primer endpoint que el frontend consume al entrar al detalle. Aliment
   },
   "recentTasks": [
     {
-      "taskId": "UPID:pve1:0001:...",
+      "taskId": "3f2504e0-4f89-11d3-9a0c-0305e82c3303",
       "type": "START",
       "status": "COMPLETED",
       "startAt": "2026-08-25T10:00:00Z",
@@ -800,11 +808,13 @@ Estas acciones (iniciar, apagar, forzar apagado, reiniciar) no necesitan que el 
 
 **POST /api/instances/{id}/status/{action}**
 
-Donde `{action}` puede ser: `start` (Iniciar), `stop` (Forzar apagado) o `reboot` (Reiniciar).
-*Nota: Se mantienen los alias directos `/start` y `/stop` por retrocompatibilidad.*
+Donde `{action}` puede ser: `start` (Iniciar), `stop` (Forzar apagado), `shutdown` (Apagado ordenado) o `reboot` (Reiniciar). Cualquier otro valor (incluido `pause`) responde `400 INVALID_ACTION`.
+*Nota: Se mantienen los alias directos `POST /{id}/start` y `POST /{id}/stop` por retrocompatibilidad.*
 
 **DELETE /api/instances/{id}** (Eliminar instancia)
-Requiere rol ADMIN estrictamente, y la instancia debe estar en estado `stopped`.
+Requiere rol ADMIN estrictamente, y la instancia debe estar en estado `stopped` (`409 INSTANCE_INVALID_STATE` si no, `409 INSTANCE_BUSY` si hay tarea RUNNING).
+
+> **OPERATIVO ETAPA-1:** las 4 acciones + el borrado son asíncronos y responden `202 {tareaId: string-uuid}`. `tareaId` es la referencia pública opaca administrada por Centinela; el UPID real queda almacenado únicamente en el backend. Si falla el registro local después de que Proxmox aceptó la orden, se responde `500 TASK_TRACKING_UNAVAILABLE`, nunca un `202` con el UPID como alternativa. Correlacionar por `tareaId` y `TASK_FINISHED`. Pre-chequeos sin tocar Proxmox: `409 INSTANCE_BUSY` si hay tarea RUNNING o el lock `lock:instance:{vmid}:operation` está tomado (guarda `RequireInstanceIdle`: de una ráfaga de pedidos simultáneos sobre la misma instancia pasa uno solo), `503 INSTANCE_LOCK_UNAVAILABLE` si no se pudo verificar (reintentable); matriz `start→stopped`, `stop|shutdown|reboot→running` (`409 INSTANCE_INVALID_STATE`). Errores Proxmox: `404 INSTANCE_NOT_FOUND`, `502 PROXMOX_UNAVAILABLE` (orden no llegó), `504 PROXMOX_TIMEOUT` (pudo aplicarse). Sobre de error `{errorCode, message}`.
 
 Sí hay una respuesta para el front, pero está agrupada más abajo para no repetirla.
 
@@ -844,6 +854,8 @@ Devuelve el detalle microscópico del hardware virtual, la disponibilidad del no
 &nbsp;
 
 **GET /api/instances/{id}/resources**&nbsp;
+
+> **PLANIFICADO:** este `GET` todavía no está implementado. El cambio de CPU y RAM sí: ver `PUT /api/instances/{vmid}/config` más abajo.
 
 ```json
 {
@@ -887,20 +899,54 @@ Devuelve el detalle microscópico del hardware virtual, la disponibilidad del no
 
 &nbsp;
 
-Para la modificación de vCPUs y memoria RAM asignada, el frontend enviará los nuevos valores requeridos.
+**Cambio de CPU y RAM — OPERATIVO**
 
-**PUT /api/instances/{id}/resources**
+Para modificar los cores y la memoria RAM asignados, el frontend envía solo los valores nuevos.
 
-Petición (Frontend ➡️ Backend):
+**PUT /api/instances/{vmid}/config**
 
-&nbsp;
+Requiere ADMIN o `FULL_ACCESS` sobre la instancia (`READ_ONLY` no alcanza). Las instancias de infraestructura de El Centinela no se pueden reconfigurar.
 
-```
+Petición (Frontend ➡️ Backend), al menos uno de los dos campos, enteros positivos (`ramMb` mínimo 16):
+
+```json
 {
-  "vCpu": 4,
+  "cores": 4,
   "ramMb": 4096
 }
 ```
+
+Los incrementos se validan contra el margen del nodo (RAM con 15% de headroom y vCPU), comparando con lo que la instancia ya tiene asignado: se valida solo la diferencia (DeltaRAM). Las reducciones no se validan.
+
+Respuesta `200` si el cambio quedó aplicado: la instancia estaba apagada, o es un LXC / admite hot-plug y se aplicó en caliente.
+
+```json
+{
+  "requiresReboot": false
+}
+```
+
+Respuesta `200` si la instancia está encendida y Proxmox dejó el cambio pendiente (lo habitual en VMs QEMU): se aplica al reiniciarla.
+
+```json
+{
+  "requiresReboot": true,
+  "message": "Recursos modificados; los cambios se aplicarán tras reiniciar la instancia."
+}
+```
+
+Errores (sobre `{ "errorCode", "message" }`):
+
+| HTTP | `errorCode` | Cuándo |
+|------|-------------|--------|
+| 400 | `INVALID_REQUEST` | Sin `cores` ni `ramMb`, valores no enteros, menores a 1, o `ramMb` menor a 16 |
+| 403 | `INSTANCE_ACCESS_DENIED` | El usuario no tiene `FULL_ACCESS` sobre la instancia |
+| 403 | `INSTANCE_PROTECTED` | Es una instancia de infraestructura de El Centinela |
+| 404 | `INSTANCE_NOT_FOUND` | La instancia no existe |
+| 409 | `RESOURCE_QUOTA_EXCEEDED` | El incremento no entra en el margen del nodo; no se escribió nada en Proxmox |
+| 409 | `INSTANCE_BUSY` | La instancia tiene otra operación en curso, o su configuración cambió en el medio |
+| 502 / 504 | `PROXMOX_UNAVAILABLE` / `PROXMOX_TIMEOUT` | Proxmox caído o sin respuesta |
+| 503 | `INSTANCE_LOCK_UNAVAILABLE` / `PROVISIONING_COORDINATION_UNAVAILABLE` | No se pudo coordinar la operación; se puede reintentar |
 
 &nbsp;
 
@@ -1116,7 +1162,7 @@ El frontend enviará filtros de paginación y búsqueda en la URL (ej. `?status=
   "total": 45,
   "tasks": [
     {
-      "taskId": "UPID:pve1:0001:...",
+      "taskId": "3f2504e0-4f89-11d3-9a0c-0305e82c3304",
       "readableName": "Creación de Snapshot",
       "operationType": "SNAPSHOT",
       "description": "Creación del snapshot Pre-Update",
@@ -1180,9 +1226,9 @@ Si el usuario quisiera buscar errores del componente QEMU de hoy, la URL que el 
 
 **El Contrato de Respuesta Unificado (Backend ➡️ Frontend)**
 
-La clave de todas estas acciones (excepto la eliminación de una interfaz de red que puede ser inmediata) es que el documento exige que se gestionen de manera **asíncrona**. Proxmox recibe la orden, devuelve un identificador de tarea (UPID) y la procesa en segundo plano.
+La clave de todas estas acciones (excepto la eliminación de una interfaz de red que puede ser inmediata) es que el documento exige que se gestionen de manera **asíncrona**. Proxmox recibe la orden, devuelve un identificador interno (UPID) al backend y la procesa en segundo plano.
 
-Por lo tanto, sin importar si el frontend llamó al endpoint de `start`, al de `snapshots` o al de `resize`, tu backend siempre validará los permisos, reenviará la orden a Proxmox, capturará ese UPID y le devolverá al frontend exactamente el mismo formato de respuesta inmediata.
+Por lo tanto, sin importar si el frontend llamó al endpoint de `start`, al de `snapshots` o al de `resize`, el backend valida los permisos, captura el UPID para su seguimiento privado y devuelve al frontend un `tareaId` opaco con el mismo formato de respuesta inmediata.
 
 **Respuesta Exitosa Unificada (202 Accepted):**
 
@@ -1270,6 +1316,30 @@ Cuando el usuario hace clic en "Crear", el frontend recolecta todo lo selecciona
 
 El front no debe mandarnos el `vmid` en el json. El backend tiene que ir a buscar el siguiente ID libre a Proxmox en el milisegundo exacto en que procesa la orden.
 
+El contrato canónico RF-07 es plano. `nodo` es opcional; el backend usa
+`PROXMOX_NODE` cuando no se envía. Para una IP estática, `red.ip` puede incluir
+el CIDR o se puede agregar `red.mascara` (por defecto `/24`). Si
+`templateOso` llega como nombre de archivo, el backend lo convierte al volumen
+`storageId:iso/...` para VM o `storageId:vztmpl/...` para LXC.
+
+```json
+{
+  "tipo": "vm",
+  "nombre": "srv-prod-01",
+  "cores": 2,
+  "ramMb": 2048,
+  "discoGb": 20,
+  "storageId": "local-lvm",
+  "templateOso": "debian-12.iso",
+  "red": {
+    "modo": "dhcp"
+  }
+}
+```
+
+Las variantes anidadas siguientes se mantienen durante la migración del
+wizard, pero las integraciones nuevas deben usar el contrato plano.
+
 Como Proxmox maneja las Máquinas Virtuales (VM) y los Contenedores (LXC) de manera distinta (el LXC exige una contraseña inicial obligatoria y no usa ISOs), el backend debe estar preparado para recibir estas dos variantes estructurales:&nbsp;
 
 &nbsp;
@@ -1350,30 +1420,89 @@ Los del front no nos pidieron ninguna contraseña para LXC. Pero el gurú vio el
 
 &nbsp;
 
-**Respuesta de Validación y Creación**&nbsp;
+**Respuesta de validación y creación (operativo)**&nbsp;
 
-&nbsp;
+`POST /api/instances` requiere autenticación y rol `ADMIN`. Un `OPERATOR`
+recibe `403 INSUFFICIENT_PERMISSIONS` y la solicitud no llega a Proxmox.
 
-Al recibir el POST, el backend valida internamente que los recursos (CPU/RAM) sigan existiendo en Proxmox. Si los recursos se agotaron milisegundos antes, devuelve un `409 Conflict` o `400 Bad Request` con un error claro (ej. _"Recursos insuficientes en el nodo pve1"_). Si los recursos están disponibles y se dispara la orden, como crear una máquina toma tiempo, el backend captura el UPID de Proxmox, lo transforma en un ID interno seguro, y devuelve la **Respuesta Exitosa Unificada (202 Accepted)**:
+Los indicadores que el wizard muestra durante la selección provienen de
+`GET /api/node/status`, cuya lectura puede salir de Redis durante un máximo de
+10 segundos. El frontend no escribe en Redis: el backend administra e invalida
+las claves de capacidad.
 
-&nbsp;
+Inmediatamente antes de crear, `CuotasService` toma el lock distribuido
+`lock:instance:provisioning` mediante `SET NX` con TTL de 30 segundos. Si está
+ocupado, reintenta durante un máximo de 2 segundos. Luego consulta la foto
+compartida `aprovisionamiento:capacidad:{node}` en Redis. Si no existe
+o venció, lee desde Proxmox el estado del nodo, las instancias ya asignadas y
+los storages, y guarda la nueva foto durante 10 segundos. Dentro de esa misma
+sección crítica valida:
+
+- vCPU solicitadas contra las disponibles en el nodo;
+- RAM solicitada contra la capacidad todavía no comprometida, después de
+  reservar estrictamente el 15% de la RAM física para Proxmox;
+- disco solicitado contra `avail` del storage;
+- que el storage esté activo, habilitado y soporte `images` para VM o `rootdir`
+  para LXC.
+
+Antes de enviar el `POST` a Proxmox se registra una reserva temporal de CPU,
+RAM y disco. Las solicitudes siguientes descuentan también esas reservas, no
+solo la foto de Proxmox, evitando que dos creaciones simultáneas aprueben el
+mismo remanente. La reserva se libera cuando el worker cierra la tarea, tanto
+si termina `COMPLETED` como `FAILED`; además vence automáticamente luego de 15
+minutos para recuperarse de una caída del proceso. Con Redis la coordinación se
+comparte entre todas las réplicas; en modo degradado solo cubre el proceso local.
+
+Si la validación aprueba, el backend obtiene el siguiente VMID libre mediante
+`GET /cluster/nextid`, envía `POST /nodes/{node}/qemu` o
+`POST /nodes/{node}/lxc`, registra el UPID en `tareas_asincronas` y responde
+`202 Accepted` con el contrato real:
 
 ```json
 {
-  "taskId": "task-uuid-8888",
-  "status": "ACCEPTED",
-  "message": "Operación iniciada en segundo plano."
+  "vmid": 120,
+  "tareaId": "3f2504e0-4f89-11d3-9a0c-0305e82c3301"
 }
 ```
 
-&nbsp;
+El UPID queda reservado para el worker y la correlación interna de auditoría;
+no aparece en el contrato HTTP, en el listado administrativo ni en la
+exportación de auditoría.
 
-Si los recursos se agotan en el proceso, el sistema debe rechazar la solicitud de quien llegue tarde, interceptando el código **HTTP 409 Conflicto**
+El `202` solo se devuelve después de insertar el UPID como tarea `RUNNING` y
+su auditoría inicial. Si Proxmox aceptó la creación pero esa transacción falla,
+la API responde `500 TASK_TRACKING_UNAVAILABLE`; el frontend debe verificar el
+estado antes de reintentar para no duplicar una instancia.
+
+Al aceptar la orden, el backend invalida `node:status:current` y
+`aprovisionamiento:capacidad:{node}`. El worker vuelve a invalidarlas al cerrar
+la tarea, porque durante el procesamiento pudo haberse cacheado una lectura
+intermedia. Así, la próxima consulta reconstruye las claves desde Proxmox y el
+frontend recibe la información actualizada. No se vacía Redis completo: se
+preservan sesiones, tickets SSE y datos ajenos al inventario/capacidad.
+
+El resultado definitivo llega mediante `TASK_FINISHED`, con
+`detalles.accion: "CREATE"` y `recursoId` igual al VMID. Si Proxmox finaliza
+con `OK` o `WARNINGS`, el mismo commit que cierra la tarea registra al creador
+con `FULL_ACCESS`; el evento se publica después de ese commit.
+
+Si CPU, RAM o disco ya no alcanzan, o el storage dejó de estar disponible, se
+rechaza antes de crear con **HTTP 409 Conflict**:
 
 ```json
 {
   "errorCode": "RESOURCE_QUOTA_EXCEEDED",
-  "message": "Los recursos del nodo han sido ocupados por otra operación. No hay RAM o CPU suficiente para aprovisionar esta instancia."
+  "message": "Los recursos solicitados superan la capacidad disponible en el nodo físico o storage seleccionado."
+}
+```
+
+Si el backend no puede mantener de forma segura el lock o la reserva compartida,
+no envía la orden a Proxmox y responde **HTTP 503 Service Unavailable**:
+
+```json
+{
+  "errorCode": "PROVISIONING_COORDINATION_UNAVAILABLE",
+  "message": "No se pudo reservar la capacidad de forma segura. Intente nuevamente."
 }
 ```
 
@@ -1386,6 +1515,8 @@ Para la seguridad de esto se requiere autenticación mediante JWT y validación 
 Mediante query parameters:
 
 **GET /api/admin/audit?page=1\&limit=10\&from=2024-05-01\&to=2024-05-08\&result=SUCCESS**
+
+> **OPERATIVO ETAPA-1 (código actual): los params reales son en español: `GET /api/admin/audit?accion=INICIAR_VM&resultado=SUCCESS&usuarioId=<uuid>&instanciaId=110&desde=2024-05-01&hasta=2024-05-08&pagina=1&tamano=50&ordenarPor=fechaHora&direccion=desc`. `page/limit/from/to/result` del ejemplo no existen en código. `GET /api/admin/audit/export` acepta los mismos filtros + `?formato=csv|json` (default `csv`, cualquier valor no-`json` devuelve CSV como adjunto). Respuesta real `200 {total, pagina, items:[{id, usuarioId, nombreUsuario, fechaHora, accion, instanciaId, instanciaNombre, resultado, detalles}]}` (`detalles` string JSON), sin `{statistics, pagination, events}` del ejemplo siguiente, que queda como diseño futuro.
 
 - GET /api/admin/audit: Es la ruta base del endpoint encargada de consultar y devolver los registros de auditoría almacenados en la base de datos.
 - GET /api/admin/audit/export: Exporta el log de auditoría completo según los filtros (descarga CSV).

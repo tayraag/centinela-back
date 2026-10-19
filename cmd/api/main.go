@@ -3,7 +3,9 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -21,9 +23,9 @@ import (
 	"el-centinela/internal/adapters/secondary/postgres"
 	"el-centinela/internal/adapters/secondary/proxmox"
 	"el-centinela/internal/adapters/secondary/redis"
+	"el-centinela/internal/core/domain"
 	"el-centinela/internal/core/ports"
 	"el-centinela/internal/core/services"
-	"el-centinela/internal/core/domain"
 
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
@@ -82,6 +84,13 @@ func main() {
 		log.Println("✅ Variables de entorno cargadas desde el archivo .env")
 	}
 
+	// Resolver el proveedor antes de abrir conexiones o iniciar workers. Así una
+	// configuración insegura en producción detiene el proceso inmediatamente.
+	emailService, err := inicializarServicioEmail()
+	if err != nil {
+		log.Fatalf("[FATAL] %v", err)
+	}
+
 	// 2. Inicializar la base de datos
 	db, err := postgres.InitDB()
 	if err != nil {
@@ -101,18 +110,6 @@ func main() {
 	// 3. Inicializar adaptadores secundarios (repositorios)
 	authRepo := postgres.NewAuthRepository(db)
 	userRepo := postgres.NewUserRepository(db)
-	var emailService ports.EmailService
-	if os.Getenv("EMAIL_PROVIDER") == "smtp" {
-		svc, err := email.NewSMTPEmailService()
-		if err != nil {
-			log.Fatalf("❌ Configuración SMTP inválida: %v", err)
-		}
-		emailService = svc
-		log.Println("📧 Email Provider: SMTP (STARTTLS/TLS)")
-	} else {
-		emailService = email.NewMockEmailService()
-		log.Println("📧 Email Provider: MOCK (consola/tests)")
-	}
 	auditRepo := postgres.NewAuditRepository(db)
 	instanceRepo := postgres.NewInstanceRepository(db)
 	kvStore := conectarRedis()
@@ -138,44 +135,49 @@ func main() {
 	}
 
 	// 4. Inicializar servicios de dominio (inyección de dependencias)
+	nodoNombre := valorODefecto(os.Getenv("PROXMOX_NODE"), "proxmox")
 	auditService := services.NewAuditService(auditRepo)
 	authService := services.NewAuthService(authRepo, kvStore, emailService, auditService)
 	userService := services.NewUserService(userRepo, authRepo, kvStore, auditService, emailService)
+	cuotasService := services.NewCuotasService(proxmoxClient, proxmoxClient, kvStore)
 
 	// 5. Inicializar handlers HTTP
-	authHandler := httpHandlers.NewAuthHandler(authService)
+	authHandler := httpHandlers.NewAuthHandler(authService, kvStore)
 	userHandler := httpHandlers.NewUserHandler(userService)
 	accountHandler := httpHandlers.NewAccountHandler(userService)
 	auditHandler := httpHandlers.NewAuditHandler(auditService)
 	eventosService := services.NewEventosService(kvStore, authRepo, instanceRepo, auditService)
 	tareaRepo := postgres.NewTareaRepository(db)
-	seguimientoTareas := services.NewSeguimientoTareas(proxmoxClient, tareaRepo,
+	seguimientoTareas := services.NewSeguimientoTareas(proxmoxClient, tareaRepo, auditService,
 		services.ConfigSeguimiento{
 			Workers:        enteroDeEntorno("UPID_WORKERS", 8),
 			UpidTimeout:    duracionDeEntorno("UPID_TIMEOUT", 3*time.Minute),
 			PermisosPurger: instanceRepo,
 			OnTaskFinished: func(ctx context.Context, tarea *domain.TareaAsincrona, recursoTipo string, r services.ResultadoTarea) {
-				resultado := ports.ResultadoExito
-				if r.Estado != ports.TareaCompleted {
-					resultado = ports.ResultadoFalla
+				if tarea.Metadatos != nil {
+					var meta map[string]any
+					if json.Unmarshal([]byte(*tarea.Metadatos), &meta) == nil {
+						if reservaID, _ := meta["reserva_id"].(string); reservaID != "" {
+							if err := cuotasService.FinalizarReserva(ctx, reservaID, r); err != nil {
+								log.Printf("[APROVISIONAMIENTO] no se pudo liberar la reserva %s: %v", reservaID, err)
+							}
+						}
+					}
 				}
-				auditService.Registrar(ctx, ports.RegistrarAuditoriaInput{
-					UsuarioID:   tarea.UsuarioID,
-					Accion:      strings.ToUpper(tarea.Accion),
-					InstanciaID: tarea.InstanciaID,
-					Resultado:   resultado,
-					Detalles:    r.Detalles(tarea),
-				})
+				// El repositorio confirmó el cierre y la auditoría RF-08 en una
+				// misma transacción antes de publicar el evento.
 				if err := eventosService.Publicar(ctx, services.EventoTareaFinalizada(tarea, recursoTipo, r)); err != nil {
 					log.Printf("[TAREAS] no se pudo publicar TASK_FINISHED de la tarea %s: %v", tarea.ID, err)
 				}
 			},
 		})
 	seguimientoTareas.Iniciar(ctx)
-	instanceHandler := httpHandlers.NewInstanceHandler(proxmoxClient, userRepo, seguimientoTareas, tareaRepo, auditService,
-		services.NewInventarioService(proxmoxClient))
+	instanceHandler := httpHandlers.NewInstanceHandlerConNodo(proxmoxClient, userRepo, seguimientoTareas, tareaRepo, auditService,
+		services.NewInventarioService(proxmoxClient), nodoNombre, aprovisionadorSeguro(kvStore, cuotasService))
 	eventsHandler := httpHandlers.NewEventsHandler(eventosService)
-	nodeHandler := httpHandlers.NewNodeHandler(services.NewNodoService(proxmoxClient, kvStore, valorODefecto(os.Getenv("PROXMOX_NODE"), "proxmox")))
+	nodeHandler := httpHandlers.NewNodeHandler(services.NewNodoService(proxmoxClient, kvStore, nodoNombre), proxmoxClient, nodoNombre)
+	wsMetricsHandler := httpHandlers.NewMetricsWSHandler(proxmoxClient, services.NewMetricasVivoService(kvStore, authRepo, instanceRepo, 0),
+		nodoNombre, middleware.OrigenesPermitidos(), httpHandlers.LimitesWSPorDefecto)
 
 	// 6. Configurar el Router HTTP (Gin)
 	// Usamos gin.New() para tener control total sobre los middlewares.
@@ -220,6 +222,7 @@ func main() {
 
 			// Rutas protegidas (requieren JWT access)
 			auth.POST("/logout", middleware.RequireAuth(authService), authHandler.Logout)
+			auth.POST("/ws-ticket", middleware.RequireAuth(authService), authHandler.EmitirWsTicket)
 
 			// Recuperación de contraseña (públicas)
 			auth.POST("/password/forgot", authHandler.SolicitarRecuperacion)
@@ -288,20 +291,37 @@ func main() {
 
 		// Estado consolidado del nodo (ADMIN y OPERATOR), con caché en Redis
 		api.GET("/node/status", middleware.RequireAuth(authService), nodeHandler.ObtenerEstado)
+		// Histórico del host: mismo nivel de acceso que el estado, porque alimenta
+		// el gráfico del Dashboard que ve cualquier usuario autenticado.
+		api.GET("/node/history", middleware.RequireAuth(authService), nodeHandler.ObtenerHistorial)
+		// Catálogo de almacenamiento y plantillas/ISOs para aprovisionamiento (RF-07) — solo ADMIN
+		api.GET("/node/storages", middleware.RequireAuth(authService), middleware.RequireRole("ADMIN"), nodeHandler.ObtenerStorages)
+		api.GET("/node/templates", middleware.RequireAuth(authService), middleware.RequireRole("ADMIN"), nodeHandler.ObtenerTemplates)
 		api.GET("/events", eventsHandler.Stream)
+
+		// ==========================================
+		// Canal WebSocket de telemetría en tiempo real (RF-05 / RNF-06)
+		// ==========================================
+		api.GET("/ws/instances/:vmid/metrics", wsMetricsHandler.StreamMetrics)
 
 		// ==========================================
 		// Rutas de Instancias Proxmox
 		// ==========================================
+		// Exclusión mutua de las operaciones que modifican una instancia (409 INSTANCE_BUSY).
+		// Cuando existan los endpoints de snapshots, llevan la misma guarda.
+		exclusion := services.NewExclusionInstancias(kvStore, tareaRepo)
+		configHandler := httpHandlers.NewInstanceConfigHandler(services.NewConfiguracionInstancias(proxmoxClient, cuotasService), auditService)
 		instances := api.Group("/instances", middleware.RequireAuth(authService))
 		{
 			instances.GET("", instanceHandler.ListarInstancias)
+			instances.POST("", middleware.RequireRole("ADMIN"), instanceHandler.CrearInstancia)
 			instances.GET("/:vmid", middleware.RequireInstanceAccess(instanceRepo, "vmid", ports.NivelAccesoReadOnly), instanceHandler.ObtenerInstancia)
-			instances.POST("/:vmid/start", middleware.RequireInstanceAccess(instanceRepo, "vmid", ports.NivelAccesoFullAccess), middleware.RejectProtectedInstance(vmidsProtegidos, "vmid"), instanceHandler.IniciarInstancia)
+			instances.POST("/:vmid/start", middleware.RequireInstanceAccess(instanceRepo, "vmid", ports.NivelAccesoFullAccess), middleware.RejectProtectedInstance(vmidsProtegidos, "vmid"), middleware.RequireInstanceIdle(exclusion, "vmid"), instanceHandler.IniciarInstancia)
 			// Las acciones destructivas llevan además RejectProtectedInstance (VMIDs de infraestructura).
-			instances.POST("/:vmid/stop", middleware.RequireInstanceAccess(instanceRepo, "vmid", ports.NivelAccesoFullAccess), middleware.RejectProtectedInstance(vmidsProtegidos, "vmid"), instanceHandler.DetenerInstancia)
-			instances.POST("/:vmid/status/:action", middleware.RequireInstanceAccess(instanceRepo, "vmid", ports.NivelAccesoFullAccess), middleware.RejectProtectedInstance(vmidsProtegidos, "vmid"), instanceHandler.CambiarEstado)
-			instances.DELETE("/:vmid", middleware.RequireRole("ADMIN"), middleware.RejectProtectedInstance(vmidsProtegidos, "vmid"), instanceHandler.EliminarInstancia)
+			instances.POST("/:vmid/stop", middleware.RequireInstanceAccess(instanceRepo, "vmid", ports.NivelAccesoFullAccess), middleware.RejectProtectedInstance(vmidsProtegidos, "vmid"), middleware.RequireInstanceIdle(exclusion, "vmid"), instanceHandler.DetenerInstancia)
+			instances.POST("/:vmid/status/:action", middleware.RequireInstanceAccess(instanceRepo, "vmid", ports.NivelAccesoFullAccess), middleware.RejectProtectedInstance(vmidsProtegidos, "vmid"), middleware.RequireInstanceIdle(exclusion, "vmid"), instanceHandler.CambiarEstado)
+			instances.PUT("/:vmid/config", middleware.RequireInstanceAccess(instanceRepo, "vmid", ports.NivelAccesoFullAccess), middleware.RejectProtectedInstance(vmidsProtegidos, "vmid"), middleware.RequireInstanceIdle(exclusion, "vmid"), configHandler.ActualizarConfig)
+			instances.DELETE("/:vmid", middleware.RequireRole("ADMIN"), middleware.RejectProtectedInstance(vmidsProtegidos, "vmid"), middleware.RequireInstanceIdle(exclusion, "vmid"), instanceHandler.EliminarInstancia)
 		}
 		// ==========================================
 		// Swagger UI: apagada por defecto.
@@ -333,7 +353,8 @@ func main() {
 		WriteTimeout: 15 * time.Second,
 		IdleTimeout:  60 * time.Second,
 	}
-	srv.RegisterOnShutdown(eventsHandler.CerrarStreams) // los streams SSE no terminan solos
+	srv.RegisterOnShutdown(eventsHandler.CerrarStreams)       // los streams SSE no terminan solos
+	srv.RegisterOnShutdown(wsMetricsHandler.CerrarConexiones) // los canales WS de telemetría tampoco
 
 	go func() {
 		log.Printf("[INFO] Servidor HTTP escuchando en %s", srv.Addr)
@@ -349,7 +370,7 @@ func main() {
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	
+
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		log.Printf("[ERROR] Forzando cierre del servidor HTTP por timeout: %v", err)
 	} else {
@@ -358,6 +379,41 @@ func main() {
 
 	if err := seguimientoTareas.Esperar(shutdownCtx); err != nil {
 		log.Printf("⚠️  El seguimiento de tareas no terminó a tiempo: %v", err)
+	}
+}
+
+// inicializarServicioEmail selecciona el proveedor de forma explícita y evita
+// que una omisión de EMAIL_PROVIDER degrade silenciosamente el envío a MOCK.
+func inicializarServicioEmail() (ports.EmailService, error) {
+	provider := os.Getenv("EMAIL_PROVIDER")
+	production := os.Getenv("APP_ENV") == "production"
+
+	switch provider {
+	case "smtp":
+		svc, err := email.NewSMTPEmailService()
+		if err != nil {
+			return nil, fmt.Errorf("configuración SMTP inválida: %w", err)
+		}
+		log.Println("[INFO] EMAIL_PROVIDER configurado en modo SMTP (STARTTLS/TLS)")
+		return svc, nil
+
+	case "mock":
+		log.Println("[WARN] EMAIL_PROVIDER configurado en modo MOCK. Los correos se imprimirán por stdout")
+		return email.NewMockEmailService(), nil
+
+	case "":
+		if production {
+			return nil, errors.New("EMAIL_PROVIDER no configurado. Debe ser 'smtp' en entornos productivos")
+		}
+		log.Println("[WARN] EMAIL_PROVIDER ausente. Usando MOCK por defecto")
+		return email.NewMockEmailService(), nil
+
+	default:
+		if production {
+			return nil, fmt.Errorf("EMAIL_PROVIDER inválido (%q). Debe ser 'smtp' en entornos productivos", provider)
+		}
+		log.Printf("[WARN] EMAIL_PROVIDER desconocido (%q). Usando MOCK por defecto", provider)
+		return email.NewMockEmailService(), nil
 	}
 }
 
@@ -413,4 +469,18 @@ func valorODefecto(v, defecto string) string {
 		return defecto
 	}
 	return v
+}
+
+// Keep login and read-only features available in degraded mode, not creation.
+func aprovisionadorSeguro(store ports.KeyValueStore, creador ports.AprovisionamientoPort) ports.AprovisionamientoPort {
+	if _, compartido := store.(*redis.KVStore); !compartido {
+		return aprovisionamientoNoDisponible{}
+	}
+	return creador
+}
+
+type aprovisionamientoNoDisponible struct{}
+
+func (aprovisionamientoNoDisponible) AprovisionarInstancia(context.Context, ports.CrearInstanciaProxmoxInput) (*ports.ResultadoAprovisionamiento, error) {
+	return nil, ports.ErrCoordinacionAprovisionamiento
 }

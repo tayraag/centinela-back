@@ -59,14 +59,16 @@ func completadaConAdvertencias(exitStatus string) ResultadoTarea {
 
 // clasificarExitStatus traduce el exitstatus de Proxmox al desenlace de la tarea:
 //   - "OK": completada sin observaciones.
-//   - "WARNINGS: N": completada con advertencias (p. ej. "WARN: Systemd 257
-//     detected. You may need to enable nesting."); Proxmox la considera exitosa.
+//   - "WARNINGS: N": completada con advertencias para acciones operativas.
+//     En aprovisionamiento el contrato RF-07/RF-11 exige exitstatus exactamente
+//     "OK", por lo que una creación con advertencias se cierra como FAILED y no
+//     obtiene permisos.
 //   - cualquier otro valor: el texto del error que reportó Proxmox.
-func clasificarExitStatus(exitStatus string) ResultadoTarea {
+func clasificarExitStatus(accion, exitStatus string) ResultadoTarea {
 	if exitStatus == "OK" {
 		return completada()
 	}
-	if strings.HasPrefix(exitStatus, "WARNINGS") {
+	if _, creacion := ports.TipoRecursoCreacion(accion); !creacion && strings.HasPrefix(exitStatus, "WARNINGS") {
 		return completadaConAdvertencias(exitStatus)
 	}
 	return falloProxmox(exitStatus)
@@ -80,21 +82,22 @@ func vencida(limite time.Duration) ResultadoTarea {
 	return ResultadoTarea{Estado: ports.TareaFailed, Motivo: ports.MotivoTimeout, Error: mensajeTimeout(limite)}
 }
 
-// metadatos es lo que se guarda en tareas_asincronas.metadatos: {motivo, error}
-// en una tarea FAILED, nada en una COMPLETED.
+// metadatos conserva el resultado técnico del cierre para persistirlo junto
+// con la auditoría, también en tareas COMPLETED.
 func (r ResultadoTarea) metadatos() map[string]any {
-	if r.Estado != ports.TareaFailed {
-		return nil
-	}
-	return map[string]any{"motivo": r.Motivo, "error": r.Error}
+	return map[string]any{"exitstatus": nulo(r.ExitStatus), "motivo": nulo(r.Motivo), "error": nulo(r.Error)}
 }
 
 // detalles arma detalles.{tareaId, accion, estado, exitstatus, motivo, error}
-// del TASK_FINISHED (y de la auditoría): siempre las seis claves, con null
-// cuando no aplican. accion va en mayúsculas, igual que en la auditoría.
+// del TASK_FINISHED: siempre las seis claves, con null cuando no aplican.
+// El vocabulario SSE es independiente de los códigos de auditoría RF-08.
 func (r ResultadoTarea) Detalles(tarea *domain.TareaAsincrona) map[string]any {
+	accion := strings.ToUpper(tarea.Accion)
+	if _, creacion := ports.TipoRecursoCreacion(tarea.Accion); creacion {
+		accion = "CREATE"
+	}
 	return map[string]any{
-		"tareaId": tarea.ID.String(), "accion": strings.ToUpper(tarea.Accion), "estado": r.Estado,
+		"tareaId": tarea.ID.String(), "accion": accion, "estado": r.Estado,
 		"exitstatus": nulo(r.ExitStatus), "motivo": nulo(r.Motivo), "error": nulo(r.Error),
 	}
 }
@@ -147,7 +150,7 @@ func (c ConfigSeguimiento) conDefaults() ConfigSeguimiento {
 
 // TareaSeguimiento es una tarea dentro del pool.
 type TareaSeguimiento struct {
-	Tarea       domain.TareaAsincrona
+	Tarea         domain.TareaAsincrona
 	Vmid          int
 	recursoTipo   string // VM | LXC, se resuelve en la primera consulta
 	intentosFallo int    // reintentos de red o errores transitorios
@@ -165,6 +168,7 @@ type TareaSeguimiento struct {
 type PoolSeguimiento struct {
 	proxmox ports.ProxmoxPort
 	tareas  ports.TareaRepository
+	audit   ports.AuditService
 	cfg     ConfigSeguimiento
 	ahora   func() time.Time
 
@@ -182,10 +186,10 @@ type PoolSeguimiento struct {
 var _ ports.SeguimientoTareas = (*PoolSeguimiento)(nil)
 
 // NewSeguimientoTareas crea el pool. Hay que arrancarlo con Iniciar.
-func NewSeguimientoTareas(proxmox ports.ProxmoxPort, tareas ports.TareaRepository, cfg ConfigSeguimiento) *PoolSeguimiento {
+func NewSeguimientoTareas(proxmox ports.ProxmoxPort, tareas ports.TareaRepository, audit ports.AuditService, cfg ConfigSeguimiento) *PoolSeguimiento {
 	cfg = cfg.conDefaults()
 	return &PoolSeguimiento{
-		proxmox: proxmox, tareas: tareas, cfg: cfg, ahora: time.Now,
+		proxmox: proxmox, tareas: tareas, audit: audit, cfg: cfg, ahora: time.Now,
 		tareasChan: make(chan *TareaSeguimiento, cfg.Buffer),
 		enCurso:    map[uuid.UUID]bool{},
 		fin:        make(chan struct{}),
@@ -252,7 +256,8 @@ func (p *PoolSeguimiento) Seguir(ctx context.Context, usuarioID uuid.UUID, vmid 
 			tarea.Metadatos = &str
 		}
 	}
-	if err := p.tareas.Crear(ctx, &tarea); err != nil {
+	auditoria := p.audit.PrepararAuditoriaTarea(&tarea, nil, p.ahora())
+	if err := p.tareas.Crear(ctx, &tarea, auditoria); err != nil {
 		return uuid.Nil, err
 	}
 	if !p.encolar(&TareaSeguimiento{Tarea: tarea, Vmid: vmid}) {
@@ -361,7 +366,7 @@ func (p *PoolSeguimiento) verificarUnaVez(t *TareaSeguimiento) {
 	resultado, err := p.proxmox.EstadoTarea(ctx, t.Tarea.UpidProxmox)
 	switch {
 	case err == nil && resultado.Terminada:
-		p.finalizar(t, clasificarExitStatus(resultado.ExitStatus))
+		p.finalizar(t, clasificarExitStatus(t.Tarea.Accion, resultado.ExitStatus))
 	default:
 		if err != nil {
 			log.Printf("[TAREAS] la tarea %s superó %s y Proxmox no respondió: %v", t.Tarea.ID, p.cfg.VentanaRecuperacion, err)
@@ -374,6 +379,12 @@ func (p *PoolSeguimiento) verificarUnaVez(t *TareaSeguimiento) {
 // evento). Si no se puede (por ejemplo, ya se borró), queda VM.
 func (p *PoolSeguimiento) resolverRecurso(ctx context.Context, t *TareaSeguimiento) {
 	if t.recursoTipo != "" {
+		return
+	}
+	// Durante el aprovisionamiento la instancia puede no ser consultable aún.
+	// La acción de creación ya contiene el tipo y es una fuente más confiable.
+	if tipo, creacion := ports.TipoRecursoCreacion(t.Tarea.Accion); creacion {
+		t.recursoTipo = tipo
 		return
 	}
 	if t.Tarea.Metadatos != nil {
@@ -405,7 +416,7 @@ func (p *PoolSeguimiento) consultar(t *TareaSeguimiento) {
 	resultado, err := p.proxmox.EstadoTarea(ctx, t.Tarea.UpidProxmox)
 	switch {
 	case err == nil && resultado.Terminada:
-		p.finalizar(t, clasificarExitStatus(resultado.ExitStatus))
+		p.finalizar(t, clasificarExitStatus(t.Tarea.Accion, resultado.ExitStatus))
 		return
 	case err != nil:
 		t.intentosFallo++
@@ -448,8 +459,11 @@ func (p *PoolSeguimiento) finalizar(t *TareaSeguimiento, r ResultadoTarea) {
 		p.mu.Unlock()
 	}()
 
-	if err := p.tareas.ActualizarEstado(ctx, t.Tarea.ID, r.Estado, r.metadatos()); err != nil {
+	metadatos := r.metadatos()
+	auditoria := p.audit.PrepararAuditoriaTarea(&t.Tarea, metadatos, p.ahora())
+	if err := p.tareas.ActualizarEstado(ctx, t.Tarea.ID, r.Estado, metadatos, auditoria); err != nil {
 		log.Printf("[TAREAS] %v", err)
+		return // sigue RUNNING: el reconciliador reintenta el cierre y su auditoría
 	}
 
 	log.Printf("[TAREAS] tarea %s (%s sobre %d) terminó: %s", t.Tarea.ID, t.Tarea.Accion, t.Vmid, r.Estado)
@@ -529,6 +543,10 @@ func (p *PoolSeguimiento) reconciliar() {
 // EventoTareaFinalizada arma el TASK_FINISHED de docs/contrato-eventos.md.
 func EventoTareaFinalizada(tarea *domain.TareaAsincrona, recursoTipo string, r ResultadoTarea) ports.RealtimeEvent {
 	nombre := nombresAccion[tarea.Accion]
+	_, creacion := ports.TipoRecursoCreacion(tarea.Accion)
+	if creacion {
+		nombre = "creación"
+	}
 	if nombre == "" {
 		nombre = tarea.Accion
 	}
@@ -538,6 +556,9 @@ func EventoTareaFinalizada(tarea *domain.TareaAsincrona, recursoTipo string, r R
 	severidad, mensaje := ports.SeveridadInfo, fmt.Sprintf("La tarea de %s finalizó correctamente", nombre)
 	if r.Estado != ports.TareaCompleted {
 		severidad, mensaje = ports.SeveridadWarning, fmt.Sprintf("La tarea de %s falló", nombre)
+	}
+	if creacion && r.Estado == ports.TareaCompleted {
+		mensaje = "La creación de la instancia finalizó exitosamente"
 	}
 	// NewRealtimeEvent solo falla con tipo/severidad/mensaje inválidos, y acá son constantes.
 	evento, _ := ports.NewRealtimeEvent(ports.EventoTareaFinalizada, severidad, mensaje)

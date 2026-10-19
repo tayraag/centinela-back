@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"el-centinela/internal/core/ports"
@@ -34,9 +35,9 @@ func NewAuditHandler(service ports.AuditService) *AuditHandler {
 // @Produce      json
 // @Security     BearerAuth
 // @Param        usuarioId   query string  false "Filtrar por UUID de usuario"
-// @Param        accion      query string  false "Filtrar por tipo de acción (ej: LOGIN, CREAR_USUARIO)"
+// @Param        accion      query string  false "Filtrar por tipo de acción (ej: LOGIN, CREATE_INSTANCE, CONFIG_INSTANCE)"
 // @Param        instanciaId query string  false "Filtrar por ID de instancia Proxmox"
-// @Param        resultado   query string  false "Filtrar por resultado: EXITO o FALLA"
+// @Param        resultado   query string  false "Filtrar por resultado: PENDIENTE, SUCCESS, FAILED (infraestructura); EXITO o FALLA (otras acciones)"
 // @Param        desde       query string  false "Fecha desde (YYYY-MM-DD)"
 // @Param        hasta       query string  false "Fecha hasta (YYYY-MM-DD)"
 // @Param        pagina      query int     false "Número de página (default 1)"
@@ -76,7 +77,7 @@ func (h *AuditHandler) ListarAuditoria(c *gin.Context) {
 // @Param        usuarioId   query string  false "Filtrar por UUID de usuario"
 // @Param        accion      query string  false "Filtrar por tipo de acción"
 // @Param        instanciaId query string  false "Filtrar por ID de instancia"
-// @Param        resultado   query string  false "EXITO o FALLA"
+// @Param        resultado   query string  false "PENDIENTE, SUCCESS, FAILED (infraestructura); EXITO o FALLA (otras acciones)"
 // @Param        desde       query string  false "Fecha desde (YYYY-MM-DD)"
 // @Param        hasta       query string  false "Fecha hasta (YYYY-MM-DD)"
 // @Param        formato     query string  false "Formato de exportación: csv (default) o json"
@@ -123,6 +124,18 @@ func parsearFiltrosAuditoria(c *gin.Context) ports.FiltrosAuditoria {
 		Accion:      c.Query("accion"),
 		InstanciaID: c.Query("instanciaId"),
 		Resultado:   c.Query("resultado"),
+	}
+
+	// excluirAccion acepta valores repetidos y separados por coma. El feed del
+	// Dashboard lo usa para no traer el ruido del canal de eventos, que hoy
+	// desplaza a los movimientos reales; la vista completa no lo manda y sigue
+	// mostrando todo.
+	for _, valor := range c.QueryArray("excluirAccion") {
+		for _, parte := range strings.Split(valor, ",") {
+			if accion := strings.TrimSpace(parte); accion != "" {
+				filtros.ExcluirAcciones = append(filtros.ExcluirAcciones, accion)
+			}
+		}
 	}
 
 	if uidStr := c.Query("usuarioId"); uidStr != "" {

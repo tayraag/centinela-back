@@ -5,11 +5,8 @@ definitions:
       tareaId:
         example: 3f2504e0-4f89-11d3-9a0c-0305e82c3301
         type: string
-      upid:
-        example: 'UPID:pve:0008380E:0131F1BF:6A84EA54:vzstart:110:root@pam:ctid=110:starttime=6934A2E3:'
-        type: string
     required:
-    - upid
+    - tareaId
     type: object
   http.ActiveTaskResponse:
     properties:
@@ -20,6 +17,7 @@ definitions:
         - SHUTDOWN
         - REBOOT
         - DELETE
+        - CREATE
         example: START
         type: string
       status:
@@ -35,6 +33,144 @@ definitions:
     - status
     - tareaId
     type: object
+  http.ConfigInstanciaRequest:
+    properties:
+      cores:
+        example: 4
+        minimum: 1
+        type: integer
+      ramMb:
+        example: 4096
+        minimum: 16
+        type: integer
+    type: object
+  http.ConfigInstanciaResponse:
+    properties:
+      message:
+        example: Recursos modificados; los cambios se aplicarán tras reiniciar la
+          instancia.
+        type: string
+      requiresReboot:
+        example: true
+        type: boolean
+    required:
+    - requiresReboot
+    type: object
+  http.CreacionAceptadaResponse:
+    properties:
+      tareaId:
+        example: 0192a8b3-4f89-7e23-9a0c-0305e82c3301
+        type: string
+      vmid:
+        example: 115
+        minimum: 100
+        type: integer
+    required:
+    - tareaId
+    - vmid
+    type: object
+  http.CrearInstanciaRedRequest:
+    properties:
+      bridge:
+        example: vmbr0
+        type: string
+      firewall:
+        example: true
+        type: boolean
+      gateway:
+        example: 192.168.1.1
+        type: string
+      ip:
+        example: 192.168.1.50/24
+        type: string
+      mascara:
+        example: "24"
+        type: string
+      modo:
+        enum:
+        - dhcp
+        - static
+        - DHCP
+        - STATIC
+        example: dhcp
+        type: string
+      vlan:
+        example: 100
+        type: integer
+    required:
+    - modo
+    type: object
+  http.CrearInstanciaRequest:
+    properties:
+      cores:
+        example: 2
+        minimum: 1
+        type: integer
+      descripcion:
+        example: Servidor web principal
+        type: string
+      discoGb:
+        example: 20
+        minimum: 1
+        type: integer
+      nodo:
+        example: pve1
+        type: string
+      nombre:
+        example: srv-prod-01
+        type: string
+      password:
+        type: string
+      ramMb:
+        example: 2048
+        minimum: 16
+        type: integer
+      red:
+        $ref: '#/definitions/http.CrearInstanciaRedRequest'
+      storageId:
+        example: local-lvm
+        type: string
+      templateOso:
+        example: local:iso/debian-12.iso
+        type: string
+      tipo:
+        example: vm
+        type: string
+    required:
+    - cores
+    - discoGb
+    - nombre
+    - ramMb
+    - red
+    - storageId
+    - templateOso
+    - tipo
+    type: object
+  http.CuotaAsignableNode:
+    properties:
+      freeRamMb:
+        example: 14336
+        minimum: 0
+        type: integer
+      freeStorageGb:
+        example: 280
+        minimum: 0
+        type: integer
+      headroomPercent:
+        enum:
+        - 15
+        example: 15
+        type: integer
+      maxCpuCores:
+        example: 8
+        minimum: 0
+        type: integer
+    required:
+    - freeRamMb
+    - freeStorageGb
+    - headroomPercent
+    - maxCpuCores
+    type: object
   http.ErrorResponse:
     properties:
       errorCode:
@@ -46,6 +182,8 @@ definitions:
     type: object
   http.EstadoNodeResponse:
     properties:
+      allocatable:
+        $ref: '#/definitions/http.CuotaAsignableNode'
       cpu:
         $ref: '#/definitions/http.MetricaCPUNode'
       fetchedAt:
@@ -66,6 +204,7 @@ definitions:
         minimum: 0
         type: integer
     required:
+    - allocatable
     - cpu
     - fetchedAt
     - instancesSummary
@@ -74,6 +213,44 @@ definitions:
     - storage
     - uptimeSeconds
     type: object
+  http.InstanciaDetalleResponse:
+    properties:
+      cpu:
+        example: 24.5
+        maximum: 100
+        minimum: 0
+        type: number
+        x-nullable: true
+      estado:
+        example: running
+        type: string
+      maxCpu:
+        example: 2
+        type: integer
+      maxMem:
+        example: 4294967296
+        type: integer
+      mem:
+        example: 2147483648
+        minimum: 0
+        type: integer
+        x-nullable: true
+      nodo:
+        example: pve-01
+        type: string
+      nombre:
+        example: api-produccion
+        type: string
+      tipo:
+        enum:
+        - qemu
+        - lxc
+        example: qemu
+        type: string
+      vmid:
+        example: 110
+        type: integer
+    type: object
   http.InstanciaInventarioResponse:
     properties:
       activeTask:
@@ -81,10 +258,11 @@ definitions:
         - $ref: '#/definitions/http.ActiveTaskResponse'
         x-nullable: true
       cpuUsage:
-        example: 0.24
-        maximum: 1
+        example: 24.5
+        maximum: 100
         minimum: 0
         type: number
+        x-nullable: true
       id:
         example: 110
         type: integer
@@ -112,6 +290,7 @@ definitions:
         example: 2147483648
         minimum: 0
         type: integer
+        x-nullable: true
       status:
         example: running
         type: string
@@ -234,6 +413,7 @@ definitions:
         - SHUTDOWN
         - REBOOT
         - DELETE
+        - CREATE
         example: START
         type: string
       error:
@@ -282,7 +462,7 @@ definitions:
         enum:
         - VM
         - LXC
-        - NODE
+        - HOST
         example: VM
         type: string
       severidad:
@@ -298,13 +478,13 @@ definitions:
         - INSTANCE_CREATED
         - RESOURCE_SATURATION
         - TASK_FINISHED
+        - ALERT_TRIGGERED
         example: TASK_FINISHED
         type: string
     required:
     - fechaHora
     - id
     - mensaje
-    - recursoId
     - recursoTipo
     - severidad
     - tipo
@@ -330,6 +510,34 @@ definitions:
     - taskFailed
     - taskSuccess
     type: object
+  http.StorageResponse:
+    properties:
+      contentTypes:
+        example:
+        - images
+        - rootdir
+        items:
+          type: string
+        type: array
+      freeBytes:
+        example: 320000000000
+        type: integer
+      name:
+        example: local-lvm
+        type: string
+      totalBytes:
+        example: 500000000000
+        type: integer
+      type:
+        example: lvmthin
+        type: string
+    required:
+    - contentTypes
+    - freeBytes
+    - name
+    - totalBytes
+    - type
+    type: object
   http.TaskFailed:
     properties:
       accion:
@@ -339,6 +547,7 @@ definitions:
         - SHUTDOWN
         - REBOOT
         - DELETE
+        - CREATE
         example: STOP
         type: string
       error:
@@ -380,6 +589,7 @@ definitions:
         - SHUTDOWN
         - REBOOT
         - DELETE
+        - CREATE
         example: START
         type: string
       error:
@@ -408,6 +618,36 @@ definitions:
     - exitstatus
     - motivo
     - tareaId
+    type: object
+  http.TemplateResponse:
+    properties:
+      id:
+        example: local:iso/ubuntu-24.04.iso
+        type: string
+      name:
+        example: ubuntu-24.04.iso
+        type: string
+      sizeBytes:
+        example: 2100000000
+        type: integer
+      type:
+        enum:
+        - ISO
+        - LXC_TEMPLATE
+        example: ISO
+        type: string
+    required:
+    - id
+    - name
+    - sizeBytes
+    - type
+    type: object
+  http.WsTicketResponse:
+    properties:
+      expiresIn:
+        type: integer
+      ticket:
+        type: string
     type: object
   http.asignarPermisosRequest:
     properties:
@@ -500,7 +740,7 @@ definitions:
       accion:
         type: string
       detalles:
-        type: string
+        type: object
       fechaHora:
         type: string
       id:
@@ -511,6 +751,10 @@ definitions:
         type: string
       nombreUsuario:
         description: Nombre completo (JOIN con usuarios, o "[usuario eliminado]")
+        type: string
+      resourceId:
+        type: string
+      resourceType:
         type: string
       resultado:
         type: string
@@ -561,33 +805,6 @@ definitions:
         type: string
       rol:
         type: string
-    type: object
-  ports.InstanciaProxmoxDTO:
-    properties:
-      cpu:
-        description: Telemetría en tiempo real (0 cuando la instancia está detenida)
-        type: number
-      estado:
-        description: '"running" | "stopped" | ...'
-        type: string
-      maxCpu:
-        description: cantidad de vCPUs asignadas
-        type: integer
-      maxMem:
-        description: RAM máxima asignada (bytes)
-        type: integer
-      mem:
-        description: RAM usada (bytes)
-        type: integer
-      nodo:
-        type: string
-      nombre:
-        type: string
-      tipo:
-        description: '"qemu" | "lxc"'
-        type: string
-      vmid:
-        type: integer
     type: object
   ports.ListaUsuariosResult:
     properties:
@@ -855,7 +1072,7 @@ paths:
         in: query
         name: usuarioId
         type: string
-      - description: 'Filtrar por tipo de acción (ej: LOGIN, CREAR_USUARIO)'
+      - description: 'Filtrar por tipo de acción (ej: LOGIN, CREATE_INSTANCE, CONFIG_INSTANCE)'
         in: query
         name: accion
         type: string
@@ -863,7 +1080,8 @@ paths:
         in: query
         name: instanciaId
         type: string
-      - description: 'Filtrar por resultado: EXITO o FALLA'
+      - description: 'Filtrar por resultado: PENDIENTE, SUCCESS, FAILED (infraestructura);
+          EXITO o FALLA (otras acciones)'
         in: query
         name: resultado
         type: string
@@ -933,7 +1151,8 @@ paths:
         in: query
         name: instanciaId
         type: string
-      - description: EXITO o FALLA
+      - description: PENDIENTE, SUCCESS, FAILED (infraestructura); EXITO o FALLA (otras
+          acciones)
         in: query
         name: resultado
         type: string
@@ -1661,6 +1880,31 @@ paths:
       summary: Renovar access token
       tags:
       - Autenticación
+  /auth/ws-ticket:
+    post:
+      description: Genera un UUID criptográfico de un solo uso con TTL de 30 segundos
+        almacenado en Redis bajo la clave `ws:ticket:<uuid>`. Permite autenticar el
+        handshake de WebSocket sin exponer el JWT en los query parameters.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Ticket efímero válido por 30 segundos
+          schema:
+            $ref: '#/definitions/http.WsTicketResponse'
+        "401":
+          description: MISSING_TOKEN | INVALID_TOKEN | TOKEN_REVOKED
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "500":
+          description: INTERNAL_ERROR
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Generar ticket efímero para WebSocket
+      tags:
+      - Autenticación
   /events:
     get:
       description: 'Abre un stream `text/event-stream` autenticado con el ticket de
@@ -1788,13 +2032,79 @@ paths:
       summary: Listar instancias
       tags:
       - Instancias Proxmox
+    post:
+      consumes:
+      - application/json
+      description: ADMIN ONLY. El contrato plano RF-07 descrito en el body es el formato
+        canónico. Durante la migración del frontend también se acepta el payload anidado
+        anterior con `type`, `node`, `name`, `cpu.cores`, `ram.memoryMb`, `disk.storageId/sizeGb`,
+        `network.bridge/vlan/firewall/ipv4` y `os.templateId`; para LXC ese formato
+        requiere `password`. CuotasService usa el lock Redis `lock:instance:provisioning`
+        con TTL de 30 s y hasta 2 s de espera. Consulta la capacidad cacheada (o Proxmox
+        si falta), valida CPU lógica, RAM con 15% de headroom y disco contra `avail`
+        del storage, y registra una reserva temporal. Luego obtiene el VMID mediante
+        `/cluster/nextid`, despacha la creación QEMU o LXC y solo responde 202 con
+        vmid y tareaId después de persistir la tarea RUNNING y su auditoría inicial.
+        El UPID permanece privado en el backend. El resultado llega por TASK_FINISHED
+        con accion CREATE; cuando Proxmox finaliza con exitstatus OK, el creador recibe
+        FULL_ACCESS y se vuelve a invalidar la capacidad.
+      parameters:
+      - description: Configuración de la instancia
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/http.CrearInstanciaRequest'
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Accepted
+          schema:
+            $ref: '#/definitions/http.CreacionAceptadaResponse'
+        "400":
+          description: INVALID_REQUEST
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "401":
+          description: MISSING_TOKEN | INVALID_TOKEN | TOKEN_REVOKED
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "403":
+          description: WRONG_TOKEN_TYPE | 2FA_REQUIRED | INSUFFICIENT_PERMISSIONS
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "409":
+          description: RESOURCE_QUOTA_EXCEEDED
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "500":
+          description: TASK_TRACKING_UNAVAILABLE
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "502":
+          description: PROXMOX_UNAVAILABLE
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "503":
+          description: PROVISIONING_COORDINATION_UNAVAILABLE
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "504":
+          description: PROXMOX_TIMEOUT
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Crear una VM o contenedor
+      tags:
+      - Instancias Proxmox
   /instances/{vmid}:
     delete:
       description: 'OPERATIVO. Solo ADMIN. Elimina permanentemente una VM o contenedor
         de Proxmox. La instancia debe estar detenida (stopped); si no, responde 409.
-        La operación es asíncrona, igual que las acciones de energía: responde 202
-        Accepted con el UPID de la tarea de borrado y el tareaId; el resultado llega
-        en el evento TASK_FINISHED con accion DELETE.'
+        La operación es asíncrona: responde 202 Accepted con un tareaId público; el
+        UPID permanece privado. El resultado llega en TASK_FINISHED con accion DELETE.'
       parameters:
       - description: VMID de la instancia
         in: path
@@ -1805,8 +2115,7 @@ paths:
       - application/json
       responses:
         "202":
-          description: 'Borrado aceptado: upid de la tarea en Proxmox y tareaId. tareaId
-            se omite si no se pudo registrar la tarea'
+          description: 'Borrado aceptado: tareaId público para correlacionar TASK_FINISHED'
           schema:
             $ref: '#/definitions/http.AccionAceptadaResponse'
         "400":
@@ -1829,16 +2138,23 @@ paths:
             $ref: '#/definitions/http.ErrorResponse'
         "409":
           description: INSTANCE_INVALID_STATE — la instancia debe estar detenida |
-            INSTANCE_BUSY — la instancia está ejecutando otra tarea
+            INSTANCE_BUSY — la instancia está ejecutando otra tarea (tarea RUNNING
+            o lock lock:instance:{vmid}:operation); se responde sin contactar a Proxmox
           schema:
             $ref: '#/definitions/http.ErrorResponse'
         "500":
-          description: INTERNAL_ERROR — error inesperado de Proxmox
+          description: INTERNAL_ERROR — error inesperado | TASK_TRACKING_UNAVAILABLE
+            — Proxmox aceptó el borrado pero no se pudo persistir su seguimiento
           schema:
             $ref: '#/definitions/http.ErrorResponse'
         "502":
           description: PROXMOX_UNAVAILABLE — Proxmox caído, sin red o token rechazado;
             la orden NO llegó a aplicarse
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "503":
+          description: INSTANCE_LOCK_UNAVAILABLE — no se pudo verificar si la instancia
+            está ocupada; no se envió nada a Proxmox
           schema:
             $ref: '#/definitions/http.ErrorResponse'
         "504":
@@ -1853,7 +2169,8 @@ paths:
       - Instancias Proxmox
     get:
       description: Devuelve el estado actual (running/stopped, tipo, nodo, telemetría)
-        de una VM o contenedor leído en vivo desde Proxmox VE.
+        de una VM o contenedor leído en vivo desde Proxmox VE. `cpu` es un porcentaje
+        de 0 a 100; `cpu` y `mem` valen null si la instancia no está encendida.
       parameters:
       - description: VMID de la instancia
         in: path
@@ -1866,7 +2183,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/ports.InstanciaProxmoxDTO'
+            $ref: '#/definitions/http.InstanciaDetalleResponse'
         "400":
           description: INVALID_VMID — el vmid de la ruta no es un número entero
           schema:
@@ -1903,6 +2220,88 @@ paths:
       summary: Obtener instancia
       tags:
       - Instancias Proxmox
+  /instances/{vmid}/config:
+    put:
+      consumes:
+      - application/json
+      description: 'ADMIN o FULL_ACCESS sobre la instancia. Cambia `cores` y/o `ramMb`
+        (al menos uno, enteros positivos; `ramMb` mínimo 16). Los incrementos se validan
+        contra el margen del nodo (RAM con 15% de headroom y vCPU), comparando con
+        lo que la instancia ya tiene asignado (DeltaRAM): si no alcanza responde 409
+        RESOURCE_QUOTA_EXCEEDED sin escribir en Proxmox. Las reducciones no se validan.
+        Si la instancia está apagada el cambio queda aplicado (`requiresReboot: false`).
+        Si está encendida y Proxmox lo dejó pendiente porque la instancia no admite
+        hot-plug (lo habitual en VMs QEMU), responde `requiresReboot: true`: se aplica
+        al reiniciarla. En LXC, CPU y RAM se aplican en caliente. Pasa por la guarda
+        de exclusión mutua (409 INSTANCE_BUSY si la instancia tiene otra operación
+        en curso).'
+      parameters:
+      - description: VMID de la instancia
+        in: path
+        name: vmid
+        required: true
+        type: integer
+      - description: Nuevos cores y/o RAM
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/http.ConfigInstanciaRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/http.ConfigInstanciaResponse'
+        "400":
+          description: INVALID_VMID | INVALID_REQUEST — sin cores ni ramMb, o valores
+            no enteros, menores a 1 o RAM menor a 16 MiB
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "401":
+          description: MISSING_TOKEN | INVALID_TOKEN | TOKEN_REVOKED
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "403":
+          description: INSTANCE_ACCESS_DENIED — se requiere FULL_ACCESS (READ_ONLY
+            no alcanza) | INSTANCE_PROTECTED — infraestructura de El Centinela
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "404":
+          description: INSTANCE_NOT_FOUND
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "409":
+          description: RESOURCE_QUOTA_EXCEEDED — el incremento supera el margen del
+            nodo; no se escribió en Proxmox | INSTANCE_BUSY — otra operación en curso
+            o la config cambió en el medio
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "500":
+          description: AUDIT_PERSISTENCE_FAILED — la operación terminó, pero PostgreSQL
+            no pudo confirmar su auditoría; verificar el estado antes de reintentar
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "502":
+          description: PROXMOX_UNAVAILABLE | CONFIG_APPLIED_VERIFICATION_FAILED —
+            Proxmox aceptó el cambio, pero no se pudo determinar si requiere reinicio
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "503":
+          description: INSTANCE_LOCK_UNAVAILABLE | PROVISIONING_COORDINATION_UNAVAILABLE
+            — no se pudo coordinar la validación de capacidad
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "504":
+          description: PROXMOX_TIMEOUT
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Cambiar CPU y RAM de una instancia
+      tags:
+      - Instancias Proxmox
   /instances/{vmid}/pause:
     post:
       description: PLANIFICADO; NO OPERATIVO. Contrato objetivo para pausar una VM
@@ -1919,7 +2318,7 @@ paths:
       - application/json
       responses:
         "202":
-          description: 'Acción aceptada: upid de la tarea en Proxmox y tareaId'
+          description: 'Acción aceptada: tareaId público para correlacionar TASK_FINISHED'
           schema:
             $ref: '#/definitions/http.AccionAceptadaResponse'
         "400":
@@ -1964,8 +2363,8 @@ paths:
   /instances/{vmid}/start:
     post:
       description: 'OPERATIVO. Dispara el arranque de una VM o contenedor en Proxmox
-        VE. La operación es asíncrona: responde 202 Accepted con el UPID de la tarea
-        creada en Proxmox. No espera a que la instancia quede encedida.'
+        VE. La operación es asíncrona: responde 202 Accepted con un tareaId público;
+        el UPID permanece privado. No espera a que la instancia quede encendida.'
       parameters:
       - description: VMID de la instancia
         in: path
@@ -1976,8 +2375,7 @@ paths:
       - application/json
       responses:
         "202":
-          description: 'Acción aceptada: upid de la tarea en Proxmox y tareaId. tareaId
-            se omite si no se pudo registrar la tarea'
+          description: 'Acción aceptada: tareaId público para correlacionar TASK_FINISHED'
           schema:
             $ref: '#/definitions/http.AccionAceptadaResponse'
         "400":
@@ -2002,17 +2400,24 @@ paths:
         "409":
           description: 'INSTANCE_INVALID_STATE: La instancia se encuentra en un estado
             incompatible para la acción solicitada | INSTANCE_BUSY — la instancia
-            está ejecutando otra tarea; reintentar al recibir TASK_FINISHED'
+            está ejecutando otra tarea (tarea RUNNING o lock lock:instance:{vmid}:operation);
+            se responde sin contactar a Proxmox; reintentar al recibir TASK_FINISHED'
           schema:
             $ref: '#/definitions/http.ErrorResponse'
         "500":
-          description: INTERNAL_ERROR — al verificar permisos de acceso o error inesperado
-            de Proxmox
+          description: INTERNAL_ERROR — al verificar permisos o error inesperado |
+            TASK_TRACKING_UNAVAILABLE — Proxmox aceptó la orden pero no se pudo persistir
+            su seguimiento
           schema:
             $ref: '#/definitions/http.ErrorResponse'
         "502":
           description: PROXMOX_UNAVAILABLE — Proxmox caído, sin red o token rechazado;
             la orden NO llegó a aplicarse
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "503":
+          description: INSTANCE_LOCK_UNAVAILABLE — no se pudo verificar si la instancia
+            está ocupada; no se envió nada a Proxmox
           schema:
             $ref: '#/definitions/http.ErrorResponse'
         "504":
@@ -2047,8 +2452,7 @@ paths:
       - application/json
       responses:
         "202":
-          description: 'Acción aceptada: upid de la tarea en Proxmox y tareaId. tareaId
-            se omite si no se pudo registrar la tarea'
+          description: 'Acción aceptada: tareaId público para correlacionar TASK_FINISHED'
           schema:
             $ref: '#/definitions/http.AccionAceptadaResponse'
         "400":
@@ -2072,17 +2476,24 @@ paths:
         "409":
           description: 'INSTANCE_INVALID_STATE: La instancia se encuentra en un estado
             incompatible para la acción solicitada | INSTANCE_BUSY — la instancia
-            está ejecutando otra tarea; reintentar al recibir TASK_FINISHED'
+            está ejecutando otra tarea (tarea RUNNING o lock lock:instance:{vmid}:operation);
+            se responde sin contactar a Proxmox; reintentar al recibir TASK_FINISHED'
           schema:
             $ref: '#/definitions/http.ErrorResponse'
         "500":
-          description: INTERNAL_ERROR — al verificar permisos de acceso o error inesperado
-            de Proxmox
+          description: INTERNAL_ERROR — al verificar permisos o error inesperado |
+            TASK_TRACKING_UNAVAILABLE — Proxmox aceptó la orden pero no se pudo persistir
+            su seguimiento
           schema:
             $ref: '#/definitions/http.ErrorResponse'
         "502":
           description: PROXMOX_UNAVAILABLE — Proxmox caído, sin red o token rechazado;
             la orden NO llegó a aplicarse
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "503":
+          description: INSTANCE_LOCK_UNAVAILABLE — no se pudo verificar si la instancia
+            está ocupada; no se envió nada a Proxmox
           schema:
             $ref: '#/definitions/http.ErrorResponse'
         "504":
@@ -2098,8 +2509,8 @@ paths:
   /instances/{vmid}/stop:
     post:
       description: 'OPERATIVO. Dispara el apagado forzado de una VM o contenedor en
-        Proxmox VE. La operación es asíncrona: responde 202 Accepted con el UPID de
-        la tarea creada en Proxmox. No espera a que la instancia quede detenida.'
+        Proxmox VE. La operación es asíncrona: responde 202 Accepted con un tareaId
+        público; el UPID permanece privado. No espera a que la instancia quede detenida.'
       parameters:
       - description: VMID de la instancia
         in: path
@@ -2110,8 +2521,7 @@ paths:
       - application/json
       responses:
         "202":
-          description: 'Acción aceptada: upid de la tarea en Proxmox y tareaId. tareaId
-            se omite si no se pudo registrar la tarea'
+          description: 'Acción aceptada: tareaId público para correlacionar TASK_FINISHED'
           schema:
             $ref: '#/definitions/http.AccionAceptadaResponse'
         "400":
@@ -2135,17 +2545,24 @@ paths:
         "409":
           description: 'INSTANCE_INVALID_STATE: La instancia se encuentra en un estado
             incompatible para la acción solicitada | INSTANCE_BUSY — la instancia
-            está ejecutando otra tarea; reintentar al recibir TASK_FINISHED'
+            está ejecutando otra tarea (tarea RUNNING o lock lock:instance:{vmid}:operation);
+            se responde sin contactar a Proxmox; reintentar al recibir TASK_FINISHED'
           schema:
             $ref: '#/definitions/http.ErrorResponse'
         "500":
-          description: INTERNAL_ERROR — al verificar permisos de acceso o error inesperado
-            de Proxmox
+          description: INTERNAL_ERROR — al verificar permisos o error inesperado |
+            TASK_TRACKING_UNAVAILABLE — Proxmox aceptó la orden pero no se pudo persistir
+            su seguimiento
           schema:
             $ref: '#/definitions/http.ErrorResponse'
         "502":
           description: PROXMOX_UNAVAILABLE — Proxmox caído, sin red o token rechazado;
             la orden NO llegó a aplicarse
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "503":
+          description: INSTANCE_LOCK_UNAVAILABLE — no se pudo verificar si la instancia
+            está ocupada; no se envió nada a Proxmox
           schema:
             $ref: '#/definitions/http.ErrorResponse'
         "504":
@@ -2162,7 +2579,9 @@ paths:
     get:
       description: 'OPERATIVO. Disponible para ADMIN y OPERATOR autenticados (no se
         filtra por permisos de instancia). La lectura se cachea en Redis 10 s (node:status:current):
-        mientras está vigente se responde sin consultar Proxmox. Incluye también instancesSummary,
+        mientras está vigente se responde sin consultar Proxmox. Incluye `allocatable`,
+        con núcleos físicos totales, almacenamiento disponible y RAM libre segura
+        luego de reservar estrictamente 15% para Proxmox. Incluye también instancesSummary,
         que agrupa el recuento de VMs y contenedores LXC según su estado (running,
         stopped, paused). Si Proxmox no responde se devuelve la última lectura conocida
         (node:status:last_known) con `stale: true`; `fetchedAt` indica cuándo se obtuvo.
@@ -2199,6 +2618,76 @@ paths:
       summary: Consultar estado consolidado del nodo
       tags:
       - Estado del nodo
+  /node/storages:
+    get:
+      description: ADMIN ONLY. Retorna las unidades de almacenamiento activas en el
+        nodo, filtradas y normalizadas con sus capacidades en bytes y tipos de contenidos
+        permitidos.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/http.StorageResponse'
+            type: array
+        "401":
+          description: MISSING_TOKEN | INVALID_TOKEN | TOKEN_REVOKED
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "403":
+          description: WRONG_TOKEN_TYPE | 2FA_REQUIRED | INSUFFICIENT_PERMISSIONS
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "502":
+          description: PROXMOX_UNAVAILABLE — Proxmox caído, sin red o token rechazado
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "504":
+          description: PROXMOX_TIMEOUT — Proxmox no respondió a tiempo
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Consultar catálogo de almacenamiento del nodo
+      tags:
+      - Estado del nodo
+  /node/templates:
+    get:
+      description: ADMIN ONLY. Consolida imágenes ISO de instalación y plantillas
+        LXC de todos los storages activos que admiten dichos contenidos, formateando
+        sus identificadores, nombres y tamaños.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/http.TemplateResponse'
+            type: array
+        "401":
+          description: MISSING_TOKEN | INVALID_TOKEN | TOKEN_REVOKED
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "403":
+          description: WRONG_TOKEN_TYPE | 2FA_REQUIRED | INSUFFICIENT_PERMISSIONS
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "502":
+          description: PROXMOX_UNAVAILABLE — Proxmox caído, sin red o token rechazado
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "504":
+          description: PROXMOX_TIMEOUT — Proxmox no respondió a tiempo
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Consultar catálogo de plantillas e imágenes ISO
+      tags:
+      - Estado del nodo
   /roles:
     get:
       description: Devuelve los roles definidos en el sistema (ADMIN y OPERATOR).
@@ -2229,6 +2718,79 @@ paths:
       summary: Listar roles disponibles
       tags:
       - Usuarios (Admin)
+  /ws/instances/{vmid}/metrics:
+    get:
+      description: 'Establece un canal bidireccional vía WebSocket que emite métricas
+        instantáneas cada 2 segundos. Requiere parámetro query `?ticket=<uuid>` emitido
+        previamente vía POST /api/auth/ws-ticket. El servidor cierra el canal con
+        código 1008 y el motivo como reason cuando el usuario pierde el acceso: `LOGOUT`
+        (cerró sesión; corta todas sus conexiones WebSocket), `SESSIONS_REVOKED` (baja,
+        suspensión o reset de credenciales), `USER_INACTIVE` (suspendido o eliminado),
+        `INSTANCE_ACCESS_DENIED` (le quitaron el permiso sobre la instancia) o `EVENTS_UNAVAILABLE`
+        (se perdió el canal de avisos; reconectar con un ticket nuevo). Al apagarse
+        el servidor cierra con 1001; si la instancia deja de existir, con 1000 e `INSTANCE_NOT_FOUND`.
+        Cada mensaje es un JSON de métricas: `cpu` en porcentaje (0 a 100) y `cpu`
+        y `mem` en null si la instancia no está encendida; si Proxmox falla en un
+        intervalo, el mensaje no trae métricas sino `{"timestamp","vmid","status":"unavailable","error":{"errorCode":"PROXMOX_UNAVAILABLE|PROXMOX_TIMEOUT","message"}}`
+        y la conexión sigue. Solo acepta el Origin del front (ALLOWED_ORIGINS), hasta
+        10 conexiones simultáneas por usuario y mensajes del cliente de hasta 512
+        bytes; el servidor manda un ping cada 25 s y libera la conexión si no tiene
+        respuesta en 60 s.'
+      parameters:
+      - description: Identificador de instancia (VMID)
+        in: path
+        name: vmid
+        required: true
+        type: integer
+      - description: Ticket efímero de un solo uso
+        in: query
+        name: ticket
+        required: true
+        type: string
+      responses:
+        "101":
+          description: Switching Protocols a WebSocket
+        "400":
+          description: INVALID_VMID
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "401":
+          description: UNAUTHORIZED
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "403":
+          description: ORIGIN_NOT_ALLOWED — el Origin no es el del front | INSTANCE_ACCESS_DENIED
+            | USER_INACTIVE
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "404":
+          description: INSTANCE_NOT_FOUND
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "429":
+          description: TOO_MANY_CONNECTIONS — el usuario ya tiene 10 WebSockets abiertos
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "500":
+          description: INTERNAL_ERROR — no se pudo comprobar el acceso
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "502":
+          description: PROXMOX_UNAVAILABLE
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "503":
+          description: EVENTS_UNAVAILABLE — no se pudo abrir el canal de avisos de
+            corte
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "504":
+          description: PROXMOX_TIMEOUT
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+      summary: Canal WebSocket de métricas de instancia en tiempo real
+      tags:
+      - Métricas en tiempo real
 securityDefinitions:
   BearerAuth:
     description: 'Token de acceso definitivo. Formato: **Bearer &lt;accessToken&gt;**.

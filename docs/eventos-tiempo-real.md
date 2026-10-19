@@ -76,17 +76,17 @@ Se decide **en el momento de cada evento**, consultando la base:
 
 | Rol | Recibe |
 | --- | ------ |
-| `ADMIN` | Todos los eventos. |
-| `OPERATOR` | Solo los eventos de instancias (VM o LXC) sobre las que tiene permiso, con cualquier nivel. Los que no son de una instancia (por ejemplo, del nodo) son solo para ADMIN. |
+| `ADMIN` | Todos los eventos: de cualquier instancia y del host (`recursoTipo: HOST`, como las alertas `ALERT_TRIGGERED`). |
+| `OPERATOR` | Solo los eventos de instancias (VM o LXC) sobre las que tiene permiso asignado (`FULL_ACCESS` o `READ_ONLY`). Un operador sin asignación sobre ese VMID no recibe el evento. Los que no son de una instancia (por ejemplo, una alerta `ALERT_TRIGGERED` del `HOST`) son solo para ADMIN y al OPERATOR se le descartan en silencio. |
 
 Como se consulta en vivo, **si un admin le quita un permiso a un operador, deja de recibir esos eventos al instante**, sin reconectar.
 
 ## TASK_FINISHED: de dónde sale
 
-1. Una acción de energía (`POST /api/instances/:vmid/start`, `/stop` o `/status/{action}`) o un borrado (`DELETE /api/instances/:vmid`, solo ADMIN) se dispara en Proxmox y responde `202 { "upid": "...", "tareaId": "..." }`.
+1. Una acción de ciclo de vida (`start`, `stop`, `shutdown`, `reboot`), un borrado (`delete`, solo ADMIN) o una orden de aprovisionamiento se dispara en Proxmox y responde `202 { "tareaId": "..." }` (la creación agrega `vmid`). El UPID real queda privado en el backend.
 2. La tarea se registra en `tareas_asincronas` con estado `RUNNING` y entra al **pool de seguimiento**. Mientras está así, `GET /api/instances` la muestra en `activeTask: { tareaId, action, status: "RUNNING" }`.
 3. Los workers del pool le preguntan a Proxmox cómo va (`GET /nodes/{node}/tasks/{upid}/status`) cada 1 s.
-4. Cuando termina, se guarda `COMPLETED` o `FAILED`, se audita el resultado (mismo código de acción que el registro `PENDING`: `START`, `STOP`, `SHUTDOWN`, `REBOOT`, `DELETE`, con `EXITO` o `FALLA`) y se publica `TASK_FINISHED` con el mismo `tareaId`, así el front puede asociarlo a la acción que disparó.
+4. Cuando termina, se guarda `COMPLETED` o `FAILED`, se audita el resultado y se publica `TASK_FINISHED` con el mismo `tareaId`, así el front puede asociarlo a la acción que disparó. Para todas las 5 acciones de ciclo de vida (`START`, `STOP`, `SHUTDOWN`, `REBOOT`, `DELETE`) el payload unificado contiene las 6 claves canónicas. En una creación completada (`OK` o `WARNINGS`), el mismo commit asigna `FULL_ACCESS` al creador antes de publicar el evento.
 
 | Resultado | `severidad` | `mensaje` | `detalles` |
 | --------- | ----------- | --------- | ---------- |
@@ -94,7 +94,7 @@ Como se consulta en vivo, **si un admin le quita un permiso a un operador, deja 
 | Error de Proxmox | `WARNING` | `La tarea de apagado falló` | `estado: FAILED`, `motivo: PROXMOX_ERROR`, `exitstatus` y `error` con el mensaje de Proxmox |
 | Vencida | `WARNING` | `La tarea de encendido falló` | `estado: FAILED`, `motivo: TIMEOUT`, `exitstatus: null`, `error` explicando que venció |
 
-`detalles` lleva siempre las seis claves (`tareaId`, `accion` en mayúsculas, `estado`, `exitstatus`, `motivo`, `error`), con `null` en las que no aplican. Una tarea vence si Proxmox no la da por terminada en 10 minutos (desde que se creó), o si al arrancar la API ya tenía más de 3 minutos y Proxmox no la había terminado (ver abajo). En los dos casos `error` dice `Excedido el límite máximo de ejecución de N minutos`. El UPID **no** viaja al front.
+`detalles` lleva siempre las seis claves (`tareaId`, `accion`, `estado`, `exitstatus`, `motivo`, `error`), con `null` en las que no aplican. `accion` usa mayúsculas para las operaciones existentes y `CREATE` para aprovisionamiento. Una tarea vence si Proxmox no la da por terminada en 10 minutos (desde que se creó), o si al arrancar la API ya tenía más de 3 minutos y Proxmox no la había terminado (ver abajo). En los dos casos `error` dice `Excedido el límite máximo de ejecución de N minutos`. El UPID **no** viaja al front.
 
 ### El pool de seguimiento (`internal/core/services/seguimiento_tareas.go`)
 

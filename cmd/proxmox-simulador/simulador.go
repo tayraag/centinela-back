@@ -72,6 +72,7 @@ func (s *Simulador) rutas() {
 	m.HandleFunc("GET "+base+"/cluster/resources", s.clusterResources)
 	m.HandleFunc("GET "+base+"/cluster/nextid", s.siguienteID)
 	m.HandleFunc("GET "+base+"/nodes/{node}/status", s.estadoNodo)
+	m.HandleFunc("GET "+base+"/nodes/{node}/rrddata", s.rrddataNodo)
 	m.HandleFunc("GET "+base+"/nodes/{node}/{tipo}", s.listarPorTipo)
 
 	// Estado, acciones y métricas por instancia (RF-04, RF-05, RF-11)
@@ -98,6 +99,10 @@ func (s *Simulador) rutas() {
 	// Red: IPs asignadas (inventario unificado)
 	m.HandleFunc("GET "+base+"/nodes/{node}/{tipo}/{vmid}/interfaces", s.interfacesLXC)
 	m.HandleFunc("GET "+base+"/nodes/{node}/{tipo}/{vmid}/agent/network-get-interfaces", s.interfacesAgenteQemu)
+
+	// Almacenamiento y contenidos (RF-05, RF-07)
+	m.HandleFunc("GET "+base+"/nodes/{node}/storage", s.listarStorage)
+	m.HandleFunc("GET "+base+"/nodes/{node}/storage/{storage}/content", s.listarContenidoStorage)
 
 	// Cualquier otra ruta: Proxmox responde 501 "Method ... not implemented".
 	m.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {

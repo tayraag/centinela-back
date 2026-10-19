@@ -1,7 +1,9 @@
 package postgres_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"testing"
 	"time"
@@ -60,6 +62,7 @@ func TestAuditRepository_CrearYRecuperarEvento(t *testing.T) {
 		InstanciaID:     "vm-101",
 		InstanciaNombre: "Servidor Test",
 		Resultado:       ports.ResultadoExito,
+		Upid:            "UPID:privado:no-exponer",
 		Detalles: map[string]any{
 			"origen": "test_unitario",
 			"campo":  "valor_prueba",
@@ -119,8 +122,22 @@ func TestAuditRepository_CrearYRecuperarEvento(t *testing.T) {
 	if recuperado.Resultado != ports.ResultadoExito {
 		t.Errorf("Resultado incorrecto. Esperado: EXITO, Obtenido: %s", recuperado.Resultado)
 	}
-	if recuperado.Detalles == "" {
-		t.Errorf("Se esperaban detalles JSON serializados, se obtuvo string vacío")
+	if len(recuperado.Detalles) == 0 {
+		t.Errorf("Se esperaban detalles como objeto JSON, se obtuvo un valor vacío")
+	}
+	var detallesRecuperados map[string]any
+	if err := json.Unmarshal(recuperado.Detalles, &detallesRecuperados); err != nil {
+		t.Fatalf("detalles no es JSON válido: %v", err)
+	}
+	if detallesRecuperados["origen"] != "test_unitario" || detallesRecuperados["campo"] != "valor_prueba" {
+		t.Errorf("el objeto detalles perdió su contenido: %v", detallesRecuperados)
+	}
+	serializado, err := json.Marshal(recuperado)
+	if err != nil {
+		t.Fatalf("no se pudo serializar el DTO público: %v", err)
+	}
+	if bytes.Contains(serializado, []byte("UPID:privado:no-exponer")) || bytes.Contains(serializado, []byte(`"upid"`)) {
+		t.Fatalf("el DTO público expuso el UPID privado: %s", serializado)
 	}
 	if time.Since(recuperado.FechaHora) > 1*time.Minute {
 		t.Errorf("La fechaHora registrada es inconsistente: %v", recuperado.FechaHora)
@@ -168,7 +185,59 @@ func TestAuditRepository_CrearSinDetalles(t *testing.T) {
 	if pagina.Total != 1 {
 		t.Fatalf("Se esperaba 1 registro sin detalles, se obtuvieron %d", pagina.Total)
 	}
-	if pagina.Items[0].Detalles != "" {
+	if len(pagina.Items[0].Detalles) != 0 {
 		t.Errorf("Se esperaba Detalles vacío en el DTO, se obtuvo: %s", pagina.Items[0].Detalles)
+	}
+}
+
+// TestAuditRepository_ExcluirAcciones verifica que el filtro de exclusión saque
+// del listado las acciones indicadas (el ruido de conexión del canal SSE), sin
+// tocar la tabla: la auditoría es append-only y este test solo lee.
+func TestAuditRepository_ExcluirAcciones(t *testing.T) {
+	db := conectarDBTest(t)
+	repo := postgres.NewAuditRepository(db)
+	ctx := context.Background()
+
+	// Organización con más registros de auditoría, para que la prueba sea real.
+	fila := db.Raw(`
+		SELECT u.organizacion_id
+		FROM auditoria a
+		JOIN usuarios u ON u.id = a.usuario_id
+		WHERE u.organizacion_id IS NOT NULL
+		GROUP BY u.organizacion_id
+		ORDER BY count(*) DESC
+		LIMIT 1
+	`).Row()
+	var orgID uuid.UUID
+	if fila == nil {
+		t.Skip("no hay registros de auditoría con organización para probar")
+	}
+	if err := fila.Scan(&orgID); err != nil || orgID == uuid.Nil {
+		t.Skipf("no hay registros de auditoría con organización para probar: %v", err)
+	}
+
+	opciones := ports.OpcionesAuditoria{Pagina: 1, TamanoPag: 200, OrdenarPor: "fechaHora", Direccion: "desc"}
+
+	sinExclusion, err := repo.Listar(ctx, orgID, ports.FiltrosAuditoria{}, opciones)
+	if err != nil {
+		t.Fatalf("listado sin exclusión: %v", err)
+	}
+
+	conExclusion, err := repo.Listar(ctx, orgID, ports.FiltrosAuditoria{
+		ExcluirAcciones: []string{ports.AccionEventosConexion},
+	}, opciones)
+	if err != nil {
+		t.Fatalf("listado con exclusión: %v", err)
+	}
+
+	for _, item := range conExclusion.Items {
+		if item.Accion == ports.AccionEventosConexion {
+			t.Fatalf("la exclusión no filtró %s", item.Accion)
+		}
+	}
+
+	if conExclusion.Total >= sinExclusion.Total {
+		t.Fatalf("Total con exclusión (%d) debería ser menor que sin exclusión (%d)",
+			conExclusion.Total, sinExclusion.Total)
 	}
 }

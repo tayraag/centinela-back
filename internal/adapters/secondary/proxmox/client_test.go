@@ -158,6 +158,101 @@ func TestClient_ObtenerInstancia_VmidInexistente(t *testing.T) {
 	}
 }
 
+func TestClient_AprovisionarInstancia_ReservaVMIDYEnviaConfiguracion(t *testing.T) {
+	casos := []struct {
+		nombre   string
+		input    ports.CrearInstanciaProxmoxInput
+		path     string
+		accion   string
+		upid     string
+		campos   map[string]string
+		ausentes []string
+	}{
+		{
+			nombre: "VM", path: "/api2/json/nodes/pve1/qemu", accion: ports.AccionProxmoxCrearVM,
+			upid:   "UPID:pve1:1:2:3:qmcreate:501:root@pam:",
+			input:  ports.CrearInstanciaProxmoxInput{Tipo: ports.TipoInstanciaQemu, Nodo: "pve1", Nombre: "web", Cores: 2, MemoriaMB: 4096, StorageID: "local-lvm", DiscoGB: 30, TemplateID: "local:iso/debian.iso", Bridge: "vmbr0", Firewall: true, IPv4Tipo: "dhcp"},
+			campos: map[string]string{"name": "web", "scsi0": "local-lvm:30", "ide2": "local:iso/debian.iso,media=cdrom", "boot": "order=ide2;scsi0", "net0": "virtio,bridge=vmbr0,firewall=1", "ipconfig0": "ip=dhcp"},
+		},
+		{
+			nombre: "LXC", path: "/api2/json/nodes/pve1/lxc", accion: ports.AccionProxmoxCrearLXC,
+			upid:     "UPID:pve1:1:2:3:vzcreate:501:root@pam:",
+			input:    ports.CrearInstanciaProxmoxInput{Tipo: ports.TipoInstanciaLXC, Nodo: "pve1", Nombre: "cache", Cores: 1, MemoriaMB: 1024, StorageID: "local-lvm", DiscoGB: 10, TemplateID: "local:vztmpl/debian.tar.zst", Bridge: "vmbr0", IPv4Tipo: "static", IPv4Address: "192.168.1.50", IPv4Mask: "24", IPv4Gateway: "192.168.1.1"},
+			campos:   map[string]string{"hostname": "cache", "rootfs": "local-lvm:10", "ostemplate": "local:vztmpl/debian.tar.zst", "net0": "name=eth0,bridge=vmbr0,firewall=0,ip=192.168.1.50/24,gw=192.168.1.1"},
+			ausentes: []string{"password"},
+		},
+	}
+	for _, caso := range casos {
+		t.Run(caso.nombre, func(t *testing.T) {
+			var secuencia []string
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				secuencia = append(secuencia, r.Method+" "+r.URL.Path)
+				w.Header().Set("Content-Type", "application/json")
+				switch {
+				case r.Method == http.MethodGet && r.URL.Path == "/api2/json/cluster/nextid":
+					_, _ = w.Write([]byte(`{"data":"501"}`))
+				case r.Method == http.MethodPost && r.URL.Path == caso.path:
+					if err := r.ParseForm(); err != nil {
+						t.Error(err)
+					}
+					for clave, esperado := range caso.campos {
+						if recibido := r.Form.Get(clave); recibido != esperado {
+							t.Errorf("%s = %q, se esperaba %q", clave, recibido, esperado)
+						}
+					}
+					for _, clave := range caso.ausentes {
+						if _, presente := r.Form[clave]; presente {
+							t.Errorf("%s no debe enviarse cuando no fue informado: %v", clave, r.Form[clave])
+						}
+					}
+					if r.Form.Get("vmid") != "501" || r.Form.Get("cores") != fmt.Sprint(caso.input.Cores) || r.Form.Get("memory") != fmt.Sprint(caso.input.MemoriaMB) {
+						t.Errorf("parámetros base incompletos: %v", r.Form)
+					}
+					_ = json.NewEncoder(w).Encode(map[string]any{"data": caso.upid})
+				default:
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			t.Cleanup(server.Close)
+			client := proxmox.NewClient(server.URL, "pve1", tokenIDValido, tokenSecretValido, nil)
+
+			resultado, err := client.AprovisionarInstancia(context.Background(), caso.input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if resultado.VMID != 501 || resultado.UPID != caso.upid || resultado.Accion != caso.accion {
+				t.Fatalf("resultado inesperado: %+v", resultado)
+			}
+			if len(secuencia) != 2 || secuencia[0] != "GET /api2/json/cluster/nextid" || secuencia[1] != "POST "+caso.path {
+				t.Fatalf("secuencia inesperada: %v", secuencia)
+			}
+		})
+	}
+}
+
+func TestClient_AprovisionarInstancia_MarcaFalloPrevioAlDespacho(t *testing.T) {
+	var posts int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			posts++
+		}
+		http.Error(w, "nextid no disponible", http.StatusInternalServerError)
+	}))
+	t.Cleanup(server.Close)
+	client := proxmox.NewClient(server.URL, "pve1", tokenIDValido, tokenSecretValido, nil)
+
+	_, err := client.AprovisionarInstancia(context.Background(), ports.CrearInstanciaProxmoxInput{Tipo: ports.TipoInstanciaQemu, Nodo: "pve1"})
+	if !errors.Is(err, ports.ErrCreacionNoDespachada) {
+		t.Fatalf("se esperaba ErrCreacionNoDespachada, vino %v", err)
+	}
+	if !errors.Is(err, ports.ErrProxmoxNoDisponible) {
+		t.Fatalf("el error debe conservar ErrProxmoxNoDisponible: %v", err)
+	}
+	if posts != 0 {
+		t.Fatalf("no debía enviarse ningún POST, llegaron %d", posts)
+	}
+}
+
 func TestClient_ListarInstancias_ProxmoxCaido(t *testing.T) {
 	// Servidor que responde con error 500
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -439,4 +534,430 @@ func TestClient_ObtenerInterfaces_ErrorYTimeout(t *testing.T) {
 			t.Errorf("El timeout debe envolver también ErrProxmoxNoDisponible: %v", err)
 		}
 	})
+}
+
+func TestClient_ObtenerStorages(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "PVEAPIToken="+tokenIDValido+"="+tokenSecretValido {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		if r.URL.Path != "/api2/json/nodes/pve1/storage" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]any{
+				{
+					"storage": "local-lvm",
+					"type":    "lvmthin",
+					"total":   500000000000,
+					"used":    180000000000,
+					"avail":   320000000000,
+					"active":  1,
+					"content": "images,rootdir",
+				},
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := proxmox.NewClient(server.URL, "pve1", tokenIDValido, tokenSecretValido, nil)
+	storages, err := client.ObtenerStorages(context.Background(), "pve1")
+	if err != nil {
+		t.Fatalf("ObtenerStorages falló: %v", err)
+	}
+
+	if len(storages) != 1 || storages[0].Storage != "local-lvm" || storages[0].Active != 1 {
+		t.Errorf("Resultado inesperado: %+v", storages)
+	}
+}
+
+func TestClient_ObtenerEstadoNodo_ConservaStorageDisponible(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api2/json/nodes/pve1/status" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{"cpu":0.25,"uptime":100,"cpuinfo":{"cpus":24,"cores":6,"sockets":2},"memory":{"total":17179869184,"used":4294967296},"rootfs":{"total":536870912000,"used":214748364800,"avail":300647710720}}}`))
+	}))
+	defer server.Close()
+
+	client := proxmox.NewClient(server.URL, "pve1", tokenIDValido, tokenSecretValido, nil)
+	estado, err := client.ObtenerEstadoNodo(context.Background(), "pve1")
+	if err != nil {
+		t.Fatalf("ObtenerEstadoNodo falló: %v", err)
+	}
+	if estado.DiscoDisponible != 300647710720 {
+		t.Errorf("DiscoDisponible = %d, se esperaba rootfs.avail", estado.DiscoDisponible)
+	}
+	if estado.CPUs != 24 || estado.PhysicalCores != 6 {
+		t.Errorf("CPU lógico/físico = %d/%d, se esperaba 24/6; cpuinfo.cores ya incluye ambos sockets", estado.CPUs, estado.PhysicalCores)
+	}
+}
+
+func TestClient_ObtenerContenidoStorage(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "PVEAPIToken="+tokenIDValido+"="+tokenSecretValido {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		if r.URL.Path != "/api2/json/nodes/pve1/storage/local/content" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]any{
+				{
+					"volid":   "local:iso/ubuntu-24.04.iso",
+					"content": "iso",
+					"size":    2100000000,
+				},
+				{
+					"volid":   "local:vztmpl/debian-12.tar.zst",
+					"content": "vztmpl",
+					"size":    130000000,
+				},
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := proxmox.NewClient(server.URL, "pve1", tokenIDValido, tokenSecretValido, nil)
+	items, err := client.ObtenerContenidoStorage(context.Background(), "pve1", "local")
+	if err != nil {
+		t.Fatalf("ObtenerContenidoStorage falló: %v", err)
+	}
+
+	if len(items) != 2 || items[0].Volid != "local:iso/ubuntu-24.04.iso" || items[1].Content != "vztmpl" {
+		t.Errorf("Contenido inesperado: %+v", items)
+	}
+}
+
+func TestClient_ObtenerMetricasRRD(t *testing.T) {
+	t.Run("consumo y parseo correcto de VM (qemu) con campos nulos", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Header.Get("Authorization") != "PVEAPIToken="+tokenIDValido+"="+tokenSecretValido {
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			if r.URL.Path != "/api2/json/nodes/pve1/qemu/100/rrddata" {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			if r.URL.Query().Get("timeframe") != "hour" {
+				t.Errorf("timeframe esperado 'hour', recibido %q", r.URL.Query().Get("timeframe"))
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": []map[string]any{
+					{
+						"time":      1787092500,
+						"cpu":       0.017948,
+						"maxcpu":    1,
+						"mem":       241901568,
+						"maxmem":    2147483648,
+						"netin":     1024.5,
+						"netout":    2048.2,
+						"diskread":  512.0,
+						"diskwrite": 256.0,
+					},
+					{
+						// Punto temporal con VM apagada: sin cpu, mem ni red (valores null/ausentes)
+						"time":    1787092560,
+						"maxcpu":  1,
+						"maxmem":  2147483648,
+						"maxdisk": 10737418240,
+						"disk":    0,
+					},
+				},
+			})
+		}))
+		defer server.Close()
+
+		client := proxmox.NewClient(server.URL, "pve1", tokenIDValido, tokenSecretValido, nil)
+		puntos, err := client.ObtenerMetricasRRD(context.Background(), "pve1", "qemu", 100, "hour")
+		if err != nil {
+			t.Fatalf("ObtenerMetricasRRD falló: %v", err)
+		}
+
+		if len(puntos) != 2 {
+			t.Fatalf("Se esperaban 2 puntos, se obtuvieron %d", len(puntos))
+		}
+
+		// Punto 1: con valores
+		p1 := puntos[0]
+		if p1.Timestamp != 1787092500 {
+			t.Errorf("Timestamp inesperado: %d", p1.Timestamp)
+		}
+		// Proxmox informa 0.017948 (fracción): sale en porcentaje con 2 decimales.
+		if p1.CPUPercent == nil || *p1.CPUPercent != 1.79 {
+			t.Errorf("CPUPercent inesperado: %v", p1.CPUPercent)
+		}
+		if p1.RAMUsedBytes == nil || *p1.RAMUsedBytes != 241901568 || p1.RAMTotalBytes != 2147483648 {
+			t.Errorf("RAM incorrecta: used=%v total=%d", p1.RAMUsedBytes, p1.RAMTotalBytes)
+		}
+		if p1.NetInBps != 1024 || p1.NetOutBps != 2048 {
+			t.Errorf("Net Bps incorrecto: in=%d out=%d", p1.NetInBps, p1.NetOutBps)
+		}
+		if p1.DiskReadBps != 512 || p1.DiskWriteBps != 256 {
+			t.Errorf("Disk Bps incorrecto: read=%d write=%d", p1.DiskReadBps, p1.DiskWriteBps)
+		}
+
+		// Punto 2: sin dato de CPU ni RAM (instancia apagada) quedan en null, no en 0
+		p2 := puntos[1]
+		if p2.Timestamp != 1787092560 {
+			t.Errorf("Timestamp inesperado: %d", p2.Timestamp)
+		}
+		if p2.CPUPercent != nil {
+			t.Errorf("CPUPercent sin dato debe ser null, recibido %v", *p2.CPUPercent)
+		}
+		if p2.RAMUsedBytes != nil {
+			t.Errorf("RAMUsedBytes sin dato debe ser null, recibido %v", *p2.RAMUsedBytes)
+		}
+		if p2.RAMTotalBytes != 2147483648 {
+			t.Errorf("RAMTotalBytes debe ser 2147483648, recibido %d", p2.RAMTotalBytes)
+		}
+		if p2.NetInBps != 0 || p2.NetOutBps != 0 {
+			t.Errorf("Net Bps debe ser 0, recibido in=%d out=%d", p2.NetInBps, p2.NetOutBps)
+		}
+		if p2.DiskReadBps != 0 || p2.DiskWriteBps != 0 {
+			t.Errorf("Disk Bps debe ser 0, recibido read=%d write=%d", p2.DiskReadBps, p2.DiskWriteBps)
+		}
+	})
+
+	t.Run("consumo y parseo correcto de LXC con múltiples timeframes", func(t *testing.T) {
+		timeframes := []string{"hour", "day", "week", "month", "year"}
+		for _, tf := range timeframes {
+			t.Run(tf, func(t *testing.T) {
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.URL.Path != "/api2/json/nodes/pve1/lxc/201/rrddata" {
+						w.WriteHeader(http.StatusNotFound)
+						return
+					}
+					if r.URL.Query().Get("timeframe") != tf {
+						t.Errorf("timeframe esperado %q, recibido %q", tf, r.URL.Query().Get("timeframe"))
+					}
+					w.Header().Set("Content-Type", "application/json")
+					_ = json.NewEncoder(w).Encode(map[string]any{
+						"data": []map[string]any{
+							{
+								"time":      1787093340,
+								"cpu":       0.005,
+								"maxcpu":    1,
+								"mem":       21046067,
+								"maxmem":    1073741824,
+								"netin":     50,
+								"netout":    100,
+								"diskread":  0,
+								"diskwrite": 12,
+							},
+						},
+					})
+				}))
+				defer server.Close()
+
+				client := proxmox.NewClient(server.URL, "pve1", tokenIDValido, tokenSecretValido, nil)
+				puntos, err := client.ObtenerMetricasRRD(context.Background(), "pve1", "lxc", 201, tf)
+				if err != nil {
+					t.Fatalf("ObtenerMetricasRRD falló para timeframe %s: %v", tf, err)
+				}
+				if len(puntos) != 1 {
+					t.Fatalf("Se esperaba 1 punto, vinieron %d", len(puntos))
+				}
+				if puntos[0].RAMTotalBytes != 1073741824 || puntos[0].RAMUsedBytes == nil || *puntos[0].RAMUsedBytes != 21046067 {
+					t.Errorf("RAM de LXC incorrecta: %+v", puntos[0])
+				}
+			})
+		}
+	})
+
+	t.Run("acepta alias 'vm' normalizándolo a qemu", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/api2/json/nodes/pve1/qemu/110/rrddata" {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": []map[string]any{},
+			})
+		}))
+		defer server.Close()
+
+		client := proxmox.NewClient(server.URL, "pve1", tokenIDValido, tokenSecretValido, nil)
+		_, err := client.ObtenerMetricasRRD(context.Background(), "pve1", "vm", 110, "")
+		if err != nil {
+			t.Fatalf("ObtenerMetricasRRD con 'vm' falló: %v", err)
+		}
+	})
+
+	t.Run("rechaza tipo desconocido", func(t *testing.T) {
+		client := proxmox.NewClient("http://127.0.0.1:8006", "pve1", tokenIDValido, tokenSecretValido, nil)
+		_, err := client.ObtenerMetricasRRD(context.Background(), "pve1", "invalido", 110, "hour")
+		if err == nil {
+			t.Fatal("Se esperaba error por tipo desconocido, pero fue nil")
+		}
+	})
+}
+
+func TestClient_ObtenerMetricasNodoRRD(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api2/json/nodes/pve1/rrddata" || r.URL.Query().Get("timeframe") != "hour" {
+			t.Errorf("ruta del historial del nodo inesperada: %s", r.URL.String())
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": []map[string]any{
+			{"time": 1787092500, "cpu": 0.2, "memused": 2048, "memtotal": 8192, "rootused": 3000, "roottotal": 12000},
+			{"time": 1787092560, "cpu": 0.1},
+		}})
+	}))
+	defer server.Close()
+
+	client := proxmox.NewClient(server.URL, "pve1", tokenIDValido, tokenSecretValido, nil)
+	puntos, err := client.ObtenerMetricasNodoRRD(context.Background(), "pve1", "hour")
+	if err != nil {
+		t.Fatalf("ObtenerMetricasNodoRRD falló: %v", err)
+	}
+	if len(puntos) != 2 {
+		t.Fatalf("se esperaban dos puntos: %+v", puntos)
+	}
+	if puntos[0].Timestamp != 1787092500 || puntos[0].CPU != 0.2 || puntos[0].MemUsada != 2048 || puntos[0].MemTotal != 8192 || puntos[0].DiscoUsado != 3000 || puntos[0].DiscoTotal != 12000 {
+		t.Errorf("el histórico del nodo perdió sus recursos: %+v", puntos[0])
+	}
+	if puntos[1].Timestamp != 1787092560 || puntos[1].CPU != 0.1 || puntos[1].MemUsada != 0 || puntos[1].MemTotal != 0 || puntos[1].DiscoUsado != 0 || puntos[1].DiscoTotal != 0 {
+		t.Errorf("una muestra sin recursos debe conservar sus campos vacíos: %+v", puntos[1])
+	}
+}
+
+func TestClient_ObtenerEstadoActual(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api2/json/nodes/pve1/qemu/100/status/current" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": map[string]any{
+				"vmid":      100,
+				"status":    "running",
+				"cpus":      2,
+				"cpu":       0.05,
+				"mem":       536870912,
+				"maxmem":    2147483648,
+				"disk":      1073741824,
+				"maxdisk":   10737418240,
+				"netin":     1024,
+				"netout":    2048,
+				"diskread":  500,
+				"diskwrite": 600,
+				"uptime":    3600,
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := proxmox.NewClient(server.URL, "pve1", tokenIDValido, tokenSecretValido, nil)
+	m, err := client.ObtenerEstadoActual(context.Background(), "pve1", "qemu", 100)
+	if err != nil {
+		t.Fatalf("ObtenerEstadoActual falló: %v", err)
+	}
+
+	// Proxmox informa 0.05 (fracción): sale en porcentaje.
+	if m.VMID != 100 || m.Status != "running" || m.CPU == nil || *m.CPU != 5 || m.CPUs != 2 {
+		t.Errorf("Estado actual incorrecto: %+v", m)
+	}
+	if m.Mem == nil || *m.Mem != 536870912 || m.MaxMem != 2147483648 {
+		t.Errorf("Memoria incorrecta: %+v", m)
+	}
+}
+
+// Con la instancia apagada, status/current trae cpu 0 y mem 0: hacia el front
+// salen en null (convención de la PM: null = apagada).
+func TestObtenerEstadoActual_ApagadaDevuelveNull(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{
+			"vmid": 101, "status": "stopped", "cpus": 1, "cpu": 0, "mem": 0, "maxmem": 1073741824,
+		}})
+	}))
+	defer server.Close()
+
+	client := proxmox.NewClient(server.URL, "pve1", tokenIDValido, tokenSecretValido, nil)
+	m, err := client.ObtenerEstadoActual(context.Background(), "pve1", "lxc", 101)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.CPU != nil || m.Mem != nil {
+		t.Errorf("Apagada: cpu y mem deben ser null, vinieron cpu=%v mem=%v", m.CPU, m.Mem)
+	}
+	if m.MaxMem != 1073741824 || m.Status != "stopped" {
+		t.Errorf("El resto de los datos se conserva: %+v", m)
+	}
+	crudo, _ := json.Marshal(m)
+	if !strings.Contains(string(crudo), `"cpu":null`) || !strings.Contains(string(crudo), `"mem":null`) {
+		t.Errorf("El JSON debe llevar cpu y mem en null: %s", crudo)
+	}
+}
+
+// ObtenerConfig: Proxmox manda memory como string en qemu y como número en lxc
+// (capturas de RF-10); con enUso pide ?current=1.
+func TestObtenerConfig_QemuYLXC(t *testing.T) {
+	var consultas []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		consultas = append(consultas, r.URL.Path+"?"+r.URL.RawQuery)
+		data := map[string]any{"memory": "2048", "cores": 2, "digest": "abc"}
+		if strings.Contains(r.URL.Path, "/lxc/") {
+			data = map[string]any{"memory": 512, "cores": 1, "digest": "def"}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": data})
+	}))
+	defer server.Close()
+	client := proxmox.NewClient(server.URL, "pve1", tokenIDValido, tokenSecretValido, nil)
+
+	vm, err := client.ObtenerConfig(context.Background(), "pve1", "qemu", 110, true)
+	if err != nil || vm.MemoriaMB != 2048 || vm.Cores != 2 || vm.Digest != "abc" {
+		t.Errorf("qemu: %+v %v", vm, err)
+	}
+	ct, err := client.ObtenerConfig(context.Background(), "pve1", "lxc", 201, false)
+	if err != nil || ct.MemoriaMB != 512 || ct.Cores != 1 {
+		t.Errorf("lxc: %+v %v", ct, err)
+	}
+	if len(consultas) != 2 || !strings.HasSuffix(consultas[0], "/qemu/110/config?current=1") || strings.Contains(consultas[1], "current") {
+		t.Errorf("Rutas consultadas: %v", consultas)
+	}
+}
+
+// ActualizarConfig manda solo lo que cambia, con el digest; si Proxmox rechaza
+// el digest (config modificada en el medio) se informa como instancia ocupada.
+func TestActualizarConfig_ParametrosYDigestRechazado(t *testing.T) {
+	var cuerpo string
+	rechazar := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		cuerpo = r.PostForm.Encode()
+		if rechazar {
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": nil, "message": "detected modified configuration - file changed by other user? Try again.\n"})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": nil})
+	}))
+	defer server.Close()
+	client := proxmox.NewClient(server.URL, "pve1", tokenIDValido, tokenSecretValido, nil)
+
+	if err := client.ActualizarConfig(context.Background(), "pve1", "qemu", 110, 0, 4096, "abc"); err != nil {
+		t.Fatal(err)
+	}
+	if cuerpo != "digest=abc&memory=4096" {
+		t.Errorf("Debe mandar solo memory y el digest (sin cores): %q", cuerpo)
+	}
+	rechazar = true
+	if err := client.ActualizarConfig(context.Background(), "pve1", "qemu", 110, 2, 0, "viejo"); !errors.Is(err, ports.ErrInstanciaOcupada) {
+		t.Errorf("Digest rechazado: se esperaba ErrInstanciaOcupada, vino %v", err)
+	}
 }

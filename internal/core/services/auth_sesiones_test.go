@@ -125,7 +125,7 @@ func (r *repoSesiones) ActualizarContrasenaYLimpiarCodigo(context.Context, uuid.
 	return nil
 }
 
-type auditoriaNula struct{}
+type auditoriaNula struct{ ports.AuditService }
 
 func (auditoriaNula) Registrar(context.Context, ports.RegistrarAuditoriaInput) {}
 func (auditoriaNula) ListarAuditoria(context.Context, uuid.UUID, ports.FiltrosAuditoria, ports.OpcionesAuditoria) (*ports.PaginaAuditoria, error) {

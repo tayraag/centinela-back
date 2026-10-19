@@ -1,6 +1,7 @@
 package proxmox
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/json"
@@ -13,8 +14,10 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
+	"el-centinela/internal/core/domain"
 	"el-centinela/internal/core/ports"
 )
 
@@ -33,6 +36,7 @@ type Client struct {
 	tokenID        string
 	tokenSecret    string
 	httpClient     *http.Client
+	aprovisionMu   sync.Mutex // serializa nextid + create dentro de esta API
 }
 
 // NewClient crea un cliente de Proxmox VE.
@@ -60,6 +64,7 @@ func NewClient(baseURL, node, tokenID, tokenSecret string, tlsCfg *tls.Config) *
 }
 
 var _ ports.ProxmoxPort = (*Client)(nil)
+var _ ports.AprovisionamientoPort = (*Client)(nil)
 
 // TokenConfigurado indica si el cliente tiene un API Token completo.
 func (c *Client) TokenConfigurado() bool {
@@ -165,6 +170,102 @@ func detalle(body []byte) string {
 		return s[:maxDetalleError] + "..."
 	}
 	return s
+}
+
+// AprovisionarInstancia reserva el siguiente VMID y dispara qmcreate/vzcreate.
+// El mutex cubre ambas llamadas para que dos requests atendidos por este
+// proceso no intenten crear el mismo VMID. Proxmox conserva la última defensa
+// ante carreras con otros procesos mediante la unicidad global del VMID.
+func (c *Client) AprovisionarInstancia(ctx context.Context, input ports.CrearInstanciaProxmoxInput) (*ports.ResultadoAprovisionamiento, error) {
+	c.aprovisionMu.Lock()
+	defer c.aprovisionMu.Unlock()
+
+	raw, err := c.doRequest(ctx, http.MethodGet, "/api2/json/cluster/nextid", nil)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ports.ErrCreacionNoDespachada, err)
+	}
+	var siguiente struct {
+		Data string `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &siguiente); err != nil {
+		return nil, fmt.Errorf("%w: %w: respuesta de cluster/nextid inválida: %v", ports.ErrCreacionNoDespachada, ports.ErrProxmoxNoDisponible, err)
+	}
+	vmid, err := strconv.Atoi(siguiente.Data)
+	if err != nil || vmid < 100 {
+		return nil, fmt.Errorf("%w: %w: VMID inválido en cluster/nextid: %q", ports.ErrCreacionNoDespachada, ports.ErrProxmoxNoDisponible, siguiente.Data)
+	}
+
+	tipo := strings.ToLower(input.Tipo)
+	if tipo != ports.TipoInstanciaQemu && tipo != ports.TipoInstanciaLXC {
+		return nil, fmt.Errorf("%w: tipo de instancia desconocido %q", ports.ErrCreacionNoDespachada, input.Tipo)
+	}
+	params := parametrosCreacion(vmid, input)
+	path := fmt.Sprintf("/api2/json/nodes/%s/%s", url.PathEscape(input.Nodo), tipo)
+	raw, err = c.doRequest(ctx, http.MethodPost, path, params)
+	if err != nil {
+		return nil, err
+	}
+	var creada upidResponse
+	if err := json.Unmarshal(raw, &creada); err != nil || strings.TrimSpace(creada.Data) == "" {
+		return nil, fmt.Errorf("%w: respuesta de creación inválida", ports.ErrProxmoxNoDisponible)
+	}
+	accion := ports.AccionProxmoxCrearVM
+	if tipo == ports.TipoInstanciaLXC {
+		accion = ports.AccionProxmoxCrearLXC
+	}
+	return &ports.ResultadoAprovisionamiento{VMID: vmid, UPID: creada.Data, Accion: accion}, nil
+}
+
+func parametrosCreacion(vmid int, input ports.CrearInstanciaProxmoxInput) url.Values {
+	params := url.Values{
+		"vmid":   {strconv.Itoa(vmid)},
+		"memory": {strconv.Itoa(input.MemoriaMB)},
+		"cores":  {strconv.Itoa(input.Cores)},
+	}
+	if input.Descripcion != "" {
+		params.Set("description", input.Descripcion)
+	}
+	firewall := "0"
+	if input.Firewall {
+		firewall = "1"
+	}
+
+	if strings.EqualFold(input.Tipo, ports.TipoInstanciaLXC) {
+		params.Set("hostname", input.Nombre)
+		if input.Password != "" {
+			params.Set("password", input.Password)
+		}
+		params.Set("ostemplate", input.TemplateID)
+		params.Set("rootfs", fmt.Sprintf("%s:%d", input.StorageID, input.DiscoGB))
+		net0 := fmt.Sprintf("name=eth0,bridge=%s,firewall=%s", input.Bridge, firewall)
+		if input.IPv4Tipo == "static" {
+			net0 += fmt.Sprintf(",ip=%s/%s,gw=%s", input.IPv4Address, input.IPv4Mask, input.IPv4Gateway)
+		} else {
+			net0 += ",ip=dhcp"
+		}
+		if input.VLAN != nil {
+			net0 += ",tag=" + strconv.Itoa(*input.VLAN)
+		}
+		params.Set("net0", net0)
+		return params
+	}
+
+	params.Set("name", input.Nombre)
+	params.Set("scsi0", fmt.Sprintf("%s:%d", input.StorageID, input.DiscoGB))
+	params.Set("scsihw", "virtio-scsi-pci")
+	params.Set("ide2", input.TemplateID+",media=cdrom")
+	params.Set("boot", "order=ide2;scsi0")
+	net0 := fmt.Sprintf("virtio,bridge=%s,firewall=%s", input.Bridge, firewall)
+	if input.VLAN != nil {
+		net0 += ",tag=" + strconv.Itoa(*input.VLAN)
+	}
+	params.Set("net0", net0)
+	if input.IPv4Tipo == "static" {
+		params.Set("ipconfig0", fmt.Sprintf("ip=%s/%s,gw=%s", input.IPv4Address, input.IPv4Mask, input.IPv4Gateway))
+	} else if input.IPv4Tipo == "dhcp" {
+		params.Set("ipconfig0", "ip=dhcp")
+	}
+	return params
 }
 
 // ==========================================
@@ -331,7 +432,7 @@ func (c *Client) EliminarInstancia(ctx context.Context, node string, vmid int, v
 	} else if tipoProxmox == "LXC" {
 		tipoProxmox = "lxc"
 	}
-	
+
 	path := fmt.Sprintf("/api2/json/nodes/%s/%s/%d", url.PathEscape(node), tipoProxmox, vmid)
 	raw, err := c.doRequest(ctx, http.MethodDelete, path, nil)
 	if err != nil {
@@ -400,7 +501,8 @@ type estadoNodoResponse struct {
 		CPU     float64 `json:"cpu"`
 		Uptime  int64   `json:"uptime"`
 		CPUInfo struct {
-			CPUs int `json:"cpus"`
+			CPUs  int `json:"cpus"`
+			Cores int `json:"cores"`
 		} `json:"cpuinfo"`
 		Memory struct {
 			Total int64 `json:"total"`
@@ -409,6 +511,7 @@ type estadoNodoResponse struct {
 		RootFS struct {
 			Total int64 `json:"total"`
 			Used  int64 `json:"used"`
+			Avail int64 `json:"avail"`
 		} `json:"rootfs"`
 	} `json:"data"`
 }
@@ -426,9 +529,9 @@ func (c *Client) ObtenerEstadoNodo(ctx context.Context, node string) (*ports.Nod
 	}
 	d := parsed.Data
 	return &ports.NodeStatusDTO{
-		CPU: d.CPU, CPUs: d.CPUInfo.CPUs,
+		CPU: d.CPU, CPUs: d.CPUInfo.CPUs, PhysicalCores: d.CPUInfo.Cores,
 		MemTotal: d.Memory.Total, MemUsada: d.Memory.Used,
-		DiscoTotal: d.RootFS.Total, DiscoUsado: d.RootFS.Used,
+		DiscoTotal: d.RootFS.Total, DiscoUsado: d.RootFS.Used, DiscoDisponible: d.RootFS.Avail,
 		UptimeSegs: d.Uptime,
 	}, nil
 }
@@ -534,4 +637,359 @@ func versionIP(tipo, ip string) int {
 		return 6
 	}
 	return 4
+}
+
+// ObtenerStorages consulta GET /nodes/{node}/storage y devuelve la lista de storages de Proxmox.
+func (c *Client) ObtenerStorages(ctx context.Context, node string) ([]ports.StorageDTO, error) {
+	raw, err := c.doRequest(ctx, http.MethodGet, fmt.Sprintf("/api2/json/nodes/%s/storage", url.PathEscape(node)), nil)
+	if err != nil {
+		return nil, err
+	}
+	var parsed struct {
+		Data []ports.StorageDTO `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return nil, fmt.Errorf("%w: respuesta de storages inválida: %v", ports.ErrProxmoxNoDisponible, err)
+	}
+	return parsed.Data, nil
+}
+
+// ObtenerContenidoStorage consulta GET /nodes/{node}/storage/{storage}/content.
+func (c *Client) ObtenerContenidoStorage(ctx context.Context, node, storage string) ([]ports.StorageContentDTO, error) {
+	raw, err := c.doRequest(ctx, http.MethodGet, fmt.Sprintf("/api2/json/nodes/%s/storage/%s/content", url.PathEscape(node), url.PathEscape(storage)), nil)
+	if err != nil {
+		return nil, err
+	}
+	var parsed struct {
+		Data []ports.StorageContentDTO `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return nil, fmt.Errorf("%w: respuesta de contenido de storage inválida: %v", ports.ErrProxmoxNoDisponible, err)
+	}
+	return parsed.Data, nil
+}
+
+// puntoRRDProxmox representa el formato crudo devuelto por Proxmox VE en /rrddata.
+type puntoRRDProxmox struct {
+	Time      int64    `json:"time"`
+	CPU       *float64 `json:"cpu"`
+	Mem       *float64 `json:"mem"`
+	MaxMem    *float64 `json:"maxmem"`
+	NetIn     *float64 `json:"netin"`
+	NetOut    *float64 `json:"netout"`
+	DiskRead  *float64 `json:"diskread"`
+	DiskWrite *float64 `json:"diskwrite"`
+	// El RRD de instancias usa disk y maxdisk; se conservan para esas métricas.
+	Disk    *float64 `json:"disk"`
+	MaxDisk *float64 `json:"maxdisk"`
+	// El RRD del nodo usa nombres distintos de los de VM y contenedores.
+	MemUsed   *float64 `json:"memused"`
+	MemTotal  *float64 `json:"memtotal"`
+	RootUsed  *float64 `json:"rootused"`
+	RootTotal *float64 `json:"roottotal"`
+}
+
+// ObtenerMetricasNodoRRD consulta la serie histórica del host. Es la misma
+// forma que la de instancia pero contra /nodes/{node}/rrddata, sin tipo ni vmid.
+func (c *Client) ObtenerMetricasNodoRRD(ctx context.Context, nodo, timeframe string) ([]ports.MuestraNodoRRD, error) {
+	if timeframe == "" {
+		timeframe = "hour"
+	}
+
+	path := fmt.Sprintf("/api2/json/nodes/%s/rrddata?timeframe=%s",
+		url.PathEscape(nodo),
+		url.QueryEscape(timeframe),
+	)
+
+	raw, err := c.doRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var parsed struct {
+		Data []puntoRRDProxmox `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return nil, fmt.Errorf("%w: respuesta de rrddata del nodo inválida: %v", ports.ErrProxmoxNoDisponible, err)
+	}
+
+	muestras := make([]ports.MuestraNodoRRD, 0, len(parsed.Data))
+	for _, p := range parsed.Data {
+		m := ports.MuestraNodoRRD{Timestamp: p.Time}
+		if p.CPU != nil {
+			m.CPU = *p.CPU
+		}
+		if p.MemUsed != nil {
+			m.MemUsada = int64(*p.MemUsed)
+		}
+		if p.MemTotal != nil {
+			m.MemTotal = int64(*p.MemTotal)
+		}
+		if p.RootUsed != nil {
+			m.DiscoUsado = int64(*p.RootUsed)
+		}
+		if p.RootTotal != nil {
+			m.DiscoTotal = int64(*p.RootTotal)
+		}
+		muestras = append(muestras, m)
+	}
+
+	return muestras, nil
+}
+
+// ObtenerMetricasRRD consulta la serie temporal histórica de métricas de una VM o contenedor.
+func (c *Client) ObtenerMetricasRRD(ctx context.Context, nodo, tipo string, vmid int, timeframe string) ([]domain.PuntoMetricaDTO, error) {
+	tipoPVE := strings.ToLower(strings.TrimSpace(tipo))
+	if tipoPVE == "vm" {
+		tipoPVE = ports.TipoInstanciaQemu
+	}
+	if tipoPVE != ports.TipoInstanciaQemu && tipoPVE != ports.TipoInstanciaLXC {
+		return nil, fmt.Errorf("tipo de instancia desconocido %q", tipo)
+	}
+	if timeframe == "" {
+		timeframe = "hour"
+	}
+
+	path := fmt.Sprintf("/api2/json/nodes/%s/%s/%d/rrddata?timeframe=%s",
+		url.PathEscape(nodo),
+		url.PathEscape(tipoPVE),
+		vmid,
+		url.QueryEscape(timeframe),
+	)
+
+	raw, err := c.doRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var parsed struct {
+		Data []puntoRRDProxmox `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return nil, fmt.Errorf("%w: respuesta de rrddata inválida: %v", ports.ErrProxmoxNoDisponible, err)
+	}
+
+	resultado := make([]domain.PuntoMetricaDTO, len(parsed.Data))
+	for i, p := range parsed.Data {
+		// Sin dato de CPU o RAM (instancia apagada en ese período) queda null.
+		var cpuVal *float64
+		if p.CPU != nil {
+			v := domain.PorcentajeCPU(*p.CPU)
+			cpuVal = &v
+		}
+
+		var ramUsed *int64
+		if p.Mem != nil {
+			v := int64(*p.Mem)
+			ramUsed = &v
+		}
+
+		var ramTotal int64
+		if p.MaxMem != nil {
+			ramTotal = int64(*p.MaxMem)
+		}
+
+		var netIn int64
+		if p.NetIn != nil {
+			netIn = int64(*p.NetIn)
+		}
+
+		var netOut int64
+		if p.NetOut != nil {
+			netOut = int64(*p.NetOut)
+		}
+
+		var diskRead int64
+		if p.DiskRead != nil {
+			diskRead = int64(*p.DiskRead)
+		}
+
+		var diskWrite int64
+		if p.DiskWrite != nil {
+			diskWrite = int64(*p.DiskWrite)
+		}
+
+		resultado[i] = domain.PuntoMetricaDTO{
+			Timestamp:     p.Time,
+			CPUPercent:    cpuVal,
+			RAMUsedBytes:  ramUsed,
+			RAMTotalBytes: ramTotal,
+			NetInBps:      netIn,
+			NetOutBps:     netOut,
+			DiskReadBps:   diskRead,
+			DiskWriteBps:  diskWrite,
+		}
+	}
+
+	return resultado, nil
+}
+
+// estadoActualProxmox representa el cuerpo crudo de /status/current.
+type estadoActualProxmox struct {
+	Vmid      int      `json:"vmid"`
+	Status    string   `json:"status"`
+	Cpus      int      `json:"cpus"`
+	CPU       *float64 `json:"cpu"`
+	Mem       *int64   `json:"mem"`
+	MaxMem    *int64   `json:"maxmem"`
+	Disk      *int64   `json:"disk"`
+	MaxDisk   *int64   `json:"maxdisk"`
+	NetIn     *int64   `json:"netin"`
+	NetOut    *int64   `json:"netout"`
+	DiskRead  *int64   `json:"diskread"`
+	DiskWrite *int64   `json:"diskwrite"`
+	Uptime    *int64   `json:"uptime"`
+}
+
+// ObtenerEstadoActual consulta /nodes/{node}/{tipo}/{vmid}/status/current.
+func (c *Client) ObtenerEstadoActual(ctx context.Context, nodo, tipo string, vmid int) (*domain.MetricasEnVivoDTO, error) {
+	tipoPVE := strings.ToLower(strings.TrimSpace(tipo))
+	if tipoPVE == "vm" {
+		tipoPVE = ports.TipoInstanciaQemu
+	}
+	if tipoPVE != ports.TipoInstanciaQemu && tipoPVE != ports.TipoInstanciaLXC {
+		return nil, fmt.Errorf("tipo de instancia desconocido %q", tipo)
+	}
+
+	path := fmt.Sprintf("/api2/json/nodes/%s/%s/%d/status/current", url.PathEscape(nodo), url.PathEscape(tipoPVE), vmid)
+	raw, err := c.doRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var parsed struct {
+		Data estadoActualProxmox `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return nil, fmt.Errorf("%w: respuesta de status/current inválida: %v", ports.ErrProxmoxNoDisponible, err)
+	}
+
+	d := parsed.Data
+	// CPU en porcentaje y RAM usada solo con la instancia encendida; si no, null.
+	var cpuVal *float64
+	var memVal *int64
+	if d.Status == "running" {
+		if d.CPU != nil {
+			v := domain.PorcentajeCPU(*d.CPU)
+			cpuVal = &v
+		}
+		memVal = d.Mem
+	}
+	var maxMemVal, diskVal, maxDiskVal, netInVal, netOutVal, readVal, writeVal, upVal int64
+	if d.MaxMem != nil {
+		maxMemVal = *d.MaxMem
+	}
+	if d.Disk != nil {
+		diskVal = *d.Disk
+	}
+	if d.MaxDisk != nil {
+		maxDiskVal = *d.MaxDisk
+	}
+	if d.NetIn != nil {
+		netInVal = *d.NetIn
+	}
+	if d.NetOut != nil {
+		netOutVal = *d.NetOut
+	}
+	if d.DiskRead != nil {
+		readVal = *d.DiskRead
+	}
+	if d.DiskWrite != nil {
+		writeVal = *d.DiskWrite
+	}
+	if d.Uptime != nil {
+		upVal = *d.Uptime
+	}
+
+	return &domain.MetricasEnVivoDTO{
+		Timestamp: time.Now().Unix(),
+		VMID:      vmid,
+		Status:    d.Status,
+		CPU:       cpuVal,
+		CPUs:      d.Cpus,
+		Mem:       memVal,
+		MaxMem:    maxMemVal,
+		Disk:      diskVal,
+		MaxDisk:   maxDiskVal,
+		NetIn:     netInVal,
+		NetOut:    netOutVal,
+		DiskRead:  readVal,
+		DiskWrite: writeVal,
+		Uptime:    upVal,
+	}, nil
+}
+
+// ObtenerConfig consulta GET /nodes/{node}/{tipo}/{vmid}/config (con
+// ?current=1 si enUso). Proxmox informa memory como string en qemu y como
+// número en lxc; se aceptan las dos formas.
+func (c *Client) ObtenerConfig(ctx context.Context, nodo, tipo string, vmid int, enUso bool) (*ports.ConfigInstanciaDTO, error) {
+	tipoPVE, err := tipoProxmox(tipo)
+	if err != nil {
+		return nil, err
+	}
+	path := fmt.Sprintf("/api2/json/nodes/%s/%s/%d/config", url.PathEscape(nodo), tipoPVE, vmid)
+	if enUso {
+		path += "?current=1"
+	}
+	raw, err := c.doRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	var parsed struct {
+		Data struct {
+			Cores  json.Number `json:"cores"`
+			Memory json.Number `json:"memory"`
+			Digest string      `json:"digest"`
+		} `json:"data"`
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	if err := decoder.Decode(&parsed); err != nil {
+		return nil, fmt.Errorf("%w: respuesta de config inválida: %v", ports.ErrProxmoxNoDisponible, err)
+	}
+	cores, _ := strconv.Atoi(parsed.Data.Cores.String())
+	memoria, _ := strconv.Atoi(parsed.Data.Memory.String())
+	if cores == 0 && tipoPVE == ports.TipoInstanciaQemu {
+		cores = 1 // en qemu, sin "cores" en la config Proxmox usa 1
+	}
+	return &ports.ConfigInstanciaDTO{Cores: cores, MemoriaMB: memoria, Digest: parsed.Data.Digest}, nil
+}
+
+// ActualizarConfig hace PUT /nodes/{node}/{tipo}/{vmid}/config. Proxmox responde
+// {"data": null}: no es una tarea, el cambio queda guardado al responder.
+func (c *Client) ActualizarConfig(ctx context.Context, nodo, tipo string, vmid int, cores, memoriaMB int, digest string) error {
+	tipoPVE, err := tipoProxmox(tipo)
+	if err != nil {
+		return err
+	}
+	cambios := url.Values{}
+	if cores > 0 {
+		cambios.Set("cores", strconv.Itoa(cores))
+	}
+	if memoriaMB > 0 {
+		cambios.Set("memory", strconv.Itoa(memoriaMB))
+	}
+	if digest != "" {
+		cambios.Set("digest", digest)
+	}
+	path := fmt.Sprintf("/api2/json/nodes/%s/%s/%d/config", url.PathEscape(nodo), tipoPVE, vmid)
+	_, err = c.doRequest(ctx, http.MethodPut, path, cambios)
+	if err != nil && strings.Contains(err.Error(), "detected modified configuration") {
+		// El digest no coincide: alguien cambió la config (p. ej. desde la UI de
+		// Proxmox) entre la lectura y la escritura. Se informa como ocupada.
+		return fmt.Errorf("%w: %v", ports.ErrInstanciaOcupada, err)
+	}
+	return err
+}
+
+// tipoProxmox normaliza el tipo de instancia al segmento de la ruta de Proxmox.
+func tipoProxmox(tipo string) (string, error) {
+	t := strings.ToLower(strings.TrimSpace(tipo))
+	if t == "vm" {
+		t = ports.TipoInstanciaQemu
+	}
+	if t != ports.TipoInstanciaQemu && t != ports.TipoInstanciaLXC {
+		return "", fmt.Errorf("tipo de instancia desconocido %q", tipo)
+	}
+	return t, nil
 }

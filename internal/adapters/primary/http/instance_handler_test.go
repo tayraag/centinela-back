@@ -3,6 +3,7 @@ package http_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +14,7 @@ import (
 	"el-centinela/internal/adapters/primary/http/middleware"
 	"el-centinela/internal/core/domain"
 	"el-centinela/internal/core/ports"
+	"el-centinela/internal/core/services"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -29,11 +31,23 @@ const (
 type mockProxmoxPort struct {
 	instancias []ports.InstanciaProxmoxDTO
 	errListar  error
-	errAccion  error // error de IniciarInstancia / DetenerInstancia
-	errDetalle error // error de ObtenerInstancia
+	errAccion  error  // error de IniciarInstancia / DetenerInstancia
+	errDetalle error  // error de ObtenerInstancia
 	estado     string // estado que informa ObtenerInstancia
 	lecturas   int    // órdenes de lectura recibidas (ObtenerInstancia)
 	escrituras int    // órdenes de escritura recibidas (start/stop/shutdown/reboot)
+	aprovInput ports.CrearInstanciaProxmoxInput
+	aprovRes   *ports.ResultadoAprovisionamiento
+	errAprov   error
+}
+
+func (m *mockProxmoxPort) AprovisionarInstancia(_ context.Context, input ports.CrearInstanciaProxmoxInput) (*ports.ResultadoAprovisionamiento, error) {
+	m.escrituras++
+	m.aprovInput = input
+	if m.errAprov != nil {
+		return nil, m.errAprov
+	}
+	return m.aprovRes, nil
 }
 
 func (m *mockProxmoxPort) ObtenerInstancia(ctx context.Context, vmid int) (*ports.InstanciaProxmoxDTO, error) {
@@ -100,12 +114,40 @@ func (m *mockProxmoxPort) Reboot(ctx context.Context, node string, vmid int, vmT
 	return "UPID:test:reboot", nil
 }
 
+func (m *mockProxmoxPort) ObtenerConfig(context.Context, string, string, int, bool) (*ports.ConfigInstanciaDTO, error) {
+	return &ports.ConfigInstanciaDTO{}, nil
+}
+
+func (m *mockProxmoxPort) ActualizarConfig(context.Context, string, string, int, int, int, string) error {
+	return nil
+}
+
 func (m *mockProxmoxPort) EliminarInstancia(ctx context.Context, node string, vmid int, vmType string) (string, error) {
 	m.escrituras++
 	if m.errAccion != nil {
 		return "", m.errAccion
 	}
 	return "UPID:test:qmdestroy", nil
+}
+
+func (m *mockProxmoxPort) ObtenerStorages(ctx context.Context, node string) ([]ports.StorageDTO, error) {
+	return nil, nil
+}
+
+func (m *mockProxmoxPort) ObtenerContenidoStorage(ctx context.Context, node, storage string) ([]ports.StorageContentDTO, error) {
+	return nil, nil
+}
+
+func (m *mockProxmoxPort) ObtenerMetricasRRD(ctx context.Context, nodo, tipo string, vmid int, timeframe string) ([]domain.PuntoMetricaDTO, error) {
+	return nil, nil
+}
+
+func (m *mockProxmoxPort) ObtenerMetricasNodoRRD(ctx context.Context, nodo, timeframe string) ([]ports.MuestraNodoRRD, error) {
+	return nil, nil
+}
+
+func (m *mockProxmoxPort) ObtenerEstadoActual(ctx context.Context, nodo, tipo string, vmid int) (*domain.MetricasEnVivoDTO, error) {
+	return nil, nil
 }
 
 // inventarioNulo implementa ports.InventarioService sin resolver ninguna IP.
@@ -123,14 +165,42 @@ func (seguimientoNulo) Seguir(context.Context, uuid.UUID, int, string, string, .
 	return uuid.New(), nil
 }
 
+type seguimientoError struct{ err error }
+
+func (s seguimientoError) Seguir(context.Context, uuid.UUID, int, string, string, ...map[string]any) (uuid.UUID, error) {
+	return uuid.Nil, s.err
+}
+
+type seguimientoCaptura struct {
+	id        uuid.UUID
+	usuarioID uuid.UUID
+	vmid      int
+	accion    string
+	upid      string
+	metadatos map[string]any
+	llamadas  int
+}
+
+func (s *seguimientoCaptura) Seguir(_ context.Context, usuarioID uuid.UUID, vmid int, accion, upid string, metadatos ...map[string]any) (uuid.UUID, error) {
+	s.llamadas++
+	s.usuarioID, s.vmid, s.accion, s.upid = usuarioID, vmid, accion, upid
+	if len(metadatos) > 0 {
+		s.metadatos = metadatos[0]
+	}
+	return s.id, nil
+}
+
 type mockTareaRepository struct {
 	activas map[int]ports.ActiveTaskDTO
 }
-func (m *mockTareaRepository) Crear(context.Context, *domain.TareaAsincrona) error { return nil }
+
+func (m *mockTareaRepository) Crear(context.Context, *domain.TareaAsincrona, ports.RegistrarAuditoriaInput) error {
+	return nil
+}
 func (m *mockTareaRepository) ListarEnCurso(context.Context) ([]domain.TareaAsincrona, error) {
 	return nil, nil
 }
-func (m *mockTareaRepository) ActualizarEstado(context.Context, uuid.UUID, string, map[string]any) error {
+func (m *mockTareaRepository) ActualizarEstado(context.Context, uuid.UUID, string, map[string]any, ports.RegistrarAuditoriaInput) error {
 	return nil
 }
 func (m *mockTareaRepository) BuscarTareasActivasPorVmids(context.Context, []int) (map[int]ports.ActiveTaskDTO, error) {
@@ -141,11 +211,18 @@ func (m *mockTareaRepository) BuscarTareasActivasPorVmids(context.Context, []int
 }
 
 type mockAuditService struct {
-	registros []ports.RegistrarAuditoriaInput
+	ports.AuditService
+	registros    []ports.RegistrarAuditoriaInput
+	errRegistrar error
 }
 
 func (m *mockAuditService) Registrar(_ context.Context, input ports.RegistrarAuditoriaInput) {
 	m.registros = append(m.registros, input)
+}
+
+func (m *mockAuditService) RegistrarEstricto(_ context.Context, input ports.RegistrarAuditoriaInput) error {
+	m.registros = append(m.registros, input)
+	return m.errRegistrar
 }
 
 // ultimo devuelve el último registro de auditoría capturado.
@@ -156,10 +233,15 @@ func (m *mockAuditService) ultimo() (ports.RegistrarAuditoriaInput, bool) {
 	return m.registros[len(m.registros)-1], true
 }
 
-func (m *mockAuditService) ListarAuditoria(context.Context, uuid.UUID, ports.FiltrosAuditoria, ports.OpcionesAuditoria) (*ports.PaginaAuditoria, error) { return nil, nil }
-func (m *mockAuditService) ExportarCSV(context.Context, uuid.UUID, ports.FiltrosAuditoria) ([]byte, error) { return nil, nil }
-func (m *mockAuditService) ExportarJSON(context.Context, uuid.UUID, ports.FiltrosAuditoria) ([]byte, error) { return nil, nil }
-
+func (m *mockAuditService) ListarAuditoria(context.Context, uuid.UUID, ports.FiltrosAuditoria, ports.OpcionesAuditoria) (*ports.PaginaAuditoria, error) {
+	return nil, nil
+}
+func (m *mockAuditService) ExportarCSV(context.Context, uuid.UUID, ports.FiltrosAuditoria) ([]byte, error) {
+	return nil, nil
+}
+func (m *mockAuditService) ExportarJSON(context.Context, uuid.UUID, ports.FiltrosAuditoria) ([]byte, error) {
+	return nil, nil
+}
 
 // mockUserRepository implementa ports.UserRepository para pruebas
 type mockUserRepository struct {
@@ -202,6 +284,183 @@ func (m *mockUserRepository) ReemplazarPermisos(ctx context.Context, usuarioID u
 }
 func (m *mockUserRepository) ListarActividadDeUsuario(ctx context.Context, usuarioID uuid.UUID, filtros ports.FiltrosActividad) ([]domain.Auditoria, error) {
 	return nil, nil
+}
+
+func TestCrearInstancia_RegistraOrdenRealEnSeguimiento(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	usuarioID := uuid.New()
+	tareaID := uuid.New()
+	upid := "UPID:pve1:1:2:3:vzcreate:502:root@pam:"
+	px := &mockProxmoxPort{aprovRes: &ports.ResultadoAprovisionamiento{VMID: 502, UPID: upid, Accion: ports.AccionProxmoxCrearLXC, ReservaID: "reserva-502"}}
+	seguimiento := &seguimientoCaptura{id: tareaID}
+	handler := adaptersHttp.NewInstanceHandler(px, &mockUserRepository{}, seguimiento, &mockTareaRepository{}, &mockAuditService{}, inventarioNulo{})
+	router := gin.New()
+	router.POST("/api/instances", func(c *gin.Context) {
+		c.Set(string(middleware.ContextKeyUserID), usuarioID.String())
+	}, handler.CrearInstancia)
+
+	body := `{
+		"type":"LXC","node":"pve1","name":"db-cache","password":"PasswordSegura123!",
+		"cpu":{"cores":1},"ram":{"memoryMb":1024},
+		"disk":{"storageId":"local-lvm","sizeGb":10},
+		"network":{"bridge":"vmbr0","firewall":false,"ipv4":{"type":"static","address":"192.168.1.50","mask":"24","gateway":"192.168.1.1"}},
+		"os":{"templateId":"local:vztmpl/debian.tar.zst"}
+	}`
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/instances", strings.NewReader(body)))
+
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	if px.aprovInput.Tipo != ports.TipoInstanciaLXC || px.aprovInput.Password == "" || px.aprovInput.IPv4Tipo != "static" {
+		t.Fatalf("input a Proxmox incorrecto: %+v", px.aprovInput)
+	}
+	if seguimiento.llamadas != 1 || seguimiento.usuarioID != usuarioID || seguimiento.vmid != 502 || seguimiento.accion != ports.AccionProxmoxCrearLXC || seguimiento.upid != upid {
+		t.Fatalf("orden no registrada correctamente: %+v", seguimiento)
+	}
+	if seguimiento.metadatos["resource_type"] != ports.TipoInstanciaLXC || seguimiento.metadatos["instanciaNombre"] != "db-cache" ||
+		seguimiento.metadatos["cores"] != 1 || seguimiento.metadatos["ramMb"] != 1024 || seguimiento.metadatos["discoGb"] != 10 ||
+		seguimiento.metadatos["reserva_id"] != "reserva-502" {
+		t.Fatalf("metadatos de creación incorrectos: %v", seguimiento.metadatos)
+	}
+	var respuesta map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &respuesta); err != nil {
+		t.Fatal(err)
+	}
+	if respuesta["vmid"] != float64(502) || respuesta["tareaId"] != tareaID.String() {
+		t.Fatalf("respuesta asincrónica incorrecta: %v", respuesta)
+	}
+	if _, expuesto := respuesta["upid"]; expuesto {
+		t.Fatalf("el UPID técnico no debe exponerse al frontend: %v", respuesta)
+	}
+}
+
+func TestCrearInstancia_ContratoPlanoRF07CreaVMYLXC(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	casos := []struct {
+		nombre     string
+		body       string
+		tipo       string
+		templateID string
+		accion     string
+	}{
+		{
+			nombre: "VM", tipo: ports.TipoInstanciaQemu, accion: ports.AccionProxmoxCrearVM,
+			templateID: "local-lvm:iso/debian-12.iso",
+			body:       `{"tipo":"vm","nombre":"srv-prod-01","cores":2,"ramMb":2048,"discoGb":20,"storageId":"local-lvm","templateOso":"debian-12.iso","red":{"modo":"dhcp"}}`,
+		},
+		{
+			nombre: "LXC", tipo: ports.TipoInstanciaLXC, accion: ports.AccionProxmoxCrearLXC,
+			templateID: "local-lvm:vztmpl/debian-12-standard.tar.zst",
+			body:       `{"tipo":"lxc","nombre":"ct-prod-01","cores":1,"ramMb":1024,"discoGb":8,"storageId":"local-lvm","templateOso":"debian-12-standard.tar.zst","red":{"modo":"static","ip":"192.168.1.50","gateway":"192.168.1.1"}}`,
+		},
+	}
+
+	for _, caso := range casos {
+		t.Run(caso.nombre, func(t *testing.T) {
+			tareaID := uuid.New()
+			upid := "UPID:pve1:1:2:3:" + caso.accion + ":615:root@pam:"
+			px := &mockProxmoxPort{aprovRes: &ports.ResultadoAprovisionamiento{VMID: 615, UPID: upid, Accion: caso.accion}}
+			seguimiento := &seguimientoCaptura{id: tareaID}
+			handler := adaptersHttp.NewInstanceHandlerConNodo(px, &mockUserRepository{}, seguimiento, &mockTareaRepository{}, &mockAuditService{}, inventarioNulo{}, "pve1")
+			router := gin.New()
+			router.POST("/api/instances", func(c *gin.Context) {
+				c.Set(string(middleware.ContextKeyUserID), uuid.NewString())
+			}, handler.CrearInstancia)
+
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/instances", strings.NewReader(caso.body)))
+
+			if w.Code != http.StatusAccepted {
+				t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+			}
+			if px.aprovInput.Tipo != caso.tipo || px.aprovInput.Nodo != "pve1" || px.aprovInput.Bridge != "vmbr0" || px.aprovInput.TemplateID != caso.templateID {
+				t.Fatalf("input normalizado incorrecto: %+v", px.aprovInput)
+			}
+			if caso.tipo == ports.TipoInstanciaLXC && (px.aprovInput.Password != "" || px.aprovInput.IPv4Mask != "24") {
+				t.Fatalf("LXC plano debe admitir password vacío y normalizar /24: %+v", px.aprovInput)
+			}
+			var respuesta map[string]any
+			if err := json.Unmarshal(w.Body.Bytes(), &respuesta); err != nil {
+				t.Fatal(err)
+			}
+			if respuesta["vmid"] != float64(615) || respuesta["tareaId"] != tareaID.String() {
+				t.Fatalf("respuesta 202 incompleta: %v", respuesta)
+			}
+			if _, expuesto := respuesta["upid"]; expuesto {
+				t.Fatalf("el UPID técnico no debe exponerse al frontend: %v", respuesta)
+			}
+		})
+	}
+}
+
+func TestCrearInstancia_OperatorRecibe403SinLlegarAlServicio(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	px := &mockProxmoxPort{}
+	handler := adaptersHttp.NewInstanceHandler(px, &mockUserRepository{}, seguimientoNulo{}, &mockTareaRepository{}, &mockAuditService{}, inventarioNulo{})
+	router := gin.New()
+	router.POST("/api/instances", func(c *gin.Context) {
+		c.Set(string(middleware.ContextKeyRol), "OPERATOR")
+	}, middleware.RequireRole("ADMIN"), handler.CrearInstancia)
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/instances", strings.NewReader(`{"tipo":"vm"}`)))
+
+	if w.Code != http.StatusForbidden || px.escrituras != 0 {
+		t.Fatalf("status=%d escrituras=%d body=%s", w.Code, px.escrituras, w.Body.String())
+	}
+}
+
+func TestCrearInstancia_NoResponde202SiNoRegistraElUPID(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	px := &mockProxmoxPort{aprovRes: &ports.ResultadoAprovisionamiento{VMID: 620, UPID: "UPID:pve1:qmcreate:620", Accion: ports.AccionProxmoxCrearVM}}
+	handler := adaptersHttp.NewInstanceHandlerConNodo(px, &mockUserRepository{}, seguimientoError{err: errors.New("base no disponible")}, &mockTareaRepository{}, &mockAuditService{}, inventarioNulo{}, "pve1")
+	router := gin.New()
+	router.POST("/api/instances", handler.CrearInstancia)
+	body := `{"type":"VM","node":"pve1","name":"srv","cpu":{"cores":1},"ram":{"memoryMb":512},"disk":{"storageId":"local-lvm","sizeGb":4},"network":{"bridge":"vmbr0","ipv4":{"type":"dhcp"}},"os":{"templateId":"local:iso/debian.iso"}}`
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/instances", strings.NewReader(body)))
+
+	var respuesta map[string]string
+	_ = json.Unmarshal(w.Body.Bytes(), &respuesta)
+	if w.Code != http.StatusInternalServerError || respuesta["errorCode"] != "TASK_TRACKING_UNAVAILABLE" {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestCrearInstancia_RecursosInsuficientesEs409(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	px := &mockProxmoxPort{errAprov: fmt.Errorf("%w: RAM", ports.ErrRecursosInsuficientes)}
+	handler := adaptersHttp.NewInstanceHandler(px, &mockUserRepository{}, seguimientoNulo{}, &mockTareaRepository{}, &mockAuditService{}, inventarioNulo{})
+	router := gin.New()
+	router.POST("/api/instances", handler.CrearInstancia)
+	body := `{"tipo":"vm","nombre":"web","cores":2,"ramMb":4096,"discoGb":50,"storageId":"local-lvm","templateOso":"debian.iso","red":{"modo":"dhcp"}}`
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/instances", strings.NewReader(body)))
+
+	var respuesta map[string]string
+	_ = json.Unmarshal(w.Body.Bytes(), &respuesta)
+	if w.Code != http.StatusConflict || respuesta["errorCode"] != "RESOURCE_QUOTA_EXCEEDED" {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	if respuesta["message"] != "Los recursos solicitados superan la capacidad disponible en el nodo físico o storage seleccionado." {
+		t.Fatalf("mensaje de cuota inesperado: %q", respuesta["message"])
+	}
+}
+
+func TestCrearInstancia_RechazaLXCSinPasswordAntesDeProxmox(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	px := &mockProxmoxPort{}
+	handler := adaptersHttp.NewInstanceHandler(px, &mockUserRepository{}, seguimientoNulo{}, &mockTareaRepository{}, &mockAuditService{}, inventarioNulo{})
+	router := gin.New()
+	router.POST("/api/instances", handler.CrearInstancia)
+	body := `{"type":"LXC","node":"pve1","name":"cache","cpu":{"cores":1},"ram":{"memoryMb":512},"disk":{"storageId":"local-lvm","sizeGb":4},"network":{"bridge":"vmbr0","ipv4":{"type":"dhcp"}},"os":{"templateId":"local:vztmpl/debian.tar.zst"}}`
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/instances", strings.NewReader(body)))
+
+	if w.Code != http.StatusBadRequest || px.escrituras != 0 {
+		t.Fatalf("status=%d escrituras=%d body=%s", w.Code, px.escrituras, w.Body.String())
+	}
 }
 
 func TestListarInstancias_AdminVisualizaTodas(t *testing.T) {
@@ -289,6 +548,9 @@ func TestListarInstancias_OperatorVisualizaSoloAsignadas(t *testing.T) {
 	}
 	if res[0].ID != 101 {
 		t.Errorf("Se esperaba la instancia 101, pero se recibió id=%d", res[0].ID)
+	}
+	if res[0].NivelAcceso != ports.NivelAccesoFullAccess {
+		t.Errorf("nivelAcceso = %q, se esperaba FULL_ACCESS", res[0].NivelAcceso)
 	}
 }
 
@@ -578,7 +840,7 @@ func TestAccionesDeEnergia_EstadoIncompatibleEs409SinEscribir(t *testing.T) {
 	}
 }
 
-// Acción compatible => 202 con upid y tareaId.
+// Acción compatible => 202 únicamente con tareaId público.
 func TestAccionesDeEnergia_EstadoValidEs202(t *testing.T) {
 	casos := []struct{ ruta, estado string }{
 		{"/api/instances/110/start", "stopped"},
@@ -591,9 +853,28 @@ func TestAccionesDeEnergia_EstadoValidEs202(t *testing.T) {
 	for _, caso := range casos {
 		mock := &mockProxmoxPort{estado: caso.estado}
 		status, cuerpo := ejecutarAccion(mock, caso.ruta)
-		if status != http.StatusAccepted || cuerpo["upid"] == "" || cuerpo["tareaId"] == "" || mock.escrituras != 1 {
-			t.Errorf("%s: se esperaba 202 con upid y tareaId, vino %d %v", caso.ruta, status, cuerpo)
+		if status != http.StatusAccepted || cuerpo["tareaId"] == "" || cuerpo["upid"] != "" || mock.escrituras != 1 {
+			t.Errorf("%s: se esperaba 202 sólo con tareaId, vino %d %v", caso.ruta, status, cuerpo)
 		}
+	}
+}
+
+func TestAccionAsincrona_NoExponeUPIDSiFallaElSeguimiento(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	mock := &mockProxmoxPort{estado: "stopped"}
+	handler := adaptersHttp.NewInstanceHandler(mock, &mockUserRepository{}, seguimientoError{err: errors.New("base no disponible")}, &mockTareaRepository{}, &mockAuditService{}, inventarioNulo{})
+	router := gin.New()
+	router.POST("/api/instances/:vmid/start", handler.IniciarInstancia)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/instances/110/start", nil))
+
+	var respuesta map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &respuesta)
+	if w.Code != http.StatusInternalServerError || respuesta["errorCode"] != "TASK_TRACKING_UNAVAILABLE" {
+		t.Fatalf("se esperaba fallo explícito de seguimiento: status=%d respuesta=%v", w.Code, respuesta)
+	}
+	if _, expuesto := respuesta["upid"]; expuesto {
+		t.Fatalf("el fallback no debe exponer el UPID: %v", respuesta)
 	}
 }
 
@@ -605,6 +886,7 @@ func TestCambiarEstado_AccionInvalidaEs400(t *testing.T) {
 		t.Errorf("se esperaba 400 INVALID_ACTION, vino %d %v", status, cuerpo)
 	}
 }
+
 // inventarioFalso resuelve IPs fijas y registra qué instancias le pidieron.
 type inventarioFalso struct {
 	inventarioNulo
@@ -743,13 +1025,12 @@ func TestEliminarInstancia_ConTareaEnCursoEs409InstanceBusySinConsultarProxmox(t
 	}
 }
 
-// DELETE /api/instances/:vmid es asíncrono: 202 { upid, tareaId }, como las
-// acciones de energía.
-func TestEliminarInstancia_Es202ConUpidYTareaId(t *testing.T) {
+// DELETE /api/instances/:vmid es asíncrono y sólo expone el tareaId público.
+func TestEliminarInstancia_Es202SoloConTareaId(t *testing.T) {
 	mock := &mockProxmoxPort{estado: "stopped"}
 	status, cuerpo := ejecutarBorrado(mock)
-	if status != http.StatusAccepted || cuerpo["upid"] != "UPID:test:qmdestroy" || cuerpo["tareaId"] == "" || mock.escrituras != 1 {
-		t.Errorf("se esperaba 202 con upid y tareaId, vino %d %v", status, cuerpo)
+	if status != http.StatusAccepted || cuerpo["upid"] != "" || cuerpo["tareaId"] == "" || mock.escrituras != 1 {
+		t.Errorf("se esperaba 202 sólo con tareaId, vino %d %v", status, cuerpo)
 	}
 }
 
@@ -781,10 +1062,22 @@ func TestEliminarInstancia_ErroresDeProxmox(t *testing.T) {
 
 // ejecutarCicloDeVidaConAuditoria ejecuta una acción sobre el router de ciclo de
 // vida y devuelve el código HTTP junto con el mock que captura la auditoría.
+type tareasAuditadas struct {
+	mockTareaRepository
+	audit *mockAuditService
+}
+
+func (r *tareasAuditadas) Crear(ctx context.Context, tarea *domain.TareaAsincrona, auditoria ports.RegistrarAuditoriaInput) error {
+	r.audit.Registrar(ctx, auditoria)
+	return nil
+}
+
 func ejecutarCicloDeVidaConAuditoria(mock *mockProxmoxPort, metodo, ruta string) (int, *mockAuditService) {
 	gin.SetMode(gin.TestMode)
 	audit := &mockAuditService{}
-	handler := adaptersHttp.NewInstanceHandler(mock, &mockUserRepository{}, seguimientoNulo{}, &mockTareaRepository{}, audit, inventarioNulo{})
+	repo := &tareasAuditadas{audit: audit}
+	seguimiento := services.NewSeguimientoTareas(mock, repo, services.NewAuditService(nil), services.ConfigSeguimiento{})
+	handler := adaptersHttp.NewInstanceHandler(mock, &mockUserRepository{}, seguimiento, repo, audit, inventarioNulo{})
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
 		c.Set(string(middleware.ContextKeyUserID), uuid.New().String())
@@ -810,13 +1103,13 @@ func TestAuditoriaDeCicloDeVida_UsaVocabularioCanonicoYMetadatos(t *testing.T) {
 		accion    string
 		resultado string
 	}{
-		{"alias start", http.MethodPost, "/api/instances/110/start", "stopped", "START", "PENDING"},
-		{"alias stop", http.MethodPost, "/api/instances/110/stop", "running", "STOP", "PENDING"},
-		{"genérico start", http.MethodPost, "/api/instances/110/status/start", "stopped", "START", "PENDING"},
-		{"genérico stop", http.MethodPost, "/api/instances/110/status/stop", "running", "STOP", "PENDING"},
-		{"genérico shutdown", http.MethodPost, "/api/instances/110/status/shutdown", "running", "SHUTDOWN", "PENDING"},
-		{"genérico reboot", http.MethodPost, "/api/instances/110/status/reboot", "running", "REBOOT", "PENDING"},
-		{"delete", http.MethodDelete, "/api/instances/110", "stopped", "DELETE", "PENDING"},
+		{"alias start", http.MethodPost, "/api/instances/110/start", "stopped", "INICIAR_VM", "PENDIENTE"},
+		{"alias stop", http.MethodPost, "/api/instances/110/stop", "running", "DETENER_VM", "PENDIENTE"},
+		{"genérico start", http.MethodPost, "/api/instances/110/status/start", "stopped", "INICIAR_VM", "PENDIENTE"},
+		{"genérico stop", http.MethodPost, "/api/instances/110/status/stop", "running", "DETENER_VM", "PENDIENTE"},
+		{"genérico shutdown", http.MethodPost, "/api/instances/110/status/shutdown", "running", "APAGAR_VM", "PENDIENTE"},
+		{"genérico reboot", http.MethodPost, "/api/instances/110/status/reboot", "running", "REINICIAR_VM", "PENDIENTE"},
+		{"delete", http.MethodDelete, "/api/instances/110", "stopped", "ELIMINAR_VM", "PENDIENTE"},
 	}
 	for _, caso := range casos {
 		t.Run(caso.nombre, func(t *testing.T) {
@@ -843,6 +1136,15 @@ func TestAuditoriaDeCicloDeVida_UsaVocabularioCanonicoYMetadatos(t *testing.T) {
 			if reg.Detalles["resource_type"] != tipoInstanciaMock {
 				t.Errorf("resource_type: se esperaba %q, vino %v", tipoInstanciaMock, reg.Detalles["resource_type"])
 			}
+			if _, err := uuid.Parse(fmt.Sprint(reg.Detalles["tareaId"])); err != nil {
+				t.Fatalf("falta tareaId válido: %v", reg.Detalles)
+			}
+			if _, expuesto := reg.Detalles["upid"]; expuesto {
+				t.Fatalf("el UPID no debe duplicarse en detalles visibles: %v", reg.Detalles)
+			}
+			if reg.Detalles["instanciaNombre"] != nombreInstanciaMock {
+				t.Fatalf("faltan datos de correlación: %v", reg.Detalles)
+			}
 		})
 	}
 }
@@ -856,8 +1158,8 @@ func TestAuditoriaDeAlias_FalloUsaAccionCanonicaYNombreReal(t *testing.T) {
 		estado string
 		accion string
 	}{
-		{"alias start", "/api/instances/110/start", "stopped", "START"},
-		{"alias stop", "/api/instances/110/stop", "running", "STOP"},
+		{"alias start", "/api/instances/110/start", "stopped", "INICIAR_VM"},
+		{"alias stop", "/api/instances/110/stop", "running", "DETENER_VM"},
 	}
 	for _, caso := range casos {
 		t.Run(caso.nombre, func(t *testing.T) {

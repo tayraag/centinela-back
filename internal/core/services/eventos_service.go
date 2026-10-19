@@ -159,7 +159,7 @@ func (s *eventosService) motivoDeCierre(msg ports.MensajeBus, t ticketEventos) s
 // puedeVer decide, en el momento de cada evento, si el usuario lo puede recibir:
 // ADMIN ve todo; OPERATOR solo los eventos de instancias sobre las que tiene
 // permiso (cualquier nivel). Los eventos que no son de una VM o LXC (por
-// ejemplo, saturación del nodo) son solo para ADMIN. Como se consulta en vivo,
+// ejemplo, un ALERT_TRIGGERED del HOST) son solo para ADMIN. Como se consulta en vivo,
 // si un admin le quita un permiso deja de recibir esos eventos al instante.
 // Si el usuario ya no está activo devuelve inactivo = true.
 func (s *eventosService) puedeVer(ctx context.Context, usuarioID uuid.UUID, ev ports.RealtimeEvent) (visible, inactivo bool) {
@@ -170,7 +170,12 @@ func (s *eventosService) puedeVer(ctx context.Context, usuarioID uuid.UUID, ev p
 	if usuario.Rol == "ADMIN" {
 		return true, false
 	}
-	if ev.RecursoTipo != ports.RecursoVM && ev.RecursoTipo != ports.RecursoLXC {
+	switch ev.RecursoTipo {
+	case ports.RecursoVM, ports.RecursoLXC:
+		// RBAC de la instancia: más abajo.
+	default:
+		// HOST (alertas del servidor físico) y cualquier evento que no sea de
+		// una instancia: solo ADMIN. Al OPERATOR se le descarta en silencio.
 		return false, false
 	}
 	vmid, err := strconv.Atoi(ev.RecursoID)

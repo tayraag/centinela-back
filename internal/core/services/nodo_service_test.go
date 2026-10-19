@@ -23,22 +23,27 @@ type proxmoxNodo struct {
 	err      error
 	demora   time.Duration
 	cpu      float64
+	estado   *ports.NodeStatusDTO
 }
 
 func (p *proxmoxNodo) ObtenerEstadoNodo(_ context.Context, nodo string) (*ports.NodeStatusDTO, error) {
 	p.llamadas.Add(1)
 	p.mu.Lock()
-	err, demora, cpu := p.err, p.demora, p.cpu
+	err, demora, cpu, estado := p.err, p.demora, p.cpu, p.estado
 	p.mu.Unlock()
 	time.Sleep(demora)
 	if err != nil {
 		return nil, err
 	}
+	if estado != nil {
+		copia := *estado
+		return &copia, nil
+	}
 	// Valores de la captura real de GET /nodes/pve/status (RF-02).
 	return &ports.NodeStatusDTO{
-		CPU: cpu, CPUs: 12,
+		CPU: cpu, CPUs: 12, PhysicalCores: 6,
 		MemTotal: 16423432192, MemUsada: 2721751040,
-		DiscoTotal: 72722055168, DiscoUsado: 5477756928,
+		DiscoTotal: 72722055168, DiscoUsado: 5477756928, DiscoDisponible: 63503400960,
 		UptimeSegs: 199252,
 	}, nil
 }
@@ -87,6 +92,7 @@ func TestNodo_NormalizaComoPideElContrato(t *testing.T) {
 		CPU:           ports.MetricaCPU{UsagePercent: 3.77, Cores: 12},
 		RAM:           ports.MetricaCapacidad{UsedGb: 2.53, TotalGb: 15.3, UsagePercent: 16.57},
 		Storage:       ports.MetricaCapacidad{UsedGb: 5.1, TotalGb: 67.73, UsagePercent: 7.53},
+		Allocatable:   ports.CuotaAsignable{MaxCPUCores: 6, FreeRamMB: 10717, FreeStorageGB: 59, HeadroomPercent: 15},
 		UptimeSeconds: 199252,
 		InstancesSummary: ports.ResumenInstancias{
 			VMs: ports.ResumenEstado{Running: 1, Stopped: 1, Paused: 1, Total: 3},
@@ -96,6 +102,45 @@ func TestNodo_NormalizaComoPideElContrato(t *testing.T) {
 	}
 	if *estado != esperado {
 		t.Errorf("Normalización:\n got  %+v\n want %+v", *estado, esperado)
+	}
+}
+
+func TestNodo_CalculaCuotasAsignablesConHeadroomEstricto(t *testing.T) {
+	const mib = int64(1024 * 1024)
+	const gib = int64(1024 * 1024 * 1024)
+
+	casos := []struct {
+		nombre        string
+		totalRAM      int64
+		usadaRAM      int64
+		esperadaRAMMB int64
+	}{
+		{nombre: "sin uso descuenta quince por ciento", totalRAM: 1000 * mib, usadaRAM: 0, esperadaRAMMB: 850},
+		{nombre: "uso parcial descuenta consumo y headroom", totalRAM: 16 * gib, usadaRAM: 4 * gib, esperadaRAMMB: 9830},
+		{nombre: "libre igual al headroom satura en cero", totalRAM: 20 * gib, usadaRAM: 17 * gib, esperadaRAMMB: 0},
+		{nombre: "libre menor al headroom satura en cero", totalRAM: 20 * gib, usadaRAM: 18 * gib, esperadaRAMMB: 0},
+		{nombre: "reserva fraccional se redondea hacia arriba", totalRAM: 100*mib + 1, usadaRAM: 1, esperadaRAMMB: 84},
+	}
+
+	for _, caso := range casos {
+		t.Run(caso.nombre, func(t *testing.T) {
+			crudo := &ports.NodeStatusDTO{
+				CPUs: 16, PhysicalCores: 8, MemTotal: caso.totalRAM, MemUsada: caso.usadaRAM,
+				DiscoTotal: 500 * gib, DiscoUsado: 219 * gib, DiscoDisponible: 280*gib + gib/2,
+			}
+			e := nuevoEntornoNodo()
+			e.px.estado = crudo
+			estado, stale, err := e.svc.ObtenerEstado(context.Background())
+			if err != nil || stale {
+				t.Fatalf("obtener estado: err=%v stale=%v", err, stale)
+			}
+			if estado.Allocatable.FreeRamMB != caso.esperadaRAMMB {
+				t.Errorf("freeRamMb = %d, se esperaba %d", estado.Allocatable.FreeRamMB, caso.esperadaRAMMB)
+			}
+			if estado.Allocatable.MaxCPUCores != 8 || estado.Allocatable.FreeStorageGB != 280 || estado.Allocatable.HeadroomPercent != 15 {
+				t.Errorf("allocatable inesperado: %+v", estado.Allocatable)
+			}
+		})
 	}
 }
 
@@ -133,7 +178,9 @@ func TestNodo_AlVencerElTTLRefrescaAmbasClaves(t *testing.T) {
 	for _, clave := range []string{"node:status:current", "node:status:last_known"} {
 		valor, err := e.kv.Get(ctx, clave)
 		var guardado ports.EstadoNodo
-		if err != nil || json.Unmarshal([]byte(valor), &guardado) != nil || guardado.CPU.UsagePercent != 50 {
+		if err != nil || json.Unmarshal([]byte(valor), &guardado) != nil ||
+			guardado.CPU.UsagePercent != 50 ||
+			guardado.Allocatable != (ports.CuotaAsignable{MaxCPUCores: 6, FreeRamMB: 10717, FreeStorageGB: 59, HeadroomPercent: 15}) {
 			t.Errorf("%s debe quedar actualizada: %s %v", clave, valor, err)
 		}
 	}

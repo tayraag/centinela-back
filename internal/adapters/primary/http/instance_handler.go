@@ -1,18 +1,21 @@
 package http
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
-	"math"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"el-centinela/internal/adapters/primary/http/middleware"
+	"el-centinela/internal/core/domain"
 	"el-centinela/internal/core/ports"
 
 	"github.com/gin-gonic/gin"
+	"github.com/gin-gonic/gin/binding"
 )
 
 // ==========================================
@@ -28,12 +31,92 @@ import (
 
 // InstanceHandler maneja los endpoints HTTP de instancias Proxmox.
 type InstanceHandler struct {
-	proxmox     ports.ProxmoxPort
-	userRepo    ports.UserRepository
-	seguimiento ports.SeguimientoTareas
-	inventario  ports.InventarioService // resuelve las IPs del listado
-	tareas      ports.TareaRepository
-	audit       ports.AuditService
+	proxmox           ports.ProxmoxPort
+	aprovisionamiento ports.AprovisionamientoPort
+	nodoPorDefecto    string
+	userRepo          ports.UserRepository
+	seguimiento       ports.SeguimientoTareas
+	inventario        ports.InventarioService // resuelve las IPs del listado
+	tareas            ports.TareaRepository
+	audit             ports.AuditService
+}
+
+type crearInstanciaCPUWizardRequest struct {
+	Cores int `json:"cores" example:"2"`
+}
+
+type crearInstanciaRAMWizardRequest struct {
+	MemoryMB int `json:"memoryMb" example:"4096"`
+}
+
+type crearInstanciaDiscoWizardRequest struct {
+	StorageID        string `json:"storageId" example:"local-lvm"`
+	SizeGB           int    `json:"sizeGb" example:"50"`
+	Format           string `json:"format,omitempty" example:"raw"`
+	ThinProvisioning bool   `json:"thinProvisioning,omitempty" example:"true"`
+}
+
+type crearInstanciaIPv4WizardRequest struct {
+	Type    string `json:"type" example:"dhcp"`
+	Address string `json:"address,omitempty" example:"192.168.1.50"`
+	Mask    string `json:"mask,omitempty" example:"24"`
+	Gateway string `json:"gateway,omitempty" example:"192.168.1.1"`
+}
+
+type crearInstanciaRedWizardRequest struct {
+	Bridge   string                          `json:"bridge" example:"vmbr0"`
+	VLAN     *int                            `json:"vlan,omitempty" example:"100"`
+	Firewall bool                            `json:"firewall" example:"true"`
+	IPv4     crearInstanciaIPv4WizardRequest `json:"ipv4"`
+}
+
+type crearInstanciaOSWizardRequest struct {
+	TemplateID string `json:"templateId" example:"local:iso/debian-12.iso"`
+}
+
+// CrearInstanciaRedRequest representa la red del contrato RF-07. Para una IP
+// estática se acepta ip con CIDR (192.168.1.50/24) o mascara por separado; si
+// se omite la máscara se usa /24. Bridge mantiene vmbr0 como valor por defecto.
+type CrearInstanciaRedRequest struct {
+	Modo     string `json:"modo" binding:"required,oneof=dhcp static DHCP STATIC" example:"dhcp"`
+	IP       string `json:"ip,omitempty" example:"192.168.1.50/24"`
+	Gateway  string `json:"gateway,omitempty" example:"192.168.1.1"`
+	Mascara  string `json:"mascara,omitempty" example:"24"`
+	Bridge   string `json:"bridge,omitempty" example:"vmbr0"`
+	VLAN     *int   `json:"vlan,omitempty" example:"100"`
+	Firewall bool   `json:"firewall,omitempty" example:"true"`
+}
+
+// CrearInstanciaRequest es el contrato unificado RF-07. nodo, password y los
+// ajustes avanzados de red son opcionales; el backend usa el nodo configurado
+// y vmbr0 cuando no se informan.
+type CrearInstanciaRequest struct {
+	Tipo        string                   `json:"tipo" binding:"required" example:"vm"`
+	Nodo        string                   `json:"nodo,omitempty" example:"pve1"`
+	Nombre      string                   `json:"nombre" binding:"required" example:"srv-prod-01"`
+	Descripcion string                   `json:"descripcion,omitempty" example:"Servidor web principal"`
+	Password    string                   `json:"password,omitempty"`
+	Cores       int                      `json:"cores" binding:"required,min=1" example:"2"`
+	RAMMB       int                      `json:"ramMb" binding:"required,min=16" example:"2048"`
+	DiscoGB     int                      `json:"discoGb" binding:"required,min=1" example:"20"`
+	StorageID   string                   `json:"storageId" binding:"required" example:"local-lvm"`
+	TemplateOS  string                   `json:"templateOso" binding:"required" example:"local:iso/debian-12.iso"`
+	Red         CrearInstanciaRedRequest `json:"red" binding:"required"`
+}
+
+// crearInstanciaWizardPayload conserva temporalmente el contrato anidado que
+// ya consume el frontend. No se expone en Swagger como contrato nuevo.
+type crearInstanciaWizardPayload struct {
+	Type        string                           `json:"type"`
+	Node        string                           `json:"node"`
+	Name        string                           `json:"name"`
+	Description string                           `json:"description,omitempty"`
+	Password    string                           `json:"password,omitempty"`
+	CPU         crearInstanciaCPUWizardRequest   `json:"cpu"`
+	RAM         crearInstanciaRAMWizardRequest   `json:"ram"`
+	Disk        crearInstanciaDiscoWizardRequest `json:"disk"`
+	Network     crearInstanciaRedWizardRequest   `json:"network"`
+	OS          crearInstanciaOSWizardRequest    `json:"os"`
 }
 
 // NewInstanceHandler crea un nuevo InstanceHandler.
@@ -46,14 +129,38 @@ func NewInstanceHandler(
 	tareas ports.TareaRepository,
 	audit ports.AuditService,
 	inventario ports.InventarioService,
+	aprovisionamiento ...ports.AprovisionamientoPort,
 ) *InstanceHandler {
+	return NewInstanceHandlerConNodo(proxmox, userRepo, seguimiento, tareas, audit, inventario, "proxmox", aprovisionamiento...)
+}
+
+// NewInstanceHandlerConNodo permite que el contrato RF-07 omita nodo sin
+// acoplar el handler a variables de entorno. main inyecta PROXMOX_NODE.
+func NewInstanceHandlerConNodo(
+	proxmox ports.ProxmoxPort,
+	userRepo ports.UserRepository,
+	seguimiento ports.SeguimientoTareas,
+	tareas ports.TareaRepository,
+	audit ports.AuditService,
+	inventario ports.InventarioService,
+	nodoPorDefecto string,
+	aprovisionamiento ...ports.AprovisionamientoPort,
+) *InstanceHandler {
+	var provisionador ports.AprovisionamientoPort
+	if len(aprovisionamiento) > 0 {
+		provisionador = aprovisionamiento[0]
+	} else {
+		provisionador, _ = proxmox.(ports.AprovisionamientoPort)
+	}
 	return &InstanceHandler{
-		inventario:  inventario,
-		proxmox:     proxmox,
-		userRepo:    userRepo,
-		seguimiento: seguimiento,
-		tareas:      tareas,
-		audit:       audit,
+		inventario:        inventario,
+		proxmox:           proxmox,
+		aprovisionamiento: provisionador,
+		nodoPorDefecto:    strings.TrimSpace(nodoPorDefecto),
+		userRepo:          userRepo,
+		seguimiento:       seguimiento,
+		tareas:            tareas,
+		audit:             audit,
 	}
 }
 
@@ -74,18 +181,16 @@ func (h *InstanceHandler) registrarAuditVM(c *gin.Context, vmid int, instanciaNo
 	})
 }
 
-// responderTarea registra la tarea para seguirla y responde 202 con el UPID y
-// el tareaId (el mismo que llega en el evento TASK_FINISHED). Si no se puede
-// registrar, la acción ya se disparó en Proxmox igual: se responde sin tareaId.
+// responderTarea registra el UPID privado y responde únicamente con el tareaId
+// público que llegará en TASK_FINISHED. Nunca expone el identificador técnico.
 func (h *InstanceHandler) responderTarea(c *gin.Context, vmid int, accion, upid string, metadatos ...map[string]any) {
-	respuesta := gin.H{"upid": upid}
 	tareaID, err := h.seguimiento.Seguir(c.Request.Context(), extraerUserID(c), vmid, accion, upid, metadatos...)
 	if err != nil {
 		log.Printf("[TAREAS] no se pudo registrar la tarea %s de %d: %v", accion, vmid, err)
-	} else {
-		respuesta["tareaId"] = tareaID.String()
+		SendError(c, http.StatusInternalServerError, "TASK_TRACKING_UNAVAILABLE", "Proxmox aceptó la acción, pero no se pudo registrar su seguimiento. Verifique el estado antes de reintentar.")
+		return
 	}
-	c.JSON(http.StatusAccepted, respuesta)
+	c.JSON(http.StatusAccepted, AccionAceptadaResponse{TareaID: tareaID.String()})
 }
 
 // extraerVmid parsea el parámetro de ruta :vmid. El guard RequireInstanceAccess
@@ -156,11 +261,20 @@ func (h *InstanceHandler) validarEstadoParaAccion(c *gin.Context, vmid int, acci
 func mapearErrorProxmox(c *gin.Context, err error) {
 	ruta := c.Request.Method + " " + c.Request.URL.Path
 	switch {
+	case errors.Is(err, ports.ErrVerificacionPostConfig):
+		log.Printf("⚠️  Configuración aplicada sin verificación posterior [%s]: %v", ruta, err)
+		SendError(c, http.StatusBadGateway, "CONFIG_APPLIED_VERIFICATION_FAILED", "Proxmox aceptó la configuración, pero no pudo verificarse si requiere reinicio. Verifique el estado antes de reintentar.")
 	case errors.Is(err, ports.ErrInstanciaNoEncontrada):
 		SendError(c, http.StatusNotFound, "INSTANCE_NOT_FOUND", "La instancia no existe en Proxmox.")
 	case errors.Is(err, ports.ErrInstanciaOcupada):
 		log.Printf("⏳ Instancia ocupada [%s]: %v", ruta, err)
 		SendError(c, http.StatusConflict, "INSTANCE_BUSY", "La instancia se encuentra ejecutando otra tarea. Aguarde a que finalice.")
+	case errors.Is(err, ports.ErrRecursosInsuficientes):
+		log.Printf("📊 Cuota insuficiente [%s]: %v", ruta, err)
+		SendError(c, http.StatusConflict, "RESOURCE_QUOTA_EXCEEDED", "Los recursos solicitados superan la capacidad disponible en el nodo físico o storage seleccionado.")
+	case errors.Is(err, ports.ErrCoordinacionAprovisionamiento):
+		log.Printf("🔒 No se pudo coordinar la reserva [%s]: %v", ruta, err)
+		SendError(c, http.StatusServiceUnavailable, "PROVISIONING_COORDINATION_UNAVAILABLE", "No se pudo reservar la capacidad de forma segura. Intente nuevamente.")
 	case errors.Is(err, ports.ErrProxmoxTimeout):
 		log.Printf("⏱️  Proxmox no respondió a tiempo [%s]: %v", ruta, err)
 		// Distinto de PROXMOX_UNAVAILABLE: la orden pudo haber llegado y aplicarse,
@@ -176,6 +290,202 @@ func mapearErrorProxmox(c *gin.Context, err error) {
 		log.Printf("❌ Error inesperado de Proxmox [%s]: %v", ruta, err)
 		SendError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Error inesperado al comunicarse con Proxmox VE.")
 	}
+}
+
+func normalizarCreacionPlana(req CrearInstanciaRequest, nodoPorDefecto string) (ports.CrearInstanciaProxmoxInput, error) {
+	tipo, err := normalizarTipoInstancia(req.Tipo)
+	if err != nil {
+		return ports.CrearInstanciaProxmoxInput{}, err
+	}
+	nodo := strings.TrimSpace(req.Nodo)
+	if nodo == "" {
+		nodo = strings.TrimSpace(nodoPorDefecto)
+	}
+	bridge := strings.TrimSpace(req.Red.Bridge)
+	if bridge == "" {
+		bridge = "vmbr0"
+	}
+	address, mask := separarIPv4YMascara(req.Red.IP, req.Red.Mascara)
+	templateID := strings.TrimSpace(req.TemplateOS)
+	if templateID != "" && !strings.Contains(templateID, ":") {
+		carpeta := "iso"
+		if tipo == ports.TipoInstanciaLXC {
+			carpeta = "vztmpl"
+		}
+		templateID = fmt.Sprintf("%s:%s/%s", strings.TrimSpace(req.StorageID), carpeta, templateID)
+	}
+	return validarCreacionNormalizada(ports.CrearInstanciaProxmoxInput{
+		Tipo: tipo, Nodo: nodo, Nombre: req.Nombre, Descripcion: req.Descripcion, Password: req.Password,
+		Cores: req.Cores, MemoriaMB: req.RAMMB, StorageID: req.StorageID, DiscoGB: req.DiscoGB,
+		TemplateID: templateID, Bridge: bridge, VLAN: req.Red.VLAN, Firewall: req.Red.Firewall,
+		IPv4Tipo: req.Red.Modo, IPv4Address: address, IPv4Mask: mask, IPv4Gateway: req.Red.Gateway,
+	}, false)
+}
+
+func normalizarCreacionWizard(req crearInstanciaWizardPayload) (ports.CrearInstanciaProxmoxInput, error) {
+	tipo, err := normalizarTipoInstancia(req.Type)
+	if err != nil {
+		return ports.CrearInstanciaProxmoxInput{}, err
+	}
+	return validarCreacionNormalizada(ports.CrearInstanciaProxmoxInput{
+		Tipo: tipo, Nodo: req.Node, Nombre: req.Name, Descripcion: req.Description, Password: req.Password,
+		Cores: req.CPU.Cores, MemoriaMB: req.RAM.MemoryMB, StorageID: req.Disk.StorageID, DiscoGB: req.Disk.SizeGB,
+		TemplateID: req.OS.TemplateID, Bridge: req.Network.Bridge, VLAN: req.Network.VLAN, Firewall: req.Network.Firewall,
+		IPv4Tipo: req.Network.IPv4.Type, IPv4Address: req.Network.IPv4.Address,
+		IPv4Mask: req.Network.IPv4.Mask, IPv4Gateway: req.Network.IPv4.Gateway,
+	}, true)
+}
+
+func normalizarTipoInstancia(tipo string) (string, error) {
+	switch strings.ToUpper(strings.TrimSpace(tipo)) {
+	case "VM":
+		return ports.TipoInstanciaQemu, nil
+	case "LXC":
+		return ports.TipoInstanciaLXC, nil
+	default:
+		return "", fmt.Errorf("tipo debe ser VM o LXC")
+	}
+}
+
+func validarCreacionNormalizada(input ports.CrearInstanciaProxmoxInput, exigirPasswordLXC bool) (ports.CrearInstanciaProxmoxInput, error) {
+	input.Nodo = strings.TrimSpace(input.Nodo)
+	input.Nombre = strings.TrimSpace(input.Nombre)
+	input.Descripcion = strings.TrimSpace(input.Descripcion)
+	input.StorageID = strings.TrimSpace(input.StorageID)
+	input.TemplateID = strings.TrimSpace(input.TemplateID)
+	input.Bridge = strings.TrimSpace(input.Bridge)
+	input.IPv4Tipo = strings.ToLower(strings.TrimSpace(input.IPv4Tipo))
+	input.IPv4Address = strings.TrimSpace(input.IPv4Address)
+	input.IPv4Mask = strings.TrimSpace(input.IPv4Mask)
+	input.IPv4Gateway = strings.TrimSpace(input.IPv4Gateway)
+
+	if input.Nodo == "" || input.Nombre == "" {
+		return ports.CrearInstanciaProxmoxInput{}, fmt.Errorf("nodo y nombre son obligatorios")
+	}
+	if input.Cores < 1 || input.MemoriaMB < 16 {
+		return ports.CrearInstanciaProxmoxInput{}, fmt.Errorf("cores debe ser al menos 1 y la RAM al menos 16 MiB")
+	}
+	if input.StorageID == "" || input.DiscoGB < 1 {
+		return ports.CrearInstanciaProxmoxInput{}, fmt.Errorf("storageId es obligatorio y discoGb debe ser al menos 1")
+	}
+	if input.Bridge == "" || input.TemplateID == "" {
+		return ports.CrearInstanciaProxmoxInput{}, fmt.Errorf("bridge y template son obligatorios")
+	}
+	if input.VLAN != nil && (*input.VLAN < 1 || *input.VLAN > 4094) {
+		return ports.CrearInstanciaProxmoxInput{}, fmt.Errorf("vlan debe estar entre 1 y 4094")
+	}
+	if input.IPv4Tipo != "dhcp" && input.IPv4Tipo != "static" {
+		return ports.CrearInstanciaProxmoxInput{}, fmt.Errorf("el modo de red debe ser dhcp o static")
+	}
+	if input.IPv4Tipo == "static" {
+		mask, err := strconv.Atoi(input.IPv4Mask)
+		if net.ParseIP(input.IPv4Address) == nil || net.ParseIP(input.IPv4Gateway) == nil || err != nil || mask < 0 || mask > 32 {
+			return ports.CrearInstanciaProxmoxInput{}, fmt.Errorf("la red estática requiere IP, máscara IPv4 (0-32) y gateway válidos")
+		}
+	}
+	if exigirPasswordLXC && input.Tipo == ports.TipoInstanciaLXC && strings.TrimSpace(input.Password) == "" {
+		return ports.CrearInstanciaProxmoxInput{}, fmt.Errorf("password es obligatorio para LXC")
+	}
+	return input, nil
+}
+
+func separarIPv4YMascara(ip, mascara string) (string, string) {
+	ip = strings.TrimSpace(ip)
+	mascara = strings.TrimSpace(mascara)
+	if host, red, err := net.ParseCIDR(ip); err == nil && host.To4() != nil {
+		unos, bits := red.Mask.Size()
+		if bits == 32 {
+			return host.String(), strconv.Itoa(unos)
+		}
+	}
+	if mascara == "" && net.ParseIP(ip) != nil {
+		mascara = "24"
+	}
+	return ip, mascara
+}
+
+func esContratoPlanoCreacion(campos map[string]json.RawMessage) bool {
+	for _, campo := range []string{"tipo", "nombre", "cores", "ramMb", "discoGb", "storageId", "templateOso", "red"} {
+		if _, existe := campos[campo]; existe {
+			return true
+		}
+	}
+	return false
+}
+
+// CrearInstancia reserva el siguiente VMID en Proxmox, dispara qmcreate o
+// vzcreate y registra inmediatamente el UPID con el usuario autenticado.
+//
+// @Summary      Crear una VM o contenedor
+// @Description  ADMIN ONLY. El contrato plano RF-07 descrito en el body es el formato canónico. Durante la migración del frontend también se acepta el payload anidado anterior con `type`, `node`, `name`, `cpu.cores`, `ram.memoryMb`, `disk.storageId/sizeGb`, `network.bridge/vlan/firewall/ipv4` y `os.templateId`; para LXC ese formato requiere `password`. CuotasService usa el lock Redis `lock:instance:provisioning` con TTL de 30 s y hasta 2 s de espera. Consulta la capacidad cacheada (o Proxmox si falta), valida CPU lógica, RAM con 15% de headroom y disco contra `avail` del storage, y registra una reserva temporal. Luego obtiene el VMID mediante `/cluster/nextid`, despacha la creación QEMU o LXC y solo responde 202 con vmid y tareaId después de persistir la tarea RUNNING y su auditoría inicial. El UPID permanece privado en el backend. El resultado llega por TASK_FINISHED con accion CREATE; cuando Proxmox finaliza con exitstatus OK, el creador recibe FULL_ACCESS y se vuelve a invalidar la capacidad.
+// @Tags         Instancias Proxmox
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        body body CrearInstanciaRequest true "Configuración de la instancia"
+// @Success      202 {object} CreacionAceptadaResponse
+// @Failure      400 {object} ErrorResponse "INVALID_REQUEST"
+// @Failure      401 {object} ErrorResponse "MISSING_TOKEN | INVALID_TOKEN | TOKEN_REVOKED"
+// @Failure      403 {object} ErrorResponse "WRONG_TOKEN_TYPE | 2FA_REQUIRED | INSUFFICIENT_PERMISSIONS"
+// @Failure      409 {object} ErrorResponse "RESOURCE_QUOTA_EXCEEDED"
+// @Failure      500 {object} ErrorResponse "TASK_TRACKING_UNAVAILABLE"
+// @Failure      502 {object} ErrorResponse "PROXMOX_UNAVAILABLE"
+// @Failure      503 {object} ErrorResponse "PROVISIONING_COORDINATION_UNAVAILABLE"
+// @Failure      504 {object} ErrorResponse "PROXMOX_TIMEOUT"
+// @Router       /instances [post]
+func (h *InstanceHandler) CrearInstancia(c *gin.Context) {
+	var campos map[string]json.RawMessage
+	if err := c.ShouldBindBodyWith(&campos, binding.JSON); err != nil {
+		SendError(c, http.StatusBadRequest, "INVALID_REQUEST", "El cuerpo de la solicitud no es un JSON válido.")
+		return
+	}
+	var (
+		input ports.CrearInstanciaProxmoxInput
+		err   error
+	)
+	if esContratoPlanoCreacion(campos) {
+		var plano CrearInstanciaRequest
+		if err := c.ShouldBindBodyWith(&plano, binding.JSON); err != nil {
+			SendError(c, http.StatusBadRequest, "INVALID_REQUEST", "El cuerpo no cumple el esquema de creación de instancias.")
+			return
+		}
+		input, err = normalizarCreacionPlana(plano, h.nodoPorDefecto)
+	} else {
+		var legado crearInstanciaWizardPayload
+		if err := c.ShouldBindBodyWith(&legado, binding.JSON); err != nil {
+			SendError(c, http.StatusBadRequest, "INVALID_REQUEST", "El cuerpo de la solicitud no es un JSON válido.")
+			return
+		}
+		input, err = normalizarCreacionWizard(legado)
+	}
+	if err != nil {
+		SendError(c, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+		return
+	}
+	if h.aprovisionamiento == nil {
+		SendError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "El aprovisionamiento no está disponible.")
+		return
+	}
+	resultado, err := h.aprovisionamiento.AprovisionarInstancia(c.Request.Context(), input)
+	if err != nil {
+		mapearErrorProxmox(c, err)
+		return
+	}
+	metadatos := map[string]any{
+		"instanciaNombre": input.Nombre,
+		"resource_type":   input.Tipo,
+		"cores":           input.Cores,
+		"ramMb":           input.MemoriaMB,
+		"discoGb":         input.DiscoGB,
+		"reserva_id":      resultado.ReservaID,
+	}
+	tareaID, err := h.seguimiento.Seguir(c.Request.Context(), extraerUserID(c), resultado.VMID, resultado.Accion, resultado.UPID, metadatos)
+	if err != nil {
+		log.Printf("[TAREAS] Proxmox aceptó la creación %s de %d pero no se pudo registrar su seguimiento: %v", resultado.UPID, resultado.VMID, err)
+		SendError(c, http.StatusInternalServerError, "TASK_TRACKING_UNAVAILABLE", "Proxmox aceptó la creación, pero no se pudo registrar su seguimiento. Verifique el estado antes de reintentar.")
+		return
+	}
+	c.JSON(http.StatusAccepted, CreacionAceptadaResponse{VMID: resultado.VMID, TareaID: tareaID.String()})
 }
 
 // ==========================================
@@ -269,15 +579,15 @@ func (h *InstanceHandler) ListarInstancias(c *gin.Context) {
 
 		var cpuUsage *float64
 		var ramUsage, maxRam *int64
-		
+
 		if inst.Estado == "running" {
-			cpu := math.Round(inst.Cpu*10000) / 100 // CPU en porcentaje con 2 decimales
+			cpu := domain.PorcentajeCPU(inst.Cpu)
 			cpuUsage = &cpu
 			mem := inst.Mem
 			ramUsage = &mem
 		}
-		
-		// maxRam siempre debe enviarse independientemente del estado, 
+
+		// maxRam siempre debe enviarse independientemente del estado,
 		// salvo que Proxmox devuelva 0 (en cuyo caso dejamos el puntero nil).
 		if inst.MaxMem > 0 {
 			max := inst.MaxMem
@@ -309,12 +619,12 @@ func (h *InstanceHandler) ListarInstancias(c *gin.Context) {
 // ObtenerInstancia devuelve el estado actual de una instancia Proxmox.
 //
 // @Summary      Obtener instancia
-// @Description  Devuelve el estado actual (running/stopped, tipo, nodo, telemetría) de una VM o contenedor leído en vivo desde Proxmox VE.
+// @Description  Devuelve el estado actual (running/stopped, tipo, nodo, telemetría) de una VM o contenedor leído en vivo desde Proxmox VE. `cpu` es un porcentaje de 0 a 100; `cpu` y `mem` valen null si la instancia no está encendida.
 // @Tags         Instancias Proxmox
 // @Produce      json
 // @Security     BearerAuth
 // @Param        vmid path int true "VMID de la instancia"
-// @Success      200 {object} ports.InstanciaProxmoxDTO
+// @Success      200 {object} InstanciaDetalleResponse
 // @Failure      400 {object} ErrorResponse "INVALID_VMID — el vmid de la ruta no es un número entero"
 // @Failure      401 {object} ErrorResponse "MISSING_TOKEN | INVALID_TOKEN | TOKEN_REVOKED"
 // @Failure      403 {object} ErrorResponse "WRONG_TOKEN_TYPE | 2FA_REQUIRED | PASSWORD_CHANGE_REQUIRED | NO_ROLE | NO_USER | INVALID_USER_ID | INSTANCE_ACCESS_DENIED — el OPERATOR no tiene este vmid asignado"
@@ -333,7 +643,32 @@ func (h *InstanceHandler) ObtenerInstancia(c *gin.Context) {
 		mapearErrorProxmox(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, instancia)
+	c.JSON(http.StatusOK, detalleDeInstancia(instancia))
+}
+
+// InstanciaDetalleResponse es el cuerpo de GET /api/instances/:vmid. Mismos
+// campos que ports.InstanciaProxmoxDTO, pero con la convención de métricas del
+// front: cpu en porcentaje (0 a 100) y cpu y mem en null si no está encendida.
+type InstanciaDetalleResponse struct {
+	Vmid   int      `json:"vmid" example:"110"`
+	Nombre string   `json:"nombre" example:"api-produccion"`
+	Tipo   string   `json:"tipo" enums:"qemu,lxc" example:"qemu"`
+	Nodo   string   `json:"nodo" example:"pve-01"`
+	Estado string   `json:"estado" example:"running"`
+	Cpu    *float64 `json:"cpu" extensions:"x-nullable" minimum:"0" maximum:"100" example:"24.5"`
+	Mem    *int64   `json:"mem" extensions:"x-nullable" minimum:"0" example:"2147483648"`
+	MaxMem int64    `json:"maxMem" example:"4294967296"`
+	MaxCpu int      `json:"maxCpu" example:"2"`
+}
+
+func detalleDeInstancia(inst *ports.InstanciaProxmoxDTO) InstanciaDetalleResponse {
+	r := InstanciaDetalleResponse{Vmid: inst.Vmid, Nombre: inst.Nombre, Tipo: inst.Tipo, Nodo: inst.Nodo,
+		Estado: inst.Estado, MaxMem: inst.MaxMem, MaxCpu: inst.MaxCpu}
+	if inst.Estado == "running" {
+		cpu, mem := domain.PorcentajeCPU(inst.Cpu), inst.Mem
+		r.Cpu, r.Mem = &cpu, &mem
+	}
+	return r
 }
 
 // ==========================================
@@ -343,20 +678,21 @@ func (h *InstanceHandler) ObtenerInstancia(c *gin.Context) {
 // IniciarInstancia arranca una instancia Proxmox.
 //
 // @Summary      Iniciar instancia
-// @Description  OPERATIVO. Dispara el arranque de una VM o contenedor en Proxmox VE. La operación es asíncrona: responde 202 Accepted con el UPID de la tarea creada en Proxmox. No espera a que la instancia quede encedida.
+// @Description  OPERATIVO. Dispara el arranque de una VM o contenedor en Proxmox VE. La operación es asíncrona: responde 202 Accepted con un tareaId público; el UPID permanece privado. No espera a que la instancia quede encendida.
 // @Tags         Instancias Proxmox
 // @Produce      json
 // @Security     BearerAuth
 // @Param        vmid path int true "VMID de la instancia"
-// @Success      202 {object} AccionAceptadaResponse "Acción aceptada: upid de la tarea en Proxmox y tareaId. tareaId se omite si no se pudo registrar la tarea"
+// @Success      202 {object} AccionAceptadaResponse "Acción aceptada: tareaId público para correlacionar TASK_FINISHED"
 // @Failure      400 {object} ErrorResponse "INVALID_VMID — el vmid de la ruta no es un número entero"
 // @Failure      401 {object} ErrorResponse "MISSING_TOKEN | INVALID_TOKEN | TOKEN_REVOKED"
 // @Failure      403 {object} ErrorResponse "WRONG_TOKEN_TYPE | 2FA_REQUIRED | PASSWORD_CHANGE_REQUIRED | NO_ROLE | NO_USER | INVALID_USER_ID | INSTANCE_ACCESS_DENIED — el OPERATOR no tiene FULL_ACCESS sobre este vmid | INSTANCE_PROTECTED — infraestructura de El Centinela"
 // @Failure      404 {object} ErrorResponse "INSTANCE_NOT_FOUND — la instancia no existe en Proxmox"
-// @Failure      409 {object} ErrorResponse "INSTANCE_INVALID_STATE: La instancia se encuentra en un estado incompatible para la acción solicitada | INSTANCE_BUSY — la instancia está ejecutando otra tarea; reintentar al recibir TASK_FINISHED"
-// @Failure      500 {object} ErrorResponse "INTERNAL_ERROR — al verificar permisos de acceso o error inesperado de Proxmox"
+// @Failure      409 {object} ErrorResponse "INSTANCE_INVALID_STATE: La instancia se encuentra en un estado incompatible para la acción solicitada | INSTANCE_BUSY — la instancia está ejecutando otra tarea (tarea RUNNING o lock lock:instance:{vmid}:operation); se responde sin contactar a Proxmox; reintentar al recibir TASK_FINISHED"
+// @Failure      500 {object} ErrorResponse "INTERNAL_ERROR — al verificar permisos o error inesperado | TASK_TRACKING_UNAVAILABLE — Proxmox aceptó la orden pero no se pudo persistir su seguimiento"
 // @Failure      502 {object} ErrorResponse "PROXMOX_UNAVAILABLE — Proxmox caído, sin red o token rechazado; la orden NO llegó a aplicarse"
 // @Failure      504 {object} ErrorResponse "PROXMOX_TIMEOUT — Proxmox no respondió a tiempo; la acción puede haberse aplicado"
+// @Failure      503 {object} ErrorResponse "INSTANCE_LOCK_UNAVAILABLE — no se pudo verificar si la instancia está ocupada; no se envió nada a Proxmox"
 // @Router       /instances/{vmid}/start [post]
 func (h *InstanceHandler) IniciarInstancia(c *gin.Context) {
 	vmid, ok := extraerVmid(c)
@@ -375,10 +711,7 @@ func (h *InstanceHandler) IniciarInstancia(c *gin.Context) {
 		mapearErrorProxmox(c, err)
 		return
 	}
-	h.registrarAuditVM(c, vmid, instancia.Nombre, ports.AccionIniciarVM, ports.ResultadoPendiente, map[string]any{
-		"upid": upid, "action": "start", "resource_type": instancia.Tipo,
-	})
-	h.responderTarea(c, vmid, "start", upid)
+	h.responderTarea(c, vmid, "start", upid, map[string]any{"instanciaNombre": instancia.Nombre, "resource_type": instancia.Tipo})
 }
 
 // ==========================================
@@ -388,20 +721,21 @@ func (h *InstanceHandler) IniciarInstancia(c *gin.Context) {
 // DetenerInstancia detiene (apagado forzado) una instancia Proxmox.
 //
 // @Summary      Detener instancia
-// @Description  OPERATIVO. Dispara el apagado forzado de una VM o contenedor en Proxmox VE. La operación es asíncrona: responde 202 Accepted con el UPID de la tarea creada en Proxmox. No espera a que la instancia quede detenida.
+// @Description  OPERATIVO. Dispara el apagado forzado de una VM o contenedor en Proxmox VE. La operación es asíncrona: responde 202 Accepted con un tareaId público; el UPID permanece privado. No espera a que la instancia quede detenida.
 // @Tags         Instancias Proxmox
 // @Produce      json
 // @Security     BearerAuth
 // @Param        vmid path int true "VMID de la instancia"
-// @Success      202 {object} AccionAceptadaResponse "Acción aceptada: upid de la tarea en Proxmox y tareaId. tareaId se omite si no se pudo registrar la tarea"
+// @Success      202 {object} AccionAceptadaResponse "Acción aceptada: tareaId público para correlacionar TASK_FINISHED"
 // @Failure      400 {object} ErrorResponse "INVALID_VMID — el vmid de la ruta no es un número entero"
 // @Failure      401 {object} ErrorResponse "MISSING_TOKEN | INVALID_TOKEN | TOKEN_REVOKED"
 // @Failure      403 {object} ErrorResponse "WRONG_TOKEN_TYPE | 2FA_REQUIRED | PASSWORD_CHANGE_REQUIRED | NO_ROLE | NO_USER | INVALID_USER_ID | INSTANCE_ACCESS_DENIED | INSTANCE_PROTECTED — infraestructura de El Centinela"
 // @Failure      404 {object} ErrorResponse "INSTANCE_NOT_FOUND — la instancia no existe en Proxmox"
-// @Failure      409 {object} ErrorResponse "INSTANCE_INVALID_STATE: La instancia se encuentra en un estado incompatible para la acción solicitada | INSTANCE_BUSY — la instancia está ejecutando otra tarea; reintentar al recibir TASK_FINISHED"
-// @Failure      500 {object} ErrorResponse "INTERNAL_ERROR — al verificar permisos de acceso o error inesperado de Proxmox"
+// @Failure      409 {object} ErrorResponse "INSTANCE_INVALID_STATE: La instancia se encuentra en un estado incompatible para la acción solicitada | INSTANCE_BUSY — la instancia está ejecutando otra tarea (tarea RUNNING o lock lock:instance:{vmid}:operation); se responde sin contactar a Proxmox; reintentar al recibir TASK_FINISHED"
+// @Failure      500 {object} ErrorResponse "INTERNAL_ERROR — al verificar permisos o error inesperado | TASK_TRACKING_UNAVAILABLE — Proxmox aceptó la orden pero no se pudo persistir su seguimiento"
 // @Failure      502 {object} ErrorResponse "PROXMOX_UNAVAILABLE — Proxmox caído, sin red o token rechazado; la orden NO llegó a aplicarse"
 // @Failure      504 {object} ErrorResponse "PROXMOX_TIMEOUT — Proxmox no respondió a tiempo; la acción puede haberse aplicado"
+// @Failure      503 {object} ErrorResponse "INSTANCE_LOCK_UNAVAILABLE — no se pudo verificar si la instancia está ocupada; no se envió nada a Proxmox"
 // @Router       /instances/{vmid}/stop [post]
 func (h *InstanceHandler) DetenerInstancia(c *gin.Context) {
 	vmid, ok := extraerVmid(c)
@@ -420,10 +754,7 @@ func (h *InstanceHandler) DetenerInstancia(c *gin.Context) {
 		mapearErrorProxmox(c, err)
 		return
 	}
-	h.registrarAuditVM(c, vmid, instancia.Nombre, ports.AccionDetenerVM, ports.ResultadoPendiente, map[string]any{
-		"upid": upid, "action": "stop", "resource_type": instancia.Tipo,
-	})
-	h.responderTarea(c, vmid, "stop", upid)
+	h.responderTarea(c, vmid, "stop", upid, map[string]any{"instanciaNombre": instancia.Nombre, "resource_type": instancia.Tipo})
 }
 
 // ==========================================
@@ -450,7 +781,7 @@ var accionesValidas = map[string]bool{
 // @Produce      json
 // @Security     BearerAuth
 // @Param        vmid path int true "VMID de la instancia"
-// @Success      202 {object} AccionAceptadaResponse "Acción aceptada: upid de la tarea en Proxmox y tareaId"
+// @Success      202 {object} AccionAceptadaResponse "Acción aceptada: tareaId público para correlacionar TASK_FINISHED"
 // @Failure      400 {object} ErrorResponse "INVALID_VMID"
 // @Failure      401 {object} ErrorResponse "MISSING_TOKEN | INVALID_TOKEN | TOKEN_REVOKED"
 // @Failure      403 {object} ErrorResponse "WRONG_TOKEN_TYPE | 2FA_REQUIRED | PASSWORD_CHANGE_REQUIRED | NO_ROLE | NO_USER | INVALID_USER_ID | INSTANCE_ACCESS_DENIED | INSTANCE_PROTECTED"
@@ -476,15 +807,16 @@ func (h *InstanceHandler) PausarInstancia(c *gin.Context) {
 // @Security     BearerAuth
 // @Param        vmid   path int    true "VMID de la instancia"
 // @Param        action path string true "Acción a ejecutar (start | stop | shutdown | reboot). pause NO es válida: responde 400 INVALID_ACTION"
-// @Success      202 {object} AccionAceptadaResponse "Acción aceptada: upid de la tarea en Proxmox y tareaId. tareaId se omite si no se pudo registrar la tarea"
+// @Success      202 {object} AccionAceptadaResponse "Acción aceptada: tareaId público para correlacionar TASK_FINISHED"
 // @Failure      400 {object} ErrorResponse "INVALID_VMID | INVALID_ACTION — acción distinta de start, stop, shutdown o reboot"
 // @Failure      401 {object} ErrorResponse "MISSING_TOKEN | INVALID_TOKEN | TOKEN_REVOKED"
 // @Failure      403 {object} ErrorResponse "WRONG_TOKEN_TYPE | 2FA_REQUIRED | PASSWORD_CHANGE_REQUIRED | NO_ROLE | NO_USER | INVALID_USER_ID | INSTANCE_ACCESS_DENIED | INSTANCE_PROTECTED"
 // @Failure      404 {object} ErrorResponse "INSTANCE_NOT_FOUND — la instancia no existe en Proxmox"
-// @Failure      409 {object} ErrorResponse "INSTANCE_INVALID_STATE: La instancia se encuentra en un estado incompatible para la acción solicitada | INSTANCE_BUSY — la instancia está ejecutando otra tarea; reintentar al recibir TASK_FINISHED"
-// @Failure      500 {object} ErrorResponse "INTERNAL_ERROR — al verificar permisos de acceso o error inesperado de Proxmox"
+// @Failure      409 {object} ErrorResponse "INSTANCE_INVALID_STATE: La instancia se encuentra en un estado incompatible para la acción solicitada | INSTANCE_BUSY — la instancia está ejecutando otra tarea (tarea RUNNING o lock lock:instance:{vmid}:operation); se responde sin contactar a Proxmox; reintentar al recibir TASK_FINISHED"
+// @Failure      500 {object} ErrorResponse "INTERNAL_ERROR — al verificar permisos o error inesperado | TASK_TRACKING_UNAVAILABLE — Proxmox aceptó la orden pero no se pudo persistir su seguimiento"
 // @Failure      502 {object} ErrorResponse "PROXMOX_UNAVAILABLE — Proxmox caído, sin red o token rechazado; la orden NO llegó a aplicarse"
 // @Failure      504 {object} ErrorResponse "PROXMOX_TIMEOUT — Proxmox no respondió a tiempo; la acción puede haberse aplicado"
+// @Failure      503 {object} ErrorResponse "INSTANCE_LOCK_UNAVAILABLE — no se pudo verificar si la instancia está ocupada; no se envió nada a Proxmox"
 // @Router       /instances/{vmid}/status/{action} [post]
 func (h *InstanceHandler) CambiarEstado(c *gin.Context) {
 	vmid, ok := extraerVmid(c)
@@ -534,10 +866,7 @@ func (h *InstanceHandler) CambiarEstado(c *gin.Context) {
 		mapearErrorProxmox(c, err)
 		return
 	}
-	h.registrarAuditVM(c, vmid, instancia.Nombre, accionAudit, ports.ResultadoPendiente, map[string]any{
-		"upid": upid, "action": accion, "resource_type": instancia.Tipo,
-	})
-	h.responderTarea(c, vmid, accion, upid)
+	h.responderTarea(c, vmid, accion, upid, map[string]any{"instanciaNombre": instancia.Nombre, "resource_type": instancia.Tipo})
 }
 
 // ==========================================
@@ -549,20 +878,21 @@ func (h *InstanceHandler) CambiarEstado(c *gin.Context) {
 // Rechaza la operación con 409 si la instancia está encendida.
 //
 // @Summary      Eliminar instancia
-// @Description  OPERATIVO. Solo ADMIN. Elimina permanentemente una VM o contenedor de Proxmox. La instancia debe estar detenida (stopped); si no, responde 409. La operación es asíncrona, igual que las acciones de energía: responde 202 Accepted con el UPID de la tarea de borrado y el tareaId; el resultado llega en el evento TASK_FINISHED con accion DELETE.
+// @Description  OPERATIVO. Solo ADMIN. Elimina permanentemente una VM o contenedor de Proxmox. La instancia debe estar detenida (stopped); si no, responde 409. La operación es asíncrona: responde 202 Accepted con un tareaId público; el UPID permanece privado. El resultado llega en TASK_FINISHED con accion DELETE.
 // @Tags         Instancias Proxmox
 // @Produce      json
 // @Security     BearerAuth
 // @Param        vmid path int true "VMID de la instancia"
-// @Success      202 {object} AccionAceptadaResponse "Borrado aceptado: upid de la tarea en Proxmox y tareaId. tareaId se omite si no se pudo registrar la tarea"
+// @Success      202 {object} AccionAceptadaResponse "Borrado aceptado: tareaId público para correlacionar TASK_FINISHED"
 // @Failure      400 {object} ErrorResponse "INVALID_VMID — el vmid de la ruta no es un número entero"
 // @Failure      401 {object} ErrorResponse "MISSING_TOKEN | INVALID_TOKEN | TOKEN_REVOKED"
 // @Failure      403 {object} ErrorResponse "WRONG_TOKEN_TYPE | 2FA_REQUIRED | PASSWORD_CHANGE_REQUIRED | NO_ROLE | INVALID_ROLE | INSUFFICIENT_PERMISSIONS | INVALID_VMID | INSTANCE_PROTECTED — solo ADMIN puede eliminar instancias"
 // @Failure      404 {object} ErrorResponse "INSTANCE_NOT_FOUND — la instancia no existe en Proxmox"
-// @Failure      409 {object} ErrorResponse "INSTANCE_INVALID_STATE — la instancia debe estar detenida | INSTANCE_BUSY — la instancia está ejecutando otra tarea"
-// @Failure      500 {object} ErrorResponse "INTERNAL_ERROR — error inesperado de Proxmox"
+// @Failure      409 {object} ErrorResponse "INSTANCE_INVALID_STATE — la instancia debe estar detenida | INSTANCE_BUSY — la instancia está ejecutando otra tarea (tarea RUNNING o lock lock:instance:{vmid}:operation); se responde sin contactar a Proxmox"
+// @Failure      500 {object} ErrorResponse "INTERNAL_ERROR — error inesperado | TASK_TRACKING_UNAVAILABLE — Proxmox aceptó el borrado pero no se pudo persistir su seguimiento"
 // @Failure      502 {object} ErrorResponse "PROXMOX_UNAVAILABLE — Proxmox caído, sin red o token rechazado; la orden NO llegó a aplicarse"
 // @Failure      504 {object} ErrorResponse "PROXMOX_TIMEOUT — Proxmox no respondió a tiempo; el borrado puede haberse aplicado"
+// @Failure      503 {object} ErrorResponse "INSTANCE_LOCK_UNAVAILABLE — no se pudo verificar si la instancia está ocupada; no se envió nada a Proxmox"
 // @Router       /instances/{vmid} [delete]
 func (h *InstanceHandler) EliminarInstancia(c *gin.Context) {
 	vmid, ok := extraerVmid(c)
@@ -600,8 +930,5 @@ func (h *InstanceHandler) EliminarInstancia(c *gin.Context) {
 		return
 	}
 
-	h.registrarAuditVM(c, vmid, instancia.Nombre, ports.AccionEliminarVM, ports.ResultadoPendiente, map[string]any{
-		"upid": upid, "action": "delete", "resource_type": instancia.Tipo,
-	})
-	h.responderTarea(c, vmid, "delete", upid, map[string]any{"resource_type": instancia.Tipo})
+	h.responderTarea(c, vmid, "delete", upid, map[string]any{"instanciaNombre": instancia.Nombre, "resource_type": instancia.Tipo})
 }

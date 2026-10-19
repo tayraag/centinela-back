@@ -346,6 +346,112 @@ func TestSnapshots(t *testing.T) {
 	}
 }
 
+// snapshotsDe devuelve los snapshots de una instancia por nombre, más la
+// entrada "current", y los nombres en el orden en que los lista el simulador.
+func snapshotsDe(e *entorno, tipo, vmid string) (porNombre map[string]map[string]any, orden []string) {
+	e.t.Helper()
+	s, data, cuerpo := e.pedir("GET", "/nodes/proxmox/"+tipo+"/"+vmid+"/snapshot", nil)
+	if s != 200 {
+		e.t.Fatalf("Listar snapshots de %s/%s: %d %v", tipo, vmid, s, cuerpo)
+	}
+	porNombre = map[string]map[string]any{}
+	for _, x := range data.([]any) {
+		snap := x.(map[string]any)
+		nombre := snap["name"].(string)
+		porNombre[nombre] = snap
+		orden = append(orden, nombre)
+	}
+	return porNombre, orden
+}
+
+// Ciclo completo de snapshots (crear, listar, revertir y borrar) para QEMU y
+// LXC, con el formato de las capturas del Proxmox real (RF-06).
+func TestSnapshots_CicloCompleto(t *testing.T) {
+	casos := []struct{ tipo, vmid, prefijo string }{
+		{"qemu", "110", "qm"},
+		{"lxc", "201", "vz"},
+	}
+	for _, c := range casos {
+		t.Run(c.tipo, func(t *testing.T) {
+			e := nuevoEntorno(t, "")
+			base := "/nodes/proxmox/" + c.tipo + "/" + c.vmid + "/snapshot"
+			esperarUPID := func(accion string, s int, upid any) {
+				t.Helper()
+				// Formato real: UPID:<nodo>:<pid>:<pstart>:<inicio>:<tipo de tarea>:<vmid>:<usuario>:
+				if s != 200 || !strings.HasPrefix(fmt.Sprint(upid), "UPID:proxmox:") || !strings.Contains(fmt.Sprint(upid), ":"+c.prefijo+accion+":"+c.vmid+":") {
+					t.Fatalf("%s: se esperaba 200 con UPID %s%s, vino %d %v", accion, c.prefijo, accion, s, upid)
+				}
+			}
+
+			// 1. Crear: devuelve el UPID y el snapshot aparece recién cuando termina la tarea.
+			s, upid, _ := e.pedir("POST", base, url.Values{"snapname": {"antes_del_cambio"}, "description": {"Antes de actualizar"}})
+			esperarUPID("snapshot", s, upid)
+			if porNombre, _ := snapshotsDe(e, c.tipo, c.vmid); porNombre["antes_del_cambio"] != nil {
+				t.Error("El snapshot no debe aparecer mientras la tarea sigue en curso")
+			}
+			if s, _, cuerpo := e.pedir("POST", base, url.Values{"snapname": {"otro"}}); s != 500 || !strings.Contains(fmt.Sprint(cuerpo["message"]), "locked (snapshot)") {
+				t.Errorf("Otra orden durante la tarea debe dar 500 locked (snapshot): %d %v", s, cuerpo)
+			}
+			e.avanzar(3 * time.Second)
+
+			// 2. Listar: los campos de la captura real y la entrada "current" al final.
+			porNombre, orden := snapshotsDe(e, c.tipo, c.vmid)
+			primero := porNombre["antes_del_cambio"]
+			if primero == nil || primero["description"] != "Antes de actualizar" || primero["snaptime"] != float64(e.reloj.Add(-3*time.Second).Unix()) {
+				t.Fatalf("Snapshot creado: %v", primero)
+			}
+			if _, tieneVMState := primero["vmstate"]; tieneVMState != (c.tipo == "qemu") {
+				t.Errorf("vmstate solo aparece en QEMU, como en las capturas: %v", primero)
+			}
+			if orden[len(orden)-1] != "current" || porNombre["current"]["parent"] != "antes_del_cambio" || porNombre["current"]["description"] != "You are here!" {
+				t.Errorf("La entrada current debe ir al final y apuntar al último snapshot: %v %v", orden, porNombre["current"])
+			}
+
+			// Un segundo snapshot: orden cronológico y cadena de padres.
+			e.avanzar(time.Minute)
+			s, upid, _ = e.pedir("POST", base, url.Values{"snapname": {"despues_del_cambio"}})
+			esperarUPID("snapshot", s, upid)
+			e.avanzar(3 * time.Second)
+			porNombre, orden = snapshotsDe(e, c.tipo, c.vmid)
+			if strings.Join(orden, ",") != "antes_del_cambio,despues_del_cambio,current" || porNombre["despues_del_cambio"]["parent"] != "antes_del_cambio" {
+				t.Errorf("Orden cronológico y padre: %v %v", orden, porNombre["despues_del_cambio"])
+			}
+
+			// 3. Revertir al primero.
+			s, upid, _ = e.pedir("POST", base+"/antes_del_cambio/rollback", url.Values{})
+			esperarUPID("rollback", s, upid)
+			e.avanzar(3 * time.Second)
+			if porNombre, _ = snapshotsDe(e, c.tipo, c.vmid); porNombre["current"]["parent"] != "antes_del_cambio" {
+				t.Errorf("Después del rollback, current debe colgar del snapshot elegido: %v", porNombre["current"])
+			}
+
+			// 4. Borrar el segundo: sigue listado hasta que termina la tarea.
+			s, upid, _ = e.pedir("DELETE", base+"/despues_del_cambio", nil)
+			esperarUPID("delsnapshot", s, upid)
+			if porNombre, _ = snapshotsDe(e, c.tipo, c.vmid); porNombre["despues_del_cambio"] == nil {
+				t.Error("El snapshot se quita recién cuando termina la tarea de borrado")
+			}
+			e.avanzar(3 * time.Second)
+			if _, orden = snapshotsDe(e, c.tipo, c.vmid); strings.Join(orden, ",") != "antes_del_cambio,current" {
+				t.Errorf("Después del borrado deben quedar el primero y current: %v", orden)
+			}
+
+			// Errores, como en Proxmox: snapshot inexistente y nombre inválido.
+			for _, pedido := range []struct{ metodo, ruta string }{
+				{"POST", base + "/no_existe/rollback"},
+				{"DELETE", base + "/no_existe"},
+			} {
+				if s, _, cuerpo := e.pedir(pedido.metodo, pedido.ruta, url.Values{}); s != 500 || !strings.Contains(fmt.Sprint(cuerpo["message"]), "does not exist") {
+					t.Errorf("%s %s: se esperaba 500 does not exist, vino %d %v", pedido.metodo, pedido.ruta, s, cuerpo)
+				}
+			}
+			if s, _, cuerpo := e.pedir("POST", base, url.Values{"description": {"sin nombre"}}); s != 400 || cuerpo["errors"] == nil {
+				t.Errorf("Sin snapname debe dar 400 con errors: %d %v", s, cuerpo)
+			}
+		})
+	}
+}
+
 // ==========================================
 // Creación y configuración (RF-07, RF-10)
 // ==========================================
@@ -995,6 +1101,218 @@ func TestContrato_ClienteDelBackend_Interfaces(t *testing.T) {
 	for _, vmid := range []int{9003, 100, 9000} {
 		if _, err := cliente.ObtenerInterfaces(ctx, "proxmox", "qemu", vmid); err == nil {
 			t.Errorf("La VM %d (sin agente o apagada) debe dar error", vmid)
+		}
+	}
+}
+
+// ==========================================
+// Storages y Contenido (RF-05, RF-07)
+// ==========================================
+
+func TestStorage_ListarYContenido(t *testing.T) {
+	e := nuevoEntorno(t, "")
+
+	// 1. GET /nodes/{node}/storage devuelve local, local-lvm y shared-nfs con campos canónicos
+	s, data, _ := e.pedir("GET", "/nodes/proxmox/storage", nil)
+	if s != 200 {
+		t.Fatalf("GET /nodes/proxmox/storage devolvió %d", s)
+	}
+	storages, ok := data.([]any)
+	if !ok || len(storages) < 2 {
+		t.Fatalf("Se esperaban al menos 2 storages simulados, vinieron %d: %v", len(storages), data)
+	}
+
+	mapa := map[string]map[string]any{}
+	for _, item := range storages {
+		st := item.(map[string]any)
+		nombre := st["storage"].(string)
+		mapa[nombre] = st
+		if st["active"].(float64) != 1 {
+			t.Errorf("Storage %s active debe ser 1", nombre)
+		}
+		if st["total"].(float64) <= 0 || st["avail"].(float64) < 0 {
+			t.Errorf("Storage %s total/avail inválidos: %+v", nombre, st)
+		}
+	}
+
+	localSt, okLocal := mapa["local"]
+	if !okLocal {
+		t.Fatal("Falta storage 'local'")
+	}
+	if localSt["type"] != "dir" || !strings.Contains(localSt["content"].(string), "iso") || !strings.Contains(localSt["content"].(string), "vztmpl") {
+		t.Errorf("Storage local tiene configuración inesperada: %+v", localSt)
+	}
+	if int64(localSt["total"].(float64)) != 107374182400 || int64(localSt["avail"].(float64)) != 64424509440 {
+		t.Errorf("Capacidades canónicas de local no coinciden: total=%v avail=%v", localSt["total"], localSt["avail"])
+	}
+
+	lvSt, okLvm := mapa["local-lvm"]
+	if !okLvm {
+		t.Fatal("Falta storage 'local-lvm'")
+	}
+	if lvSt["type"] != "lvmthin" || !strings.Contains(lvSt["content"].(string), "images") || !strings.Contains(lvSt["content"].(string), "rootdir") {
+		t.Errorf("Storage local-lvm tiene configuración inesperada: %+v", lvSt)
+	}
+	if int64(lvSt["total"].(float64)) != 536870912000 {
+		t.Errorf("Capacidades canónicas de local-lvm no coinciden: total=%v", lvSt["total"])
+	}
+
+	// 2. Filtro por ?content=iso
+	_, dataIso, _ := e.pedir("GET", "/nodes/proxmox/storage?content=iso", nil)
+	for _, item := range dataIso.([]any) {
+		st := item.(map[string]any)
+		if !strings.Contains(st["content"].(string), "iso") {
+			t.Errorf("Filtro content=iso devolvió storage sin iso: %+v", st)
+		}
+	}
+
+	// 3. GET /nodes/{node}/storage/{storage}/content
+	s, dataLocal, _ := e.pedir("GET", "/nodes/proxmox/storage/local/content", nil)
+	if s != 200 {
+		t.Fatalf("GET content local devolvió %d", s)
+	}
+	itemsLocal := dataLocal.([]any)
+	if len(itemsLocal) == 0 {
+		t.Fatal("local debe tener contenidos (ISOs y plantillas)")
+	}
+
+	tieneISO := false
+	tieneVztmpl := false
+	tieneIsoCanonico := false
+	tieneVztmplCanonico := false
+
+	for _, it := range itemsLocal {
+		m := it.(map[string]any)
+		if m["content"] == "iso" {
+			tieneISO = true
+		}
+		if m["content"] == "vztmpl" {
+			tieneVztmpl = true
+		}
+		if m["volid"] == "local:iso/ubuntu-24.04-live-server.iso" {
+			tieneIsoCanonico = true
+			if m["format"] != "iso" || int64(m["size"].(float64)) != 2147483648 {
+				t.Errorf("ISO canónico inválido: %+v", m)
+			}
+		}
+		if m["volid"] == "local:vztmpl/debian-12-standard_12.2-1_amd64.tar.zst" {
+			tieneVztmplCanonico = true
+			if m["format"] != "tar.zst" || int64(m["size"].(float64)) != 134217728 {
+				t.Errorf("vztmpl canónico inválido: %+v", m)
+			}
+		}
+		if m["volid"] == nil || m["format"] == nil || m["size"].(float64) <= 0 {
+			t.Errorf("Item de contenido incompleto: %+v", m)
+		}
+	}
+	if !tieneISO || !tieneVztmpl {
+		t.Errorf("local debe contener tanto iso como vztmpl: %+v", itemsLocal)
+	}
+	if !tieneIsoCanonico {
+		t.Error("Falta el ISO canónico local:iso/ubuntu-24.04-live-server.iso")
+	}
+	if !tieneVztmplCanonico {
+		t.Error("Falta la plantilla canónica local:vztmpl/debian-12-standard_12.2-1_amd64.tar.zst")
+	}
+
+	// 4. Filtro por ?content=iso en contenido
+	_, dataSoloIso, _ := e.pedir("GET", "/nodes/proxmox/storage/local/content?content=iso", nil)
+	for _, it := range dataSoloIso.([]any) {
+		m := it.(map[string]any)
+		if m["content"] != "iso" {
+			t.Errorf("Filtro ?content=iso trajo item de tipo %v", m["content"])
+		}
+	}
+
+	// 5. Storage inexistente da error 500 como Proxmox
+	sInex, _, errCuerpo := e.pedir("GET", "/nodes/proxmox/storage/inexistente/content", nil)
+	if sInex != 500 || !strings.Contains(errCuerpo["message"].(string), "does not exist") {
+		t.Errorf("Storage inexistente debe responder 500 con 'does not exist', vino %d: %v", sInex, errCuerpo)
+	}
+
+	// 6. Nodo inexistente responde error de lookup
+	sNodo, _, _ := e.pedir("GET", "/nodes/nodo-invalido/storage", nil)
+	if sNodo != 500 {
+		t.Errorf("Nodo inválido debe responder 500, vino %d", sNodo)
+	}
+}
+
+func TestAprovisionamientoYEdicionRecursos(t *testing.T) {
+	e := nuevoEntorno(t, "")
+
+	// 1. Aprovisionamiento POST /nodes/{node}/qemu responde 200 con UPID qmcreate
+	s, upidQemu, _ := e.pedir("POST", "/nodes/proxmox/qemu", url.Values{
+		"vmid":   {"501"},
+		"name":   {"vm-etapa2-test"},
+		"memory": {"4096"},
+		"cores":  {"4"},
+		"scsi0":  {"local-lvm:30"},
+		"net0":   {"virtio,bridge=vmbr0"},
+	})
+	if s != 200 || !strings.Contains(upidQemu.(string), ":qmcreate:501:") {
+		t.Fatalf("Creación Qemu falló: %d, upid: %v", s, upidQemu)
+	}
+	e.avanzar(3 * time.Second)
+
+	// 2. Aprovisionamiento POST /nodes/{node}/lxc responde 200 con UPID vzcreate
+	s, upidLxc, _ := e.pedir("POST", "/nodes/proxmox/lxc", url.Values{
+		"vmid":       {"502"},
+		"hostname":   {"ct-etapa2-test"},
+		"ostemplate": {"local:vztmpl/debian-12-standard_12.2-1_amd64.tar.zst"},
+		"memory":     {"1024"},
+		"swap":       {"256"},
+		"cores":      {"2"},
+		"rootfs":     {"local-lvm:10"},
+	})
+	if s != 200 || !strings.Contains(upidLxc.(string), ":vzcreate:502:") {
+		t.Fatalf("Creación LXC falló: %d, upid: %v", s, upidLxc)
+	}
+	e.avanzar(3 * time.Second)
+
+	// 3. Edición de recursos PUT /nodes/{node}/qemu/{vmid}/config
+	sPut, dataPut, _ := e.pedir("PUT", "/nodes/proxmox/qemu/501/config", url.Values{
+		"cores":  {"8"},
+		"memory": {"8192"},
+	})
+	if sPut != 200 || dataPut != nil {
+		t.Fatalf("PUT /config VM apagada debe responder 200 con data null: %d %v", sPut, dataPut)
+	}
+
+	_, configQemu, _ := e.pedir("GET", "/nodes/proxmox/qemu/501/config", nil)
+	cfgQ := configQemu.(map[string]any)
+	if cfgQ["cores"] != float64(8) || cfgQ["memory"] != "8192" {
+		t.Errorf("Config QEMU no persistió cambios: %+v", cfgQ)
+	}
+
+	// 4. Edición de recursos en LXC (swap, memory, cores)
+	sPutLxc, _, _ := e.pedir("PUT", "/nodes/proxmox/lxc/502/config", url.Values{
+		"cores":  {"4"},
+		"memory": {"2048"},
+		"swap":   {"512"},
+	})
+	if sPutLxc != 200 {
+		t.Fatalf("PUT /config LXC falló: %d", sPutLxc)
+	}
+	_, configLxc, _ := e.pedir("GET", "/nodes/proxmox/lxc/502/config", nil)
+	cfgL := configLxc.(map[string]any)
+	if cfgL["cores"] != float64(4) || cfgL["memory"] != float64(2048) || cfgL["swap"] != float64(512) {
+		t.Errorf("Config LXC no persistió cambios: %+v", cfgL)
+	}
+
+	// 5. Validar que ninguna de las nuevas rutas devuelva 501 Not Implemented
+	rutasAProbar := []string{
+		"/nodes/proxmox/storage",
+		"/nodes/proxmox/storage/local/content",
+		"/nodes/proxmox/storage/shared-nfs/content",
+		"/nodes/proxmox/qemu/501/rrddata?timeframe=hour",
+		"/nodes/proxmox/lxc/502/rrddata?timeframe=hour",
+		"/nodes/proxmox/qemu/501/config",
+		"/nodes/proxmox/lxc/502/config",
+	}
+	for _, r := range rutasAProbar {
+		st, _, _ := e.pedir("GET", r, nil)
+		if st == 501 {
+			t.Errorf("La ruta %s devolvió 501 Not Implemented", r)
 		}
 	}
 }

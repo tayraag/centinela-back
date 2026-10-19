@@ -106,7 +106,10 @@ type Auditoria struct {
 	Accion          string `gorm:"type:varchar(100);not null;index:idx_auditoria_accion" json:"accion"`
 	InstanciaID     string `gorm:"type:varchar(100);index:idx_auditoria_instancia" json:"instanciaId"`
 	InstanciaNombre string `gorm:"type:varchar(255)" json:"instanciaNombre"`
-	Resultado       string `gorm:"type:varchar(50);not null;index:idx_auditoria_resultado" json:"resultado"` // EXITO, FALLA o PENDING
+	RecursoTipo     string `gorm:"column:resource_type;type:varchar(30)" json:"resourceType,omitempty"`
+	RecursoID       string `gorm:"column:resource_id;type:varchar(100)" json:"resourceId,omitempty"`
+	Upid            string `gorm:"column:upid;type:varchar(255);index:idx_auditoria_upid" json:"upid,omitempty"`
+	Resultado       string `gorm:"type:varchar(50);not null;index:idx_auditoria_resultado" json:"resultado"` // EXITO/FALLA; infraestructura: PENDIENTE/SUCCESS/FAILED
 
 	Detalles  *string   `gorm:"type:jsonb" json:"detalles"`                                       // JSON estructurado con metadata extra (puntero para permitir NULL en PostgreSQL)
 	FechaHora time.Time `gorm:"default:now();index:idx_auditoria_usuario_fecha" json:"fechaHora"` // Índice compuesto con usuario_id
@@ -125,8 +128,8 @@ type TareaAsincrona struct {
 	Accion      string `gorm:"type:varchar(100)" json:"accion"`
 	Estado      string `gorm:"type:varchar(50);not null" json:"estado"` // RUNNING, COMPLETED, FAILED
 
-	// Metadatos del cierre de una tarea FAILED: {"motivo": "PROXMOX_ERROR" | "TIMEOUT", "error": "..."}.
-	// NULL mientras corre y en las COMPLETED.
+	// Mientras corre: nombre y tipo de instancia. Al cerrar: exitstatus, motivo
+	// y error (null cuando no aplican), persistidos junto con la auditoría.
 	Metadatos *string `gorm:"type:jsonb" json:"metadatos,omitempty"`
 
 	FechaCreacion time.Time `gorm:"default:now()" json:"fechaCreacion"`
