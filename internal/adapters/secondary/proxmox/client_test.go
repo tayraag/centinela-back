@@ -805,6 +805,36 @@ func TestClient_ObtenerMetricasRRD(t *testing.T) {
 	})
 }
 
+func TestClient_ObtenerMetricasNodoRRD(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api2/json/nodes/pve1/rrddata" || r.URL.Query().Get("timeframe") != "hour" {
+			t.Errorf("ruta del historial del nodo inesperada: %s", r.URL.String())
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": []map[string]any{
+			{"time": 1787092500, "cpu": 0.2, "memused": 2048, "memtotal": 8192, "rootused": 3000, "roottotal": 12000},
+			{"time": 1787092560, "cpu": 0.1},
+		}})
+	}))
+	defer server.Close()
+
+	client := proxmox.NewClient(server.URL, "pve1", tokenIDValido, tokenSecretValido, nil)
+	puntos, err := client.ObtenerMetricasNodoRRD(context.Background(), "pve1", "hour")
+	if err != nil {
+		t.Fatalf("ObtenerMetricasNodoRRD falló: %v", err)
+	}
+	if len(puntos) != 2 {
+		t.Fatalf("se esperaban dos puntos: %+v", puntos)
+	}
+	if puntos[0].Timestamp != 1787092500 || puntos[0].CPU != 0.2 || puntos[0].MemUsada != 2048 || puntos[0].MemTotal != 8192 || puntos[0].DiscoUsado != 3000 || puntos[0].DiscoTotal != 12000 {
+		t.Errorf("el histórico del nodo perdió sus recursos: %+v", puntos[0])
+	}
+	if puntos[1].Timestamp != 1787092560 || puntos[1].CPU != 0.1 || puntos[1].MemUsada != 0 || puntos[1].MemTotal != 0 || puntos[1].DiscoUsado != 0 || puntos[1].DiscoTotal != 0 {
+		t.Errorf("una muestra sin recursos debe conservar sus campos vacíos: %+v", puntos[1])
+	}
+}
+
 func TestClient_ObtenerEstadoActual(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api2/json/nodes/pve1/qemu/100/status/current" {

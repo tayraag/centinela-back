@@ -673,18 +673,20 @@ func (c *Client) ObtenerContenidoStorage(ctx context.Context, node, storage stri
 type puntoRRDProxmox struct {
 	Time      int64    `json:"time"`
 	CPU       *float64 `json:"cpu"`
-	MaxCPU    *float64 `json:"maxcpu"`
 	Mem       *float64 `json:"mem"`
 	MaxMem    *float64 `json:"maxmem"`
 	NetIn     *float64 `json:"netin"`
 	NetOut    *float64 `json:"netout"`
 	DiskRead  *float64 `json:"diskread"`
 	DiskWrite *float64 `json:"diskwrite"`
-	// Del nodo: uso y tamaño del rootfs. Proxmox también los manda en las
-	// respuestas por instancia, así que se parsean siempre y solo los usa el
-	// histórico del host.
+	// El RRD de instancias usa disk y maxdisk; se conservan para esas métricas.
 	Disk    *float64 `json:"disk"`
 	MaxDisk *float64 `json:"maxdisk"`
+	// El RRD del nodo usa nombres distintos de los de VM y contenedores.
+	MemUsed   *float64 `json:"memused"`
+	MemTotal  *float64 `json:"memtotal"`
+	RootUsed  *float64 `json:"rootused"`
+	RootTotal *float64 `json:"roottotal"`
 }
 
 // ObtenerMetricasNodoRRD consulta la serie histórica del host. Es la misma
@@ -717,17 +719,17 @@ func (c *Client) ObtenerMetricasNodoRRD(ctx context.Context, nodo, timeframe str
 		if p.CPU != nil {
 			m.CPU = *p.CPU
 		}
-		if p.Mem != nil {
-			m.MemUsada = int64(*p.Mem)
+		if p.MemUsed != nil {
+			m.MemUsada = int64(*p.MemUsed)
 		}
-		if p.MaxMem != nil {
-			m.MemTotal = int64(*p.MaxMem)
+		if p.MemTotal != nil {
+			m.MemTotal = int64(*p.MemTotal)
 		}
-		if p.Disk != nil {
-			m.DiscoUsado = int64(*p.Disk)
+		if p.RootUsed != nil {
+			m.DiscoUsado = int64(*p.RootUsed)
 		}
-		if p.MaxDisk != nil {
-			m.DiscoTotal = int64(*p.MaxDisk)
+		if p.RootTotal != nil {
+			m.DiscoTotal = int64(*p.RootTotal)
 		}
 		muestras = append(muestras, m)
 	}
