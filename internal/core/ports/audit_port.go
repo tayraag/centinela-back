@@ -120,13 +120,12 @@ const (
 
 // Resultados existentes de autenticación, usuarios y otras operaciones.
 const (
-	AccionIniciarVM   = "START"
-	AccionDetenerVM   = "STOP"
-	AccionReiniciarVM = "REBOOT"
-	AccionEliminarVM  = "DELETE"
-	AccionApagarVM    = "SHUTDOWN"
-	AccionSuspenderVM = "SUSPENDER_VM"
-	AccionResumeVM    = "REANUDAR_VM"
+	ResultadoExito = "EXITO"
+	ResultadoFalla = "FALLA"
+)
+
+// Acciones de depuración de permisos por reciclaje de VMID
+const (
 	AccionInstancePermissionsPurged = "INSTANCE_PERMISSIONS_PURGED"
 )
 
