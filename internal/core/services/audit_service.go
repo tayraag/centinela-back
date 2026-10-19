@@ -211,7 +211,10 @@ func (s *auditServiceImpl) PrepararAuditoriaTarea(t *domain.TareaAsincrona, cier
 	resultado := ports.ResultadoPendiente
 	if cierre != nil {
 		resultado = ports.ResultadoFailed
-		if cierre["exitstatus"] == "OK" && cierre["motivo"] == nil {
+		// Una acción operativa completada con advertencias de Proxmox sigue
+		// siendo exitosa: el motivo sólo se completa cuando la tarea falló.
+		// Las creaciones conservan la regla estricta de exitstatus "OK".
+		if cierre["motivo"] == nil {
 			resultado = ports.ResultadoSuccess
 		}
 		detalles["exitstatus"] = cierre["exitstatus"]
