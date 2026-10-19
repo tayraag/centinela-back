@@ -37,4 +37,9 @@ type InstanceRepository interface {
 	// FULL_ACCESS). La lógica de rol (ADMIN pasa siempre) se resuelve en el
 	// middleware, no aquí: este método consulta únicamente la tabla de permisos.
 	VerificarAcceso(ctx context.Context, userID uuid.UUID, vmid int, nivelRequerido string) (bool, error)
+
+	// PurgarPermisosPorVmid elimina atómicamente todos los registros vinculados
+	// al vmid en permisos_instancia y registra la auditoría inmutable de la purga
+	// en la misma transacción. Devuelve la lista de usuarios desvinculados.
+	PurgarPermisosPorVmid(ctx context.Context, vmid int, recursoTipo string, actorID *uuid.UUID) ([]string, error)
 }

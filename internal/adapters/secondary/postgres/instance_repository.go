@@ -2,7 +2,10 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"strconv"
+	"time"
 
 	"el-centinela/internal/core/domain"
 	"el-centinela/internal/core/ports"
@@ -40,4 +43,68 @@ func (r *InstanceRepository) VerificarAcceso(ctx context.Context, userID uuid.UU
 		return false, fmt.Errorf("error al verificar acceso a instancia: %w", err)
 	}
 	return count > 0, nil
+}
+
+// PurgarPermisosPorVmid elimina atómicamente todas las filas vinculadas a ese VMID
+// en permisos_instancia y registra la auditoría inmutable de la purga en la misma transacción.
+func (r *InstanceRepository) PurgarPermisosPorVmid(ctx context.Context, vmid int, recursoTipo string, actorID *uuid.UUID) ([]string, error) {
+	usuariosAfectados := make([]string, 0)
+
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// 1. Obtener lista de usuarios afectados para trazabilidad
+		if err := tx.Model(&domain.PermisoInstancia{}).
+			Where("vmid_proxmox = ?", vmid).
+			Pluck("usuario_id", &usuariosAfectados).Error; err != nil {
+			return fmt.Errorf("error al obtener usuarios afectados para purga: %w", err)
+		}
+
+		// 2. Eliminar relaciones de acceso
+		if err := tx.Where("vmid_proxmox = ?", vmid).
+			Delete(&domain.PermisoInstancia{}).Error; err != nil {
+			return fmt.Errorf("error al eliminar permisos de instancia para vmid %d: %w", vmid, err)
+		}
+
+		// 3. Registrar auditoría inmutable
+		if recursoTipo == "" {
+			recursoTipo = ports.RecursoVM
+		}
+
+		var usuarioIDPtr *uuid.UUID
+		if actorID != nil && *actorID != uuid.Nil {
+			var existe int64
+			if err := tx.Table("usuarios").Where("id = ?", *actorID).Count(&existe).Error; err == nil && existe > 0 {
+				usuarioIDPtr = actorID
+			}
+		}
+
+		detalles := map[string]any{
+			"vmid":               vmid,
+			"usuarios_afectados": usuariosAfectados,
+			"resource_type":      recursoTipo,
+		}
+		detallesBytes, err := json.Marshal(detalles)
+		if err != nil {
+			return fmt.Errorf("error al serializar detalles de auditoría: %w", err)
+		}
+		detallesStr := string(detallesBytes)
+
+		auditoriaEntry := domain.Auditoria{
+			UsuarioID:   usuarioIDPtr,
+			Accion:      ports.AccionInstancePermissionsPurged,
+			InstanciaID: strconv.Itoa(vmid),
+			Resultado:   "SUCCESS",
+			Detalles:    &detallesStr,
+			FechaHora:   time.Now(),
+		}
+		if err := tx.Create(&auditoriaEntry).Error; err != nil {
+			return fmt.Errorf("error al registrar auditoría de purga: %w", err)
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+	return usuariosAfectados, nil
 }

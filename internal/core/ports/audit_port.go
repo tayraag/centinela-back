@@ -120,8 +120,14 @@ const (
 
 // Resultados existentes de autenticación, usuarios y otras operaciones.
 const (
-	ResultadoExito = "EXITO"
-	ResultadoFalla = "FALLA"
+	AccionIniciarVM   = "START"
+	AccionDetenerVM   = "STOP"
+	AccionReiniciarVM = "REBOOT"
+	AccionEliminarVM  = "DELETE"
+	AccionApagarVM    = "SHUTDOWN"
+	AccionSuspenderVM = "SUSPENDER_VM"
+	AccionResumeVM    = "REANUDAR_VM"
+	AccionInstancePermissionsPurged = "INSTANCE_PERMISSIONS_PURGED"
 )
 
 // Resultados de las tareas asíncronas de ciclo de vida, según RF-08.

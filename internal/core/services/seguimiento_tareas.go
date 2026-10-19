@@ -109,6 +109,11 @@ func nulo(s string) any {
 	return s
 }
 
+// PermisosPurger define el contrato para depurar atómicamente permisos de una instancia destruida.
+type PermisosPurger interface {
+	PurgarPermisosPorVmid(ctx context.Context, vmid int, recursoTipo string, actorID *uuid.UUID) ([]string, error)
+}
+
 // ConfigSeguimiento configura el pool de seguimiento de tareas.
 type ConfigSeguimiento struct {
 	Workers              int           // consultas simultáneas máximas a Proxmox (UPID_WORKERS, default 8)
@@ -118,6 +123,7 @@ type ConfigSeguimiento struct {
 	VentanaRecuperacion  time.Duration // al arrancar, edad máxima para reanudar una tarea (default 3 min)
 	UpidTimeout          time.Duration // límite de seguimiento de tarea asíncrona (UPID_TIMEOUT, default 3m)
 	OnTaskFinished       func(ctx context.Context, tarea *domain.TareaAsincrona, recursoTipo string, r ResultadoTarea)
+	PermisosPurger       PermisosPurger
 }
 
 func (c ConfigSeguimiento) conDefaults() ConfigSeguimiento {
@@ -462,8 +468,34 @@ func (p *PoolSeguimiento) finalizar(t *TareaSeguimiento, r ResultadoTarea) {
 
 	log.Printf("[TAREAS] tarea %s (%s sobre %d) terminó: %s", t.Tarea.ID, t.Tarea.Accion, t.Vmid, r.Estado)
 
+	// Paso 1 (Emisión Previa de Evento): Publicar primero el evento TASK_FINISHED
+	// en Redis Pub/Sub antes de que se revoquen los permisos. Esto garantiza que
+	// el filtro del canal SSE aún reconozca los permisos vigentes de los operadores.
 	if p.cfg.OnTaskFinished != nil {
 		p.cfg.OnTaskFinished(ctx, &t.Tarea, t.recursoTipo, r)
+	}
+
+	// Paso 2 (Transacción Atómica de Purga en BD):
+	// Cuando una tarea de acción delete finalice en Proxmox con estado COMPLETED:
+	// se eliminan atómicamente todas las filas en permisos_instancia vinculadas a ese VMID
+	// y se audita la purga inmutablemente. Si la tarea terminó con FAILED (timeout o error en Proxmox),
+	// no se eliminan los registros de permisos_instancia para no desincronizar el estado de una
+	// máquina que sigue viva físicamente.
+	if strings.ToLower(t.Tarea.Accion) == "delete" && r.Estado == ports.TareaCompleted && p.cfg.PermisosPurger != nil {
+		// Pausa breve para permitir que los suscriptores SSE activos procesen la entrega
+		// del evento TASK_FINISHED con sus permisos vigentes antes del corte en BD.
+		time.Sleep(50 * time.Millisecond)
+
+		var actorID *uuid.UUID
+		if t.Tarea.UsuarioID != uuid.Nil {
+			actorID = &t.Tarea.UsuarioID
+		}
+		afectados, err := p.cfg.PermisosPurger.PurgarPermisosPorVmid(ctx, t.Vmid, t.recursoTipo, actorID)
+		if err != nil {
+			log.Printf("[TAREAS] error al purgar permisos del vmid %d: %v", t.Vmid, err)
+		} else {
+			log.Printf("[TAREAS] purga de permisos completada para vmid %d: %d usuarios desvinculados (%v)", t.Vmid, len(afectados), afectados)
+		}
 	}
 }
 
