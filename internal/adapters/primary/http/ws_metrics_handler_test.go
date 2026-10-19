@@ -43,6 +43,10 @@ func (m *mockInstanceRepoForWS) VerificarAcceso(_ context.Context, userID uuid.U
 	return m.permisos[key], nil
 }
 
+func (m *mockInstanceRepoForWS) PurgarPermisosPorVmid(_ context.Context, _ int, _ string, _ *uuid.UUID) ([]string, error) {
+	return []string{}, nil
+}
+
 type mockProxmoxForWS struct {
 	ports.ProxmoxPort
 	instancias    map[int]*ports.InstanciaProxmoxDTO

@@ -150,7 +150,7 @@ func TestReciclajeVMID_SecuenciaEstrictaDestruccionYPurga(t *testing.T) {
 		},
 	}
 
-	seg := services.NewSeguimientoTareas(px, repoTareas, cfg)
+	seg := services.NewSeguimientoTareas(px, repoTareas, services.NewAuditService(nil), cfg)
 	ctxPool, cancelPool := context.WithCancel(context.Background())
 	defer cancelPool()
 	seg.Iniciar(ctxPool)
@@ -269,7 +269,7 @@ func TestReciclajeVMID_FalloDeBorradoConservaPermisos(t *testing.T) {
 		},
 	}
 
-	seg := services.NewSeguimientoTareas(px, repoTareas, cfg)
+	seg := services.NewSeguimientoTareas(px, repoTareas, services.NewAuditService(nil), cfg)
 	ctxPool, cancelPool := context.WithCancel(context.Background())
 	defer cancelPool()
 	seg.Iniciar(ctxPool)
@@ -321,7 +321,7 @@ func TestReciclajeVMID_AccionDistintaDeDeleteNoPurga(t *testing.T) {
 		},
 	}
 
-	seg := services.NewSeguimientoTareas(px, repoTareas, cfg)
+	seg := services.NewSeguimientoTareas(px, repoTareas, services.NewAuditService(nil), cfg)
 	ctxPool, cancelPool := context.WithCancel(context.Background())
 	defer cancelPool()
 	seg.Iniciar(ctxPool)

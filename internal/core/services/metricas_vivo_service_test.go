@@ -47,6 +47,15 @@ func (a *accesoWSFalso) VerificarAcceso(_ context.Context, id uuid.UUID, vmid in
 	return a.permisos[id][vmid], nil
 }
 
+func (a *accesoWSFalso) PurgarPermisosPorVmid(_ context.Context, vmid int, _ string, _ *uuid.UUID) ([]string, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for _, perm := range a.permisos {
+		delete(perm, vmid)
+	}
+	return []string{}, nil
+}
+
 func (a *accesoWSFalso) cambiar(f func()) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
