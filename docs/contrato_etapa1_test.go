@@ -113,15 +113,15 @@ func TestContratoEtapa1(t *testing.T) {
 		}
 	}
 
-	// Las acciones sobre instancias ya existentes conservan el contrato donde
-	// tareaId puede omitirse si la orden ya llegó a Proxmox y falla el registro.
-	verificarObjetoRequerido(t, definitions, acceptedDef, []string{"upid"})
+	// Las acciones exponen solamente el identificador opaco administrado por el
+	// backend. El UPID de Proxmox queda reservado para la correlación interna.
+	verificarObjetoRequerido(t, definitions, acceptedDef, []string{"tareaId"})
 	tareaID := propiedad(t, definitions, acceptedDef, "tareaId")
 	if tipo := cadena(t, tareaID, "type"); tipo != "string" {
 		t.Errorf("tareaId debe ser string, obtuvo %q", tipo)
 	}
-	if requeridosDe(t, objeto(t, definitions, acceptedDef))["tareaId"] {
-		t.Error("tareaId no debe ser obligatorio: se omite cuando no se puede registrar la tarea")
+	if _, expuesto := objeto(t, objeto(t, definitions, acceptedDef), "properties")["upid"]; expuesto {
+		t.Error("AccionAceptadaResponse no debe exponer el UPID de Proxmox")
 	}
 
 	// Aprovisionamiento: solo ADMIN, reserva de cuotas y errores específicos.
@@ -129,7 +129,10 @@ func TestContratoEtapa1(t *testing.T) {
 	verificarBearer(t, creacion)
 	const creacionAcceptedDef = "http.CreacionAceptadaResponse"
 	verificarRespuesta(t, creacion, "202", creacionAcceptedDef)
-	verificarObjetoRequerido(t, definitions, creacionAcceptedDef, []string{"vmid", "tareaId", "upid"})
+	verificarObjetoRequerido(t, definitions, creacionAcceptedDef, []string{"vmid", "tareaId"})
+	if _, expuesto := objeto(t, objeto(t, definitions, creacionAcceptedDef), "properties")["upid"]; expuesto {
+		t.Error("CreacionAceptadaResponse no debe exponer el UPID de Proxmox")
+	}
 	verificarObjetoRequerido(t, definitions, "http.CrearInstanciaRequest", []string{
 		"tipo", "nombre", "cores", "ramMb", "discoGb", "storageId", "templateOso", "red",
 	})
@@ -227,7 +230,7 @@ func TestContratoEtapa1(t *testing.T) {
 		}
 	}
 
-	// DELETE: solo ADMIN y asíncrono, con el mismo 202 { upid, tareaId }.
+	// DELETE: solo ADMIN y asíncrono, con el mismo 202 { tareaId }.
 	borrado := objeto(t, objeto(t, paths, "/instances/{vmid}"), "delete")
 	verificarBearer(t, borrado)
 	verificarRespuesta(t, borrado, "202", acceptedDef)
@@ -523,7 +526,7 @@ func TestContratoEtapa1(t *testing.T) {
 		// T02 — acciones aceptadas.
 		"POST /api/instances", "RESOURCE_QUOTA_EXCEEDED", "PROVISIONING_COORDINATION_UNAVAILABLE",
 		"POST /api/instances/:vmid/start", "POST /api/instances/:vmid/stop",
-		"202", "upid", "tareaId", "pause",
+		"202", "El UPID de Proxmox permanece privado", "tareaId", "pause",
 		// T02 — los ocho pares error/status.
 		"INVALID_VMID", "MISSING_TOKEN", "INSTANCE_ACCESS_DENIED", "INSTANCE_PROTECTED",
 		"INSTANCE_NOT_FOUND", "INSTANCE_BUSY", "INTERNAL_ERROR",

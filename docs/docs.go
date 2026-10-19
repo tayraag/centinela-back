@@ -1543,7 +1543,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "ADMIN ONLY. El contrato plano RF-07 descrito en el body es el formato canónico. Durante la migración del frontend también se acepta el payload anidado anterior con ` + "`" + `type` + "`" + `, ` + "`" + `node` + "`" + `, ` + "`" + `name` + "`" + `, ` + "`" + `cpu.cores` + "`" + `, ` + "`" + `ram.memoryMb` + "`" + `, ` + "`" + `disk.storageId/sizeGb` + "`" + `, ` + "`" + `network.bridge/vlan/firewall/ipv4` + "`" + ` y ` + "`" + `os.templateId` + "`" + `; para LXC ese formato requiere ` + "`" + `password` + "`" + `. CuotasService usa el lock Redis ` + "`" + `lock:instance:provisioning` + "`" + ` con TTL de 30 s y hasta 2 s de espera. Consulta la capacidad cacheada (o Proxmox si falta), valida CPU lógica, RAM con 15% de headroom y disco contra ` + "`" + `avail` + "`" + ` del storage, y registra una reserva temporal. Luego obtiene el VMID mediante ` + "`" + `/cluster/nextid` + "`" + `, despacha la creación QEMU o LXC y solo responde 202 con vmid, tareaId y upid después de persistir la tarea RUNNING y su auditoría inicial. El resultado llega por TASK_FINISHED con accion CREATE; cuando Proxmox finaliza con exitstatus OK, el creador recibe FULL_ACCESS y se vuelve a invalidar la capacidad.",
+                "description": "ADMIN ONLY. El contrato plano RF-07 descrito en el body es el formato canónico. Durante la migración del frontend también se acepta el payload anidado anterior con ` + "`" + `type` + "`" + `, ` + "`" + `node` + "`" + `, ` + "`" + `name` + "`" + `, ` + "`" + `cpu.cores` + "`" + `, ` + "`" + `ram.memoryMb` + "`" + `, ` + "`" + `disk.storageId/sizeGb` + "`" + `, ` + "`" + `network.bridge/vlan/firewall/ipv4` + "`" + ` y ` + "`" + `os.templateId` + "`" + `; para LXC ese formato requiere ` + "`" + `password` + "`" + `. CuotasService usa el lock Redis ` + "`" + `lock:instance:provisioning` + "`" + ` con TTL de 30 s y hasta 2 s de espera. Consulta la capacidad cacheada (o Proxmox si falta), valida CPU lógica, RAM con 15% de headroom y disco contra ` + "`" + `avail` + "`" + ` del storage, y registra una reserva temporal. Luego obtiene el VMID mediante ` + "`" + `/cluster/nextid` + "`" + `, despacha la creación QEMU o LXC y solo responde 202 con vmid y tareaId después de persistir la tarea RUNNING y su auditoría inicial. El UPID permanece privado en el backend. El resultado llega por TASK_FINISHED con accion CREATE; cuando Proxmox finaliza con exitstatus OK, el creador recibe FULL_ACCESS y se vuelve a invalidar la capacidad.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1704,7 +1704,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "OPERATIVO. Solo ADMIN. Elimina permanentemente una VM o contenedor de Proxmox. La instancia debe estar detenida (stopped); si no, responde 409. La operación es asíncrona, igual que las acciones de energía: responde 202 Accepted con el UPID de la tarea de borrado y el tareaId; el resultado llega en el evento TASK_FINISHED con accion DELETE.",
+                "description": "OPERATIVO. Solo ADMIN. Elimina permanentemente una VM o contenedor de Proxmox. La instancia debe estar detenida (stopped); si no, responde 409. La operación es asíncrona: responde 202 Accepted con un tareaId público; el UPID permanece privado. El resultado llega en TASK_FINISHED con accion DELETE.",
                 "produces": [
                     "application/json"
                 ],
@@ -1723,7 +1723,7 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "202": {
-                        "description": "Borrado aceptado: upid de la tarea en Proxmox y tareaId. tareaId se omite si no se pudo registrar la tarea",
+                        "description": "Borrado aceptado: tareaId público para correlacionar TASK_FINISHED",
                         "schema": {
                             "$ref": "#/definitions/http.AccionAceptadaResponse"
                         }
@@ -1759,7 +1759,7 @@ const docTemplate = `{
                         }
                     },
                     "500": {
-                        "description": "INTERNAL_ERROR — error inesperado de Proxmox",
+                        "description": "INTERNAL_ERROR — error inesperado | TASK_TRACKING_UNAVAILABLE — Proxmox aceptó el borrado pero no se pudo persistir su seguimiento",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -1911,7 +1911,7 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "202": {
-                        "description": "Acción aceptada: upid de la tarea en Proxmox y tareaId",
+                        "description": "Acción aceptada: tareaId público para correlacionar TASK_FINISHED",
                         "schema": {
                             "$ref": "#/definitions/http.AccionAceptadaResponse"
                         }
@@ -1975,7 +1975,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "OPERATIVO. Dispara el arranque de una VM o contenedor en Proxmox VE. La operación es asíncrona: responde 202 Accepted con el UPID de la tarea creada en Proxmox. No espera a que la instancia quede encedida.",
+                "description": "OPERATIVO. Dispara el arranque de una VM o contenedor en Proxmox VE. La operación es asíncrona: responde 202 Accepted con un tareaId público; el UPID permanece privado. No espera a que la instancia quede encendida.",
                 "produces": [
                     "application/json"
                 ],
@@ -1994,7 +1994,7 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "202": {
-                        "description": "Acción aceptada: upid de la tarea en Proxmox y tareaId. tareaId se omite si no se pudo registrar la tarea",
+                        "description": "Acción aceptada: tareaId público para correlacionar TASK_FINISHED",
                         "schema": {
                             "$ref": "#/definitions/http.AccionAceptadaResponse"
                         }
@@ -2030,7 +2030,7 @@ const docTemplate = `{
                         }
                     },
                     "500": {
-                        "description": "INTERNAL_ERROR — al verificar permisos de acceso o error inesperado de Proxmox",
+                        "description": "INTERNAL_ERROR — al verificar permisos o error inesperado | TASK_TRACKING_UNAVAILABLE — Proxmox aceptó la orden pero no se pudo persistir su seguimiento",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -2089,7 +2089,7 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "202": {
-                        "description": "Acción aceptada: upid de la tarea en Proxmox y tareaId. tareaId se omite si no se pudo registrar la tarea",
+                        "description": "Acción aceptada: tareaId público para correlacionar TASK_FINISHED",
                         "schema": {
                             "$ref": "#/definitions/http.AccionAceptadaResponse"
                         }
@@ -2125,7 +2125,7 @@ const docTemplate = `{
                         }
                     },
                     "500": {
-                        "description": "INTERNAL_ERROR — al verificar permisos de acceso o error inesperado de Proxmox",
+                        "description": "INTERNAL_ERROR — al verificar permisos o error inesperado | TASK_TRACKING_UNAVAILABLE — Proxmox aceptó la orden pero no se pudo persistir su seguimiento",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -2158,7 +2158,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "OPERATIVO. Dispara el apagado forzado de una VM o contenedor en Proxmox VE. La operación es asíncrona: responde 202 Accepted con el UPID de la tarea creada en Proxmox. No espera a que la instancia quede detenida.",
+                "description": "OPERATIVO. Dispara el apagado forzado de una VM o contenedor en Proxmox VE. La operación es asíncrona: responde 202 Accepted con un tareaId público; el UPID permanece privado. No espera a que la instancia quede detenida.",
                 "produces": [
                     "application/json"
                 ],
@@ -2177,7 +2177,7 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "202": {
-                        "description": "Acción aceptada: upid de la tarea en Proxmox y tareaId. tareaId se omite si no se pudo registrar la tarea",
+                        "description": "Acción aceptada: tareaId público para correlacionar TASK_FINISHED",
                         "schema": {
                             "$ref": "#/definitions/http.AccionAceptadaResponse"
                         }
@@ -2213,7 +2213,7 @@ const docTemplate = `{
                         }
                     },
                     "500": {
-                        "description": "INTERNAL_ERROR — al verificar permisos de acceso o error inesperado de Proxmox",
+                        "description": "INTERNAL_ERROR — al verificar permisos o error inesperado | TASK_TRACKING_UNAVAILABLE — Proxmox aceptó la orden pero no se pudo persistir su seguimiento",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -2527,16 +2527,12 @@ const docTemplate = `{
         "http.AccionAceptadaResponse": {
             "type": "object",
             "required": [
-                "upid"
+                "tareaId"
             ],
             "properties": {
                 "tareaId": {
                     "type": "string",
                     "example": "3f2504e0-4f89-11d3-9a0c-0305e82c3301"
-                },
-                "upid": {
-                    "type": "string",
-                    "example": "UPID:pve:0008380E:0131F1BF:6A84EA54:vzstart:110:root@pam:ctid=110:starttime=6934A2E3:"
                 }
             }
         },
@@ -2608,17 +2604,12 @@ const docTemplate = `{
             "type": "object",
             "required": [
                 "tareaId",
-                "upid",
                 "vmid"
             ],
             "properties": {
                 "tareaId": {
                     "type": "string",
                     "example": "0192a8b3-4f89-7e23-9a0c-0305e82c3301"
-                },
-                "upid": {
-                    "type": "string",
-                    "example": "UPID:proxmox:0008380E:0131F1BF:6A84EA54:qmcreate:115:root@pam:"
                 },
                 "vmid": {
                     "type": "integer",
@@ -3561,9 +3552,6 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "resultado": {
-                    "type": "string"
-                },
-                "upid": {
                     "type": "string"
                 },
                 "usuarioId": {

@@ -214,10 +214,14 @@ inicial dentro de la misma transacción:
 ```json
 {
   "vmid": 115,
-  "tareaId": "0192a8b3-4f89-7e23-9a0c-0305e82c3301",
-  "upid": "UPID:proxmox:0008380E:0131F1BF:6A84EA54:qmcreate:115:root@pam:"
+  "tareaId": "0192a8b3-4f89-7e23-9a0c-0305e82c3301"
 }
 ```
+
+`tareaId` es la referencia pública opaca administrada por Centinela. El UPID
+real se conserva en PostgreSQL para que el worker consulte Proxmox y correlacione
+la auditoría, pero no se incluye en respuestas HTTP, listados administrativos ni
+exportaciones.
 
 Si falla ese registro luego de que Proxmox aceptó la orden, devuelve
 `500 TASK_TRACKING_UNAVAILABLE` y advierte que no se debe reintentar sin
@@ -250,12 +254,12 @@ las tres responden `202` con `AccionAceptadaResponse`. La cuarta,
 
 El cuerpo `202` es el esquema `http.AccionAceptadaResponse`:
 
-- `upid`: obligatorio. Es el UPID de la tarea que Proxmox crea para la acción.
-- `tareaId`: **opcional**. Es el identificador de la tarea registrada por el
-  backend y es el mismo valor que llega en el evento `TASK_FINISHED`.
+- `tareaId`: **obligatorio**. Es el identificador opaco de la tarea registrada
+  por el backend y es el mismo valor que llega en el evento `TASK_FINISHED`.
+- El UPID de Proxmox permanece privado y nunca se entrega al frontend.
 
 ```json
-{ "upid": "UPID:pve:0008380E:0131F1BF:6A84EA54:vzstart:110:root@pam:ctid=110:starttime=6934A2E3:", "tareaId": "3f2504e0-4f89-11d3-9a0c-0305e82c3301" }
+{ "tareaId": "3f2504e0-4f89-11d3-9a0c-0305e82c3301" }
 ```
 
 La acción es asíncrona: el `202` confirma que Proxmox aceptó la orden, **no** que
@@ -278,7 +282,7 @@ tarea de borrado y el servidor responde `202` con el mismo
 `AccionAceptadaResponse` que las acciones de energía:
 
 ```json
-{ "upid": "UPID:pve:0008381A:0131F2C0:6A84EB10:qmdestroy:110:centinela-api@pve!backend-token:", "tareaId": "3f2504e0-4f89-11d3-9a0c-0305e82c3303" }
+{ "tareaId": "3f2504e0-4f89-11d3-9a0c-0305e82c3303" }
 ```
 
 El borrado es asíncrono: mientras dura, la instancia aparece en el inventario con
@@ -386,18 +390,18 @@ contrato documenta el comportamiento real, no el solicitado.
 | Campo `error` de tipo `string` | No existe en el sobre real        |
 | Acción `Pause`                 | No implementada; `404 NOT_FOUND`  |
 | `TOKEN_MISSING` y afines       | El servidor emite `MISSING_TOKEN` |
-| `202` con `tareaId` siempre    | Se omite si el registro falla     |
+| UPID visible en el frontend   | Se reemplaza por `tareaId` opaco  |
 
 **Detalle:** el sobre real es `{ "errorCode", "message" }`, no `{ "error" }`. Los
 códigos de autenticación reales son `MISSING_TOKEN`, `INVALID_TOKEN` y
 `TOKEN_REVOKED`; no existe un código propio para expiración.
 
-**Seguimiento opcional.** Si el registro de la tarea falla, la acción ya se
-aplicó en Proxmox y la respuesta `202` conserva únicamente `upid`. El cliente no
-debe tratar la ausencia de `tareaId` como error ni esperar un `TASK_FINISHED`
-correlacionable; en ese caso debe reconciliar por `upid`. Esto vale también para
-el borrado, que antes respondía `204` sin cuerpo y ahora es asíncrono como las
-demás acciones.
+**Seguimiento obligatorio.** El servidor solo responde `202` cuando pudo
+persistir la tarea y generar su `tareaId`. Si Proxmox aceptó la orden pero falla
+el registro local, responde `500 TASK_TRACKING_UNAVAILABLE`; el cliente debe
+verificar el estado antes de reintentar. El UPID no se usa como alternativa
+pública. Esto vale también para el borrado, que antes respondía `204` sin cuerpo
+y ahora es asíncrono como las demás acciones.
 
 ## Canal de eventos en tiempo real — operativo
 

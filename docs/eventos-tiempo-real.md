@@ -83,7 +83,7 @@ Como se consulta en vivo, **si un admin le quita un permiso a un operador, deja 
 
 ## TASK_FINISHED: de dónde sale
 
-1. Una acción de ciclo de vida (`start`, `stop`, `shutdown`, `reboot`), un borrado (`delete`, solo ADMIN) o una orden de aprovisionamiento se dispara en Proxmox y responde `202 { "upid": "...", "tareaId": "..." }`.
+1. Una acción de ciclo de vida (`start`, `stop`, `shutdown`, `reboot`), un borrado (`delete`, solo ADMIN) o una orden de aprovisionamiento se dispara en Proxmox y responde `202 { "tareaId": "..." }` (la creación agrega `vmid`). El UPID real queda privado en el backend.
 2. La tarea se registra en `tareas_asincronas` con estado `RUNNING` y entra al **pool de seguimiento**. Mientras está así, `GET /api/instances` la muestra en `activeTask: { tareaId, action, status: "RUNNING" }`.
 3. Los workers del pool le preguntan a Proxmox cómo va (`GET /nodes/{node}/tasks/{upid}/status`) cada 1 s.
 4. Cuando termina, se guarda `COMPLETED` o `FAILED`, se audita el resultado y se publica `TASK_FINISHED` con el mismo `tareaId`, así el front puede asociarlo a la acción que disparó. Para todas las 5 acciones de ciclo de vida (`START`, `STOP`, `SHUTDOWN`, `REBOOT`, `DELETE`) el payload unificado contiene las 6 claves canónicas. En una creación completada (`OK` o `WARNINGS`), el mismo commit asigna `FULL_ACCESS` al creador antes de publicar el evento.

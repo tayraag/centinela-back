@@ -512,7 +512,7 @@ Este endpoint carga de forma instantánea los números principales, el estado de
   "permissions": ["instance:start", "instance:stop", "instance:reboot"],
   "activeOperations": [
     {
-      "taskId": "UPID:pve1:0001:...",
+      "taskId": "3f2504e0-4f89-11d3-9a0c-0305e82c3301",
       "type": "BACKUP",
       "resource": "web-server",
       "status": "RUNNING",
@@ -731,13 +731,13 @@ Con respecto a los query params en la url DE EJEMPLO de arriba:
       "ramUsage": null,
       "maxRam": 4294967296,
       "nivelAcceso": "READ_ONLY",
-      "activeTask": "UPID:pve1:0001:start..."
+      "activeTask": {"tareaId": "3f2504e0-4f89-11d3-9a0c-0305e82c3302", "action": "START", "status": "RUNNING"}
     }
   ]
 }
 ```
 
-> **OPERATIVO ETAPA-1:** el ejemplo anterior con wrapper `{summary, instances}` y `activeTask` como string UPID es diseño futuro. El código devuelve `[]` directo y `activeTask` objeto o `null`, ej: `"activeTask": {"tareaId": "uuid", "action": "START", "status": "RUNNING"}`.
+> **OPERATIVO ETAPA-1:** el wrapper `{summary, instances}` del ejemplo anterior es diseño futuro. El código devuelve `[]` directo y `activeTask` objeto o `null`, ej: `"activeTask": {"tareaId": "uuid", "action": "START", "status": "RUNNING"}`. Ningún contrato público incluye el UPID.
 
 #### 8.0 Detalle de instancia
 
@@ -785,7 +785,7 @@ Este es el primer endpoint que el frontend consume al entrar al detalle. Aliment
   },
   "recentTasks": [
     {
-      "taskId": "UPID:pve1:0001:...",
+      "taskId": "3f2504e0-4f89-11d3-9a0c-0305e82c3303",
       "type": "START",
       "status": "COMPLETED",
       "startAt": "2026-08-25T10:00:00Z",
@@ -814,7 +814,7 @@ Donde `{action}` puede ser: `start` (Iniciar), `stop` (Forzar apagado), `shutdow
 **DELETE /api/instances/{id}** (Eliminar instancia)
 Requiere rol ADMIN estrictamente, y la instancia debe estar en estado `stopped` (`409 INSTANCE_INVALID_STATE` si no, `409 INSTANCE_BUSY` si hay tarea RUNNING).
 
-> **OPERATIVO ETAPA-1:** las 4 acciones + el borrado son asíncronos y responden `202 {upid: string, tareaId?: string-uuid}` (`tareaId` se omite si falló el registro local, sin tratarlo como error; correlacionar por `TASK_FINISHED`). Pre-chequeos sin tocar Proxmox: `409 INSTANCE_BUSY` si hay tarea RUNNING o el lock `lock:instance:{vmid}:operation` está tomado (guarda `RequireInstanceIdle`: de una ráfaga de pedidos simultáneos sobre la misma instancia pasa uno solo), `503 INSTANCE_LOCK_UNAVAILABLE` si no se pudo verificar (reintentable); matriz `start→stopped`, `stop|shutdown|reboot→running` (`409 INSTANCE_INVALID_STATE`). Errores Proxmox: `404 INSTANCE_NOT_FOUND`, `502 PROXMOX_UNAVAILABLE` (orden no llegó), `504 PROXMOX_TIMEOUT` (pudo aplicarse). Sobre de error `{errorCode, message}`.
+> **OPERATIVO ETAPA-1:** las 4 acciones + el borrado son asíncronos y responden `202 {tareaId: string-uuid}`. `tareaId` es la referencia pública opaca administrada por Centinela; el UPID real queda almacenado únicamente en el backend. Si falla el registro local después de que Proxmox aceptó la orden, se responde `500 TASK_TRACKING_UNAVAILABLE`, nunca un `202` con el UPID como alternativa. Correlacionar por `tareaId` y `TASK_FINISHED`. Pre-chequeos sin tocar Proxmox: `409 INSTANCE_BUSY` si hay tarea RUNNING o el lock `lock:instance:{vmid}:operation` está tomado (guarda `RequireInstanceIdle`: de una ráfaga de pedidos simultáneos sobre la misma instancia pasa uno solo), `503 INSTANCE_LOCK_UNAVAILABLE` si no se pudo verificar (reintentable); matriz `start→stopped`, `stop|shutdown|reboot→running` (`409 INSTANCE_INVALID_STATE`). Errores Proxmox: `404 INSTANCE_NOT_FOUND`, `502 PROXMOX_UNAVAILABLE` (orden no llegó), `504 PROXMOX_TIMEOUT` (pudo aplicarse). Sobre de error `{errorCode, message}`.
 
 Sí hay una respuesta para el front, pero está agrupada más abajo para no repetirla.
 
@@ -1162,7 +1162,7 @@ El frontend enviará filtros de paginación y búsqueda en la URL (ej. `?status=
   "total": 45,
   "tasks": [
     {
-      "taskId": "UPID:pve1:0001:...",
+      "taskId": "3f2504e0-4f89-11d3-9a0c-0305e82c3304",
       "readableName": "Creación de Snapshot",
       "operationType": "SNAPSHOT",
       "description": "Creación del snapshot Pre-Update",
@@ -1226,9 +1226,9 @@ Si el usuario quisiera buscar errores del componente QEMU de hoy, la URL que el 
 
 **El Contrato de Respuesta Unificado (Backend ➡️ Frontend)**
 
-La clave de todas estas acciones (excepto la eliminación de una interfaz de red que puede ser inmediata) es que el documento exige que se gestionen de manera **asíncrona**. Proxmox recibe la orden, devuelve un identificador de tarea (UPID) y la procesa en segundo plano.
+La clave de todas estas acciones (excepto la eliminación de una interfaz de red que puede ser inmediata) es que el documento exige que se gestionen de manera **asíncrona**. Proxmox recibe la orden, devuelve un identificador interno (UPID) al backend y la procesa en segundo plano.
 
-Por lo tanto, sin importar si el frontend llamó al endpoint de `start`, al de `snapshots` o al de `resize`, tu backend siempre validará los permisos, reenviará la orden a Proxmox, capturará ese UPID y le devolverá al frontend exactamente el mismo formato de respuesta inmediata.
+Por lo tanto, sin importar si el frontend llamó al endpoint de `start`, al de `snapshots` o al de `resize`, el backend valida los permisos, captura el UPID para su seguimiento privado y devuelve al frontend un `tareaId` opaco con el mismo formato de respuesta inmediata.
 
 **Respuesta Exitosa Unificada (202 Accepted):**
 
@@ -1461,10 +1461,13 @@ Si la validación aprueba, el backend obtiene el siguiente VMID libre mediante
 ```json
 {
   "vmid": 120,
-  "upid": "UPID:pve1:00000001:00000002:00000003:qmcreate:120:centinela-api@pve!backend-token:",
   "tareaId": "3f2504e0-4f89-11d3-9a0c-0305e82c3301"
 }
 ```
+
+El UPID queda reservado para el worker y la correlación interna de auditoría;
+no aparece en el contrato HTTP, en el listado administrativo ni en la
+exportación de auditoría.
 
 El `202` solo se devuelve después de insertar el UPID como tarea `RUNNING` y
 su auditoría inicial. Si Proxmox aceptó la creación pero esa transacción falla,
