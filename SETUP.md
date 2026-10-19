@@ -142,6 +142,18 @@ GET auth:session:<session_id>    # payload de la sesión
 
 El script `scripts/init.sql` se ejecuta automáticamente al crear el container y habilita la extensión `pgcrypto` + la función `uuid_generate_v7()`.
 
+### Migraciones SQL de auditoría
+
+Los archivos de `migrations/` no se ejecutan automáticamente al iniciar la API ni durante el despliegue. Antes de desplegar `20261018_particionado_auditoria.sql` en una base existente, revisar que `DB_DSN` apunte al entorno correcto y ejecutar la migración en una ventana de mantenimiento: corrige límites trimestrales previos conservando sus filas y toma un lock exclusivo de `auditoria` mientras las reconstruye.
+
+```bash
+psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" \
+  -v ON_ERROR_STOP=1 \
+  -f migrations/20261018_particionado_auditoria.sql
+```
+
+Si la migración detecta filas de esos períodos en `auditoria_default`, aborta sin modificarlas; esas filas deben revisarse y reubicarse antes de reintentar. El índice compuesto también se garantiza al arrancar la API, pero aplicá igualmente la migración antes del despliegue para que los límites de partición queden normalizados a UTC.
+
 ---
 
 ## 4. Instalar dependencias Go
