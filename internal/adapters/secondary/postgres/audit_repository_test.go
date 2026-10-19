@@ -1,7 +1,9 @@
 package postgres_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"testing"
 	"time"
@@ -60,6 +62,7 @@ func TestAuditRepository_CrearYRecuperarEvento(t *testing.T) {
 		InstanciaID:     "vm-101",
 		InstanciaNombre: "Servidor Test",
 		Resultado:       ports.ResultadoExito,
+		Upid:            "UPID:privado:no-exponer",
 		Detalles: map[string]any{
 			"origen": "test_unitario",
 			"campo":  "valor_prueba",
@@ -119,8 +122,22 @@ func TestAuditRepository_CrearYRecuperarEvento(t *testing.T) {
 	if recuperado.Resultado != ports.ResultadoExito {
 		t.Errorf("Resultado incorrecto. Esperado: EXITO, Obtenido: %s", recuperado.Resultado)
 	}
-	if recuperado.Detalles == "" {
-		t.Errorf("Se esperaban detalles JSON serializados, se obtuvo string vacío")
+	if len(recuperado.Detalles) == 0 {
+		t.Errorf("Se esperaban detalles como objeto JSON, se obtuvo un valor vacío")
+	}
+	var detallesRecuperados map[string]any
+	if err := json.Unmarshal(recuperado.Detalles, &detallesRecuperados); err != nil {
+		t.Fatalf("detalles no es JSON válido: %v", err)
+	}
+	if detallesRecuperados["origen"] != "test_unitario" || detallesRecuperados["campo"] != "valor_prueba" {
+		t.Errorf("el objeto detalles perdió su contenido: %v", detallesRecuperados)
+	}
+	serializado, err := json.Marshal(recuperado)
+	if err != nil {
+		t.Fatalf("no se pudo serializar el DTO público: %v", err)
+	}
+	if bytes.Contains(serializado, []byte("UPID:privado:no-exponer")) || bytes.Contains(serializado, []byte(`"upid"`)) {
+		t.Fatalf("el DTO público expuso el UPID privado: %s", serializado)
 	}
 	if time.Since(recuperado.FechaHora) > 1*time.Minute {
 		t.Errorf("La fechaHora registrada es inconsistente: %v", recuperado.FechaHora)
@@ -168,7 +185,7 @@ func TestAuditRepository_CrearSinDetalles(t *testing.T) {
 	if pagina.Total != 1 {
 		t.Fatalf("Se esperaba 1 registro sin detalles, se obtuvieron %d", pagina.Total)
 	}
-	if pagina.Items[0].Detalles != "" {
+	if len(pagina.Items[0].Detalles) != 0 {
 		t.Errorf("Se esperaba Detalles vacío en el DTO, se obtuvo: %s", pagina.Items[0].Detalles)
 	}
 }

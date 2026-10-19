@@ -39,7 +39,7 @@ func conectarDBTest(t *testing.T) *gorm.DB {
 
 func TestMigrarAuditoriaParticionada_TraspasoLegacy(t *testing.T) {
 	db := conectarDBTest(t)
-	
+
 	// Obtener un usuario base
 	var usuario domain.Usuario
 	if err := db.First(&usuario).Error; err != nil {
@@ -91,7 +91,7 @@ func TestMigrarAuditoriaParticionada_TraspasoLegacy(t *testing.T) {
 
 	// 3. Assert: Verificar que los datos sigan existiendo y sean legibles por el Repositorio
 	repo := NewAuditRepository(tx)
-	
+
 	filtros := ports.FiltrosAuditoria{}
 	opciones := ports.OpcionesAuditoria{
 		Pagina:     1,
@@ -137,6 +137,13 @@ func TestMigrarAuditoriaParticionada_TraspasoLegacy(t *testing.T) {
 
 	if legacyExiste != 0 {
 		t.Errorf("La tabla auditoria_legacy no fue eliminada tras la migración")
+	}
+	for _, columna := range []string{"upid", "resource_type", "resource_id"} {
+		var cantidad int
+		tx.Raw(`SELECT count(*) FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'auditoria' AND column_name = ?`, columna).Scan(&cantidad)
+		if cantidad != 1 {
+			t.Errorf("la migración no creó la columna %s en auditoria", columna)
+		}
 	}
 }
 
@@ -188,7 +195,7 @@ func TestMigrarAuditoriaParticionada_RollbackEnFallo(t *testing.T) {
 	// 'auditoria' de nuevo, PERO IF NOT EXISTS.
 	// Entonces, si creamos 'auditoria_legacy' manualmente y luego 'auditoria' con restricción estricta,
 	// fallará en el INSERT.
-	
+
 	// Renombrar manualmente a legacy
 	tx.Exec(`ALTER TABLE auditoria RENAME TO auditoria_legacy`)
 

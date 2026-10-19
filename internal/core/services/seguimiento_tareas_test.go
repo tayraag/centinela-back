@@ -165,7 +165,7 @@ func TestSeguimiento_RegistraCreacionRunningConUPIDYAuditoriaInicial(t *testing.
 	if tarea.Estado != ports.TareaRunning || tarea.UpidProxmox != upid || tarea.InstanciaID != "115" || tarea.UsuarioID != usuarioID {
 		t.Fatalf("tarea inicial incorrecta: %+v", tarea)
 	}
-	if auditoria.Accion != ports.AccionCrearVM || auditoria.Resultado != ports.ResultadoPendiente || auditoria.InstanciaID != "115" || auditoria.InstanciaNombre != "srv-prod-01" {
+	if auditoria.Accion != ports.AccionCrearInstancia || auditoria.Resultado != ports.ResultadoPendiente || auditoria.InstanciaID != "115" || auditoria.InstanciaNombre != "srv-prod-01" || auditoria.Upid != upid {
 		t.Fatalf("auditoría inicial incorrecta: %+v", auditoria)
 	}
 }

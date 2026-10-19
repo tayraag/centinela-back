@@ -40,16 +40,16 @@ func baseRF08(t *testing.T) (*gorm.DB, uuid.UUID, uuid.UUID) {
 		sqlDB, _ := admin.DB()
 		sqlDB.Close()
 	})
-	db, err := gorm.Open(pg.Open(dsn+" search_path="+schema), &gorm.Config{})
+	db, err := gorm.Open(pg.Open(dsn+" search_path="+schema+",public"), &gorm.Config{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { sqlDB, _ := db.DB(); sqlDB.Close() })
 	for _, ddl := range []string{
 		`CREATE TABLE usuarios (id uuid PRIMARY KEY, organizacion_id uuid NOT NULL, nombre_completo text)`,
-		`CREATE TABLE permisos_instancia (id uuid PRIMARY KEY DEFAULT uuidv7(), usuario_id uuid NOT NULL REFERENCES usuarios(id), vmid_proxmox integer NOT NULL, nivel_acceso varchar(30) NOT NULL, UNIQUE (usuario_id, vmid_proxmox))`,
+		`CREATE TABLE permisos_instancia (id uuid PRIMARY KEY DEFAULT public.uuid_generate_v7(), usuario_id uuid NOT NULL REFERENCES usuarios(id), vmid_proxmox integer NOT NULL, nivel_acceso varchar(30) NOT NULL, UNIQUE (usuario_id, vmid_proxmox))`,
 		`CREATE TABLE tareas_asincronas (id uuid PRIMARY KEY, usuario_id uuid NOT NULL REFERENCES usuarios(id), upid_proxmox varchar(255) UNIQUE NOT NULL, instancia_id varchar(100), accion varchar(100), estado varchar(50) NOT NULL, metadatos jsonb, fecha_creacion timestamptz NOT NULL)`,
-		`CREATE TABLE auditoria (id uuid NOT NULL DEFAULT uuidv7(), usuario_id uuid REFERENCES usuarios(id), accion varchar(100) NOT NULL, instancia_id varchar(100), instancia_nombre varchar(255), resultado varchar(50) NOT NULL, detalles jsonb, fecha_hora timestamptz NOT NULL, PRIMARY KEY (id, fecha_hora)) PARTITION BY RANGE (fecha_hora)`,
+		`CREATE TABLE auditoria (id uuid NOT NULL DEFAULT public.uuid_generate_v7(), usuario_id uuid REFERENCES usuarios(id), accion varchar(100) NOT NULL, instancia_id varchar(100), instancia_nombre varchar(255), resource_type varchar(30), resource_id varchar(100), upid varchar(255), resultado varchar(50) NOT NULL, detalles jsonb, fecha_hora timestamptz NOT NULL, PRIMARY KEY (id, fecha_hora)) PARTITION BY RANGE (fecha_hora)`,
 		`CREATE TABLE auditoria_actual PARTITION OF auditoria FOR VALUES FROM ('2020-01-01') TO ('2100-01-01')`,
 	} {
 		if err := db.Exec(ddl).Error; err != nil {
@@ -104,8 +104,11 @@ func TestRF08ParticionesCorrelacionFiltrosYCierreConcurrente(t *testing.T) {
 				if err := json.Unmarshal([]byte(reg.Detalles), &detalles); err != nil {
 					t.Fatal(err)
 				}
-				if detalles["upid"] != tarea.UpidProxmox || detalles["tareaId"] != tarea.ID.String() || reg.UsuarioID == nil || *reg.UsuarioID != usuario || reg.InstanciaNombre != "db-110" {
+				if detalles["tareaId"] != tarea.ID.String() || reg.UsuarioID == nil || *reg.UsuarioID != usuario || reg.InstanciaNombre != "db-110" {
 					t.Fatalf("correlación incorrecta: %+v", reg)
+				}
+				if _, expuesto := detalles["upid"]; expuesto {
+					t.Fatalf("el UPID privado no debe exponerse en detalles: %v", detalles)
 				}
 				if reg.Resultado == "SUCCESS" && detalles["duracionSegundos"].(float64) < 2 {
 					t.Fatalf("duración incorrecta: %v", detalles)
@@ -181,8 +184,11 @@ func TestRF08TimeoutPersistido(t *testing.T) {
 	if err := json.Unmarshal([]byte(*fin.Detalles), &detalles); err != nil {
 		t.Fatal(err)
 	}
-	if detalles["motivo"] != "TIMEOUT" || detalles["exitstatus"] != nil || detalles["upid"] != tarea.UpidProxmox {
+	if detalles["motivo"] != "TIMEOUT" || detalles["exitstatus"] != nil || fin.Upid != tarea.UpidProxmox {
 		t.Fatalf("timeout incorrecto: %v", detalles)
+	}
+	if _, expuesto := detalles["upid"]; expuesto {
+		t.Fatalf("el UPID privado no debe exponerse en detalles: %v", detalles)
 	}
 }
 
@@ -215,6 +221,29 @@ func TestCreacionExitosaAutoasignaFullAccess(t *testing.T) {
 		if permiso.NivelAcceso != ports.NivelAccesoFullAccess {
 			t.Fatalf("nivel de acceso = %q", permiso.NivelAcceso)
 		}
+	}
+}
+
+func TestCreacionGeneraDosAuditoriasCorrelacionadasPorUPID(t *testing.T) {
+	db, usuario, _ := baseRF08(t)
+	repo, ctx := postgres.NewTareaRepository(db), context.Background()
+	meta := `{"instanciaNombre":"web-230","resource_type":"qemu","cores":4,"ramMb":4096,"discoGb":40}`
+	tarea := nuevaTareaRF08(usuario, ports.AccionProxmoxCrearVM)
+	tarea.InstanciaID, tarea.Metadatos = "230", &meta
+	audit := services.NewAuditService(nil)
+	if err := repo.Crear(ctx, tarea, audit.PrepararAuditoriaTarea(tarea, nil, time.Now())); err != nil {
+		t.Fatal(err)
+	}
+	cierre := map[string]any{"exitstatus": "OK", "motivo": nil, "error": nil}
+	if err := repo.ActualizarEstado(ctx, tarea.ID, ports.TareaCompleted, cierre, audit.PrepararAuditoriaTarea(tarea, cierre, time.Now())); err != nil {
+		t.Fatal(err)
+	}
+	var registros []domain.Auditoria
+	if err := db.Where("accion = ? AND upid = ?", ports.AccionCrearInstancia, tarea.UpidProxmox).Order("fecha_hora ASC").Find(&registros).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(registros) != 2 || registros[0].Resultado != ports.ResultadoPendiente || registros[1].Resultado != ports.ResultadoSuccess {
+		t.Fatalf("se esperaban exactamente despacho y desenlace: %+v", registros)
 	}
 }
 

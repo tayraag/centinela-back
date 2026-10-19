@@ -212,11 +212,17 @@ func (m *mockTareaRepository) BuscarTareasActivasPorVmids(context.Context, []int
 
 type mockAuditService struct {
 	ports.AuditService
-	registros []ports.RegistrarAuditoriaInput
+	registros    []ports.RegistrarAuditoriaInput
+	errRegistrar error
 }
 
 func (m *mockAuditService) Registrar(_ context.Context, input ports.RegistrarAuditoriaInput) {
 	m.registros = append(m.registros, input)
+}
+
+func (m *mockAuditService) RegistrarEstricto(_ context.Context, input ports.RegistrarAuditoriaInput) error {
+	m.registros = append(m.registros, input)
+	return m.errRegistrar
 }
 
 // ultimo devuelve el último registro de auditoría capturado.
@@ -312,15 +318,20 @@ func TestCrearInstancia_RegistraOrdenRealEnSeguimiento(t *testing.T) {
 	if seguimiento.llamadas != 1 || seguimiento.usuarioID != usuarioID || seguimiento.vmid != 502 || seguimiento.accion != ports.AccionProxmoxCrearLXC || seguimiento.upid != upid {
 		t.Fatalf("orden no registrada correctamente: %+v", seguimiento)
 	}
-	if seguimiento.metadatos["resource_type"] != ports.TipoInstanciaLXC || seguimiento.metadatos["instanciaNombre"] != "db-cache" || seguimiento.metadatos["reserva_id"] != "reserva-502" {
+	if seguimiento.metadatos["resource_type"] != ports.TipoInstanciaLXC || seguimiento.metadatos["instanciaNombre"] != "db-cache" ||
+		seguimiento.metadatos["cores"] != 1 || seguimiento.metadatos["ramMb"] != 1024 || seguimiento.metadatos["discoGb"] != 10 ||
+		seguimiento.metadatos["reserva_id"] != "reserva-502" {
 		t.Fatalf("metadatos de creación incorrectos: %v", seguimiento.metadatos)
 	}
 	var respuesta map[string]any
 	if err := json.Unmarshal(w.Body.Bytes(), &respuesta); err != nil {
 		t.Fatal(err)
 	}
-	if respuesta["vmid"] != float64(502) || respuesta["upid"] != upid || respuesta["tareaId"] != tareaID.String() {
+	if respuesta["vmid"] != float64(502) || respuesta["tareaId"] != tareaID.String() {
 		t.Fatalf("respuesta asincrónica incorrecta: %v", respuesta)
+	}
+	if _, expuesto := respuesta["upid"]; expuesto {
+		t.Fatalf("el UPID técnico no debe exponerse al frontend: %v", respuesta)
 	}
 }
 
@@ -373,8 +384,11 @@ func TestCrearInstancia_ContratoPlanoRF07CreaVMYLXC(t *testing.T) {
 			if err := json.Unmarshal(w.Body.Bytes(), &respuesta); err != nil {
 				t.Fatal(err)
 			}
-			if respuesta["vmid"] != float64(615) || respuesta["tareaId"] != tareaID.String() || respuesta["upid"] != upid {
+			if respuesta["vmid"] != float64(615) || respuesta["tareaId"] != tareaID.String() {
 				t.Fatalf("respuesta 202 incompleta: %v", respuesta)
+			}
+			if _, expuesto := respuesta["upid"]; expuesto {
+				t.Fatalf("el UPID técnico no debe exponerse al frontend: %v", respuesta)
 			}
 		})
 	}
@@ -826,7 +840,7 @@ func TestAccionesDeEnergia_EstadoIncompatibleEs409SinEscribir(t *testing.T) {
 	}
 }
 
-// Acción compatible => 202 con upid y tareaId.
+// Acción compatible => 202 únicamente con tareaId público.
 func TestAccionesDeEnergia_EstadoValidEs202(t *testing.T) {
 	casos := []struct{ ruta, estado string }{
 		{"/api/instances/110/start", "stopped"},
@@ -839,9 +853,28 @@ func TestAccionesDeEnergia_EstadoValidEs202(t *testing.T) {
 	for _, caso := range casos {
 		mock := &mockProxmoxPort{estado: caso.estado}
 		status, cuerpo := ejecutarAccion(mock, caso.ruta)
-		if status != http.StatusAccepted || cuerpo["upid"] == "" || cuerpo["tareaId"] == "" || mock.escrituras != 1 {
-			t.Errorf("%s: se esperaba 202 con upid y tareaId, vino %d %v", caso.ruta, status, cuerpo)
+		if status != http.StatusAccepted || cuerpo["tareaId"] == "" || cuerpo["upid"] != "" || mock.escrituras != 1 {
+			t.Errorf("%s: se esperaba 202 sólo con tareaId, vino %d %v", caso.ruta, status, cuerpo)
 		}
+	}
+}
+
+func TestAccionAsincrona_NoExponeUPIDSiFallaElSeguimiento(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	mock := &mockProxmoxPort{estado: "stopped"}
+	handler := adaptersHttp.NewInstanceHandler(mock, &mockUserRepository{}, seguimientoError{err: errors.New("base no disponible")}, &mockTareaRepository{}, &mockAuditService{}, inventarioNulo{})
+	router := gin.New()
+	router.POST("/api/instances/:vmid/start", handler.IniciarInstancia)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/instances/110/start", nil))
+
+	var respuesta map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &respuesta)
+	if w.Code != http.StatusInternalServerError || respuesta["errorCode"] != "TASK_TRACKING_UNAVAILABLE" {
+		t.Fatalf("se esperaba fallo explícito de seguimiento: status=%d respuesta=%v", w.Code, respuesta)
+	}
+	if _, expuesto := respuesta["upid"]; expuesto {
+		t.Fatalf("el fallback no debe exponer el UPID: %v", respuesta)
 	}
 }
 
@@ -992,13 +1025,12 @@ func TestEliminarInstancia_ConTareaEnCursoEs409InstanceBusySinConsultarProxmox(t
 	}
 }
 
-// DELETE /api/instances/:vmid es asíncrono: 202 { upid, tareaId }, como las
-// acciones de energía.
-func TestEliminarInstancia_Es202ConUpidYTareaId(t *testing.T) {
+// DELETE /api/instances/:vmid es asíncrono y sólo expone el tareaId público.
+func TestEliminarInstancia_Es202SoloConTareaId(t *testing.T) {
 	mock := &mockProxmoxPort{estado: "stopped"}
 	status, cuerpo := ejecutarBorrado(mock)
-	if status != http.StatusAccepted || cuerpo["upid"] != "UPID:test:qmdestroy" || cuerpo["tareaId"] == "" || mock.escrituras != 1 {
-		t.Errorf("se esperaba 202 con upid y tareaId, vino %d %v", status, cuerpo)
+	if status != http.StatusAccepted || cuerpo["upid"] != "" || cuerpo["tareaId"] == "" || mock.escrituras != 1 {
+		t.Errorf("se esperaba 202 sólo con tareaId, vino %d %v", status, cuerpo)
 	}
 }
 
@@ -1107,7 +1139,10 @@ func TestAuditoriaDeCicloDeVida_UsaVocabularioCanonicoYMetadatos(t *testing.T) {
 			if _, err := uuid.Parse(fmt.Sprint(reg.Detalles["tareaId"])); err != nil {
 				t.Fatalf("falta tareaId válido: %v", reg.Detalles)
 			}
-			if reg.Detalles["upid"] == "" || reg.Detalles["instanciaNombre"] != nombreInstanciaMock {
+			if _, expuesto := reg.Detalles["upid"]; expuesto {
+				t.Fatalf("el UPID no debe duplicarse en detalles visibles: %v", reg.Detalles)
+			}
+			if reg.Detalles["instanciaNombre"] != nombreInstanciaMock {
 				t.Fatalf("faltan datos de correlación: %v", reg.Detalles)
 			}
 		})

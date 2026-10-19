@@ -2,6 +2,8 @@ package services_test
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -18,6 +20,7 @@ type mockAuditRepository struct {
 	ultimoInput     *ports.RegistrarAuditoriaInput
 	ultimaOrgID     uuid.UUID
 	ultimasOpciones ports.OpcionesAuditoria
+	registrarErr    error
 }
 
 func newMockAuditRepository() *mockAuditRepository {
@@ -27,11 +30,14 @@ func newMockAuditRepository() *mockAuditRepository {
 }
 
 func (m *mockAuditRepository) Registrar(ctx context.Context, input ports.RegistrarAuditoriaInput) error {
+	if m.registrarErr != nil {
+		return m.registrarErr
+	}
 	m.ultimoInput = &input
 	id := uuid.New()
-	detallesStr := ""
+	var detallesJSON json.RawMessage
 	if len(input.Detalles) > 0 {
-		detallesStr = `{"mock":"true"}`
+		detallesJSON = json.RawMessage(`{"mock":"true"}`)
 	}
 
 	dto := ports.AuditoriaDTO{
@@ -43,10 +49,20 @@ func (m *mockAuditRepository) Registrar(ctx context.Context, input ports.Registr
 		InstanciaID:     input.InstanciaID,
 		InstanciaNombre: input.InstanciaNombre,
 		Resultado:       input.Resultado,
-		Detalles:        detallesStr,
+		Detalles:        detallesJSON,
 	}
 	m.registros = append(m.registros, dto)
 	return nil
+}
+
+func TestAuditService_RegistrarEstrictoPropagaError(t *testing.T) {
+	repo := newMockAuditRepository()
+	repo.registrarErr = errors.New("postgres no disponible")
+	svc := services.NewAuditService(repo)
+	err := svc.RegistrarEstricto(context.Background(), ports.RegistrarAuditoriaInput{Accion: ports.AccionConfigurarInstancia})
+	if err == nil || !errors.Is(err, repo.registrarErr) {
+		t.Fatalf("se esperaba propagar el error de persistencia, vino %v", err)
+	}
 }
 
 func (m *mockAuditRepository) Listar(ctx context.Context, orgID uuid.UUID, filtros ports.FiltrosAuditoria, opciones ports.OpcionesAuditoria) (*ports.PaginaAuditoria, error) {
@@ -166,8 +182,11 @@ func TestAuditService_PrepararAuditoriaTareaCorrelacion(t *testing.T) {
 					t.Fatalf("registros incorrectos: %+v %+v", inicio, fin)
 				}
 				for _, reg := range []ports.RegistrarAuditoriaInput{inicio, fin} {
-					if reg.UsuarioID != tarea.UsuarioID || reg.InstanciaID != "110" || reg.InstanciaNombre != "db-110" || reg.Detalles["upid"] != tarea.UpidProxmox || reg.Detalles["tareaId"] != tarea.ID.String() {
+					if reg.UsuarioID != tarea.UsuarioID || reg.InstanciaID != "110" || reg.InstanciaNombre != "db-110" || reg.Upid != tarea.UpidProxmox || reg.Detalles["tareaId"] != tarea.ID.String() {
 						t.Fatalf("correlación incorrecta: %+v", reg)
+					}
+					if _, expuesto := reg.Detalles["upid"]; expuesto {
+						t.Fatalf("el UPID no debe duplicarse en detalles visibles: %+v", reg.Detalles)
 					}
 				}
 				if fin.Detalles["duracionSegundos"] != 2.5 || fin.Detalles["exitstatus"] != caso.exit {
@@ -178,5 +197,36 @@ func TestAuditService_PrepararAuditoriaTareaCorrelacion(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestAuditService_CreacionGeneraContratoRF08(t *testing.T) {
+	svc := services.NewAuditService(newMockAuditRepository())
+	meta := `{"instanciaNombre":"web-108","resource_type":"qemu","cores":4,"ramMb":4096,"discoGb":40}`
+	tarea := domain.TareaAsincrona{
+		ID: uuid.New(), UsuarioID: uuid.New(), Accion: ports.AccionProxmoxCrearVM,
+		UpidProxmox: "UPID:pve1:qmcreate:108", InstanciaID: "108",
+		FechaCreacion: time.Now(), Metadatos: &meta,
+	}
+	inicio := svc.PrepararAuditoriaTarea(&tarea, nil, tarea.FechaCreacion)
+	fin := svc.PrepararAuditoriaTarea(&tarea, map[string]any{"exitstatus": "OK", "motivo": nil, "error": nil}, tarea.FechaCreacion.Add(3*time.Second))
+
+	for _, registro := range []ports.RegistrarAuditoriaInput{inicio, fin} {
+		if registro.Accion != ports.AccionCrearInstancia || registro.Upid != tarea.UpidProxmox ||
+			registro.RecursoTipo != ports.RecursoVM || registro.RecursoID != tarea.InstanciaID ||
+			registro.Detalles["tareaId"] != tarea.ID.String() {
+			t.Fatalf("correlación de creación incorrecta: %+v", registro)
+		}
+		if _, duplicado := registro.Detalles["upid"]; duplicado {
+			t.Fatalf("el UPID debe ser un campo propio, no duplicarse en detalles: %+v", registro.Detalles)
+		}
+	}
+	if inicio.Resultado != ports.ResultadoPendiente || inicio.Detalles["nombre"] != "web-108" ||
+		inicio.Detalles["tipo"] != "qemu" || inicio.Detalles["cores"] != float64(4) ||
+		inicio.Detalles["ramMb"] != float64(4096) || inicio.Detalles["discoGb"] != float64(40) {
+		t.Fatalf("despacho de creación incompleto: %+v", inicio)
+	}
+	if fin.Resultado != ports.ResultadoSuccess || fin.Detalles["exitstatus"] != "OK" || fin.Detalles["duracionSegundos"] != float64(3) {
+		t.Fatalf("desenlace de creación incompleto: %+v", fin)
 	}
 }

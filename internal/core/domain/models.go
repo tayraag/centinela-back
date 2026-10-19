@@ -106,6 +106,9 @@ type Auditoria struct {
 	Accion          string `gorm:"type:varchar(100);not null;index:idx_auditoria_accion" json:"accion"`
 	InstanciaID     string `gorm:"type:varchar(100);index:idx_auditoria_instancia" json:"instanciaId"`
 	InstanciaNombre string `gorm:"type:varchar(255)" json:"instanciaNombre"`
+	RecursoTipo     string `gorm:"column:resource_type;type:varchar(30)" json:"resourceType,omitempty"`
+	RecursoID       string `gorm:"column:resource_id;type:varchar(100)" json:"resourceId,omitempty"`
+	Upid            string `gorm:"column:upid;type:varchar(255);index:idx_auditoria_upid" json:"upid,omitempty"`
 	Resultado       string `gorm:"type:varchar(50);not null;index:idx_auditoria_resultado" json:"resultado"` // EXITO/FALLA; infraestructura: PENDIENTE/SUCCESS/FAILED
 
 	Detalles  *string   `gorm:"type:jsonb" json:"detalles"`                                       // JSON estructurado con metadata extra (puntero para permitir NULL en PostgreSQL)
