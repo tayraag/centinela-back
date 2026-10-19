@@ -56,6 +56,13 @@ definitions:
     required:
     - requiresReboot
     type: object
+  http.ConfirmarEmailInput:
+    properties:
+      token:
+        type: string
+    required:
+    - token
+    type: object
   http.CreacionAceptadaResponse:
     properties:
       tareaId:
@@ -713,7 +720,15 @@ definitions:
     type: object
   ports.ActualizarPerfilInput:
     properties:
+      codigo2fa:
+        type: string
+      contrasenaActual:
+        type: string
       emailUsuario:
+        type: string
+      nombre:
+        maxLength: 255
+        minLength: 2
         type: string
       nombreCompleto:
         maxLength: 255
@@ -852,6 +867,21 @@ definitions:
       nivelAcceso:
         type: string
       vmid:
+        type: integer
+    type: object
+  ports.PuntoHistorialNodo:
+    properties:
+      cpuPercent:
+        description: 0–100, 2 decimales
+        type: number
+      ramPercent:
+        description: 0–100, 2 decimales; ausente = sin dato
+        type: number
+      storagePercent:
+        description: 0–100, 2 decimales; ausente = sin dato
+        type: number
+      timestamp:
+        description: segundos UNIX
         type: integer
     type: object
   ports.QRResult:
@@ -1026,8 +1056,8 @@ paths:
     put:
       consumes:
       - application/json
-      description: Permite al usuario modificar su propio `nombreCompleto` y/o `emailUsuario`.
-        No permite cambiar rol ni organización.
+      description: Actualiza el nombre. Un correo distinto exige contrasenaActual
+        y codigo2fa y queda pendiente hasta confirmar el token enviado al nuevo correo.
       parameters:
       - description: Datos a actualizar
         in: body
@@ -1061,6 +1091,49 @@ paths:
       security:
       - BearerAuth: []
       summary: Actualizar mi perfil
+      tags:
+      - Mi cuenta
+  /account/profile/email/confirm:
+    post:
+      consumes:
+      - application/json
+      description: Confirma una solicitud del usuario autenticado. Token de un solo
+        uso, válido durante 15 minutos.
+      parameters:
+      - description: Token enviado a la nueva casilla
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/http.ConfirmarEmailInput'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Confirmar mi nuevo correo
       tags:
       - Mi cuenta
   /admin/audit:
@@ -2575,6 +2648,35 @@ paths:
       summary: Detener instancia
       tags:
       - Instancias Proxmox
+  /node/history:
+    get:
+      description: Devuelve la serie histórica del host (CPU, memoria y rootfs) normalizada
+        a porcentajes. Es lo que hace que el gráfico del Dashboard ya esté formado
+        al entrar, en vez de arrancar de cero y esperar minutos a que se llene. La
+        fuente es el RRD de Proxmox, cacheado en Redis para no golpear la infraestructura
+        en cada visita.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Muestras de más vieja a más nueva
+          schema:
+            items:
+              $ref: '#/definitions/ports.PuntoHistorialNodo'
+            type: array
+        "502":
+          description: PROXMOX_UNAVAILABLE — Proxmox caído, sin red o token rechazado
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "504":
+          description: PROXMOX_TIMEOUT — Proxmox no respondió a tiempo
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Histórico de uso del nodo
+      tags:
+      - Nodo
   /node/status:
     get:
       description: 'OPERATIVO. Disponible para ADMIN y OPERATOR autenticados (no se

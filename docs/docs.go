@@ -119,7 +119,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Permite al usuario modificar su propio ` + "`" + `nombreCompleto` + "`" + ` y/o ` + "`" + `emailUsuario` + "`" + `. No permite cambiar rol ni organización.",
+                "description": "Actualiza el nombre. Un correo distinto exige contrasenaActual y codigo2fa y queda pendiente hasta confirmar el token enviado al nuevo correo.",
                 "consumes": [
                     "application/json"
                 ],
@@ -168,6 +168,72 @@ const docTemplate = `{
                     },
                     "409": {
                         "description": "Email ya en uso",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/account/profile/email/confirm": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Confirma una solicitud del usuario autenticado. Token de un solo uso, válido durante 15 minutos.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Mi cuenta"
+                ],
+                "summary": "Confirmar mi nuevo correo",
+                "parameters": [
+                    {
+                        "description": "Token enviado a la nueva casilla",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/http.ConfirmarEmailInput"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -2239,6 +2305,46 @@ const docTemplate = `{
                 }
             }
         },
+        "/node/history": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Devuelve la serie histórica del host (CPU, memoria y rootfs) normalizada a porcentajes. Es lo que hace que el gráfico del Dashboard ya esté formado al entrar, en vez de arrancar de cero y esperar minutos a que se llene. La fuente es el RRD de Proxmox, cacheado en Redis para no golpear la infraestructura en cada visita.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Nodo"
+                ],
+                "summary": "Histórico de uso del nodo",
+                "responses": {
+                    "200": {
+                        "description": "Muestras de más vieja a más nueva",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/ports.PuntoHistorialNodo"
+                            }
+                        }
+                    },
+                    "502": {
+                        "description": "PROXMOX_UNAVAILABLE — Proxmox caído, sin red o token rechazado",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "504": {
+                        "description": "PROXMOX_TIMEOUT — Proxmox no respondió a tiempo",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/node/status": {
             "get": {
                 "security": [
@@ -2597,6 +2703,17 @@ const docTemplate = `{
                 "requiresReboot": {
                     "type": "boolean",
                     "example": true
+                }
+            }
+        },
+        "http.ConfirmarEmailInput": {
+            "type": "object",
+            "required": [
+                "token"
+            ],
+            "properties": {
+                "token": {
+                    "type": "string"
                 }
             }
         },
@@ -3488,8 +3605,19 @@ const docTemplate = `{
         "ports.ActualizarPerfilInput": {
             "type": "object",
             "properties": {
+                "codigo2fa": {
+                    "type": "string"
+                },
+                "contrasenaActual": {
+                    "type": "string"
+                },
                 "emailUsuario": {
                     "type": "string"
+                },
+                "nombre": {
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 2
                 },
                 "nombreCompleto": {
                     "type": "string",
@@ -3690,6 +3818,27 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "vmid": {
+                    "type": "integer"
+                }
+            }
+        },
+        "ports.PuntoHistorialNodo": {
+            "type": "object",
+            "properties": {
+                "cpuPercent": {
+                    "description": "0–100, 2 decimales",
+                    "type": "number"
+                },
+                "ramPercent": {
+                    "description": "0–100, 2 decimales; ausente = sin dato",
+                    "type": "number"
+                },
+                "storagePercent": {
+                    "description": "0–100, 2 decimales; ausente = sin dato",
+                    "type": "number"
+                },
+                "timestamp": {
+                    "description": "segundos UNIX",
                     "type": "integer"
                 }
             }
