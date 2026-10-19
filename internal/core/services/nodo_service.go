@@ -26,6 +26,19 @@ const (
 	bytesPorMB         = 1024 * 1024
 	headroomRAMPercent = 15
 	claveVuelo         = "estado-nodo"
+
+	// Histórico del host para el gráfico del Dashboard. Mismo esquema de dos
+	// claves que el estado: la vigente con TTL y un respaldo sin TTL, para poder
+	// servir la última serie conocida si Proxmox no responde.
+	claveNodoHistorial       = "node:status:history"
+	claveNodoHistorialUltimo = "node:status:history:last_known"
+	ttlHistorialNodo         = 60 * time.Second
+	claveVueloHistorial      = "historial-nodo"
+
+	// Proxmox no tiene un timeframe de 15 minutos: "hour" trae 60 puntos, uno por
+	// minuto, que es la resolución nativa del RRD. El frontend completa lo reciente
+	// con el sondeo de 10 s.
+	timeframeHistorialNodo = "hour"
 )
 
 // nodoService implementa ports.NodoService.
@@ -36,6 +49,10 @@ type nodoService struct {
 	ahora   func() time.Time
 
 	vuelo singleflight.Group // pedidos simultáneos comparten una sola consulta a Proxmox
+
+	// El histórico va en su propio grupo: es una consulta distinta y más lenta,
+	// y no tiene por qué bloquear la lectura del estado.
+	vueloHistorial singleflight.Group
 
 	mu          sync.Mutex
 	ultimaFalla time.Time
@@ -217,3 +234,92 @@ func capacidad(usado, total int64) ports.MetricaCapacidad {
 }
 
 func redondear(v float64) float64 { return math.Round(v*100) / 100 }
+
+// ObtenerHistorial devuelve la serie histórica del host para el gráfico del
+// Dashboard. La fuente es el RRD de Proxmox y el resultado se cachea en Redis:
+// así el gráfico ya está formado al entrar en vez de arrancar de cero, y Proxmox
+// recibe como mucho una consulta por minuto en lugar de una por visita.
+func (s *nodoService) ObtenerHistorial(ctx context.Context) ([]ports.PuntoHistorialNodo, error) {
+	if serie, ok := s.leerHistorial(ctx, claveNodoHistorial); ok {
+		return serie, nil
+	}
+
+	resultado, err, _ := s.vueloHistorial.Do(claveVueloHistorial, func() (any, error) {
+		// Otro pedido pudo renovar la caché mientras este esperaba.
+		if serie, ok := s.leerHistorial(ctx, claveNodoHistorial); ok {
+			return serie, nil
+		}
+		return s.refrescarHistorial(ctx)
+	})
+	if err != nil {
+		if serie, ok := s.leerHistorial(ctx, claveNodoHistorialUltimo); ok {
+			log.Printf("[NODO] Proxmox no respondió el histórico (se sirve la última serie): %v", err)
+			return serie, nil
+		}
+		return nil, err
+	}
+	return resultado.([]ports.PuntoHistorialNodo), nil
+}
+
+// refrescarHistorial lee el RRD del nodo y guarda la serie normalizada, con el
+// mismo esquema de dos claves que el estado del nodo.
+func (s *nodoService) refrescarHistorial(ctx context.Context) ([]ports.PuntoHistorialNodo, error) {
+	ctxProxmox := context.WithoutCancel(ctx)
+	muestras, err := s.proxmox.ObtenerMetricasNodoRRD(ctxProxmox, s.nodo, timeframeHistorialNodo)
+	if err != nil {
+		return nil, err
+	}
+	serie := normalizarHistorialNodo(muestras)
+	if err := s.kv.Set(ctxProxmox, claveNodoHistorial, serie, ttlHistorialNodo); err != nil {
+		log.Printf("[NODO] no se pudo guardar %s: %v", claveNodoHistorial, err)
+	}
+	if err := s.kv.Set(ctxProxmox, claveNodoHistorialUltimo, serie, 0); err != nil {
+		log.Printf("[NODO] no se pudo guardar %s: %v", claveNodoHistorialUltimo, err)
+	}
+	return serie, nil
+}
+
+func (s *nodoService) leerHistorial(ctx context.Context, clave string) ([]ports.PuntoHistorialNodo, bool) {
+	valor, err := s.kv.Get(ctx, clave)
+	if err != nil {
+		if !errors.Is(err, ports.ErrClaveNoEncontrada) {
+			log.Printf("[NODO] no se pudo leer %s: %v", clave, err)
+		}
+		return nil, false
+	}
+	var serie []ports.PuntoHistorialNodo
+	if err := json.Unmarshal([]byte(valor), &serie); err != nil {
+		log.Printf("[NODO] %s con formato inválido: %v", clave, err)
+		return nil, false
+	}
+	if len(serie) == 0 {
+		return nil, false
+	}
+	return serie, true
+}
+
+// normalizarHistorialNodo pasa la muestra cruda a los tres porcentajes que
+// dibuja el gráfico, acotados a 0–100 para que un valor raro de Proxmox no
+// rompa la escala.
+func normalizarHistorialNodo(muestras []ports.MuestraNodoRRD) []ports.PuntoHistorialNodo {
+	serie := make([]ports.PuntoHistorialNodo, 0, len(muestras))
+	for _, m := range muestras {
+		punto := ports.PuntoHistorialNodo{
+			Timestamp:  m.Timestamp,
+			CPUPercent: porcentajeAcotado(m.CPU * 100),
+		}
+		if m.MemTotal > 0 {
+			punto.RAMPercent = porcentajeAcotado(float64(m.MemUsada) / float64(m.MemTotal) * 100)
+		}
+		if m.DiscoTotal > 0 {
+			punto.StoragePercent = porcentajeAcotado(float64(m.DiscoUsado) / float64(m.DiscoTotal) * 100)
+		}
+		serie = append(serie, punto)
+	}
+	return serie
+}
+
+// porcentajeAcotado redondea a 2 decimales y recorta a 0–100.
+func porcentajeAcotado(v float64) float64 {
+	return redondear(math.Max(0, math.Min(100, v)))
+}

@@ -63,4 +63,35 @@ type NodoService interface {
 	// responde, la última conocida (stale = true). Si tampoco hay una lectura
 	// previa devuelve el error de Proxmox (ErrProxmoxNoDisponible / ErrProxmoxTimeout).
 	ObtenerEstado(ctx context.Context) (estado *EstadoNodo, stale bool, err error)
+
+	// ObtenerHistorial devuelve la serie histórica del host para el gráfico del
+	// Dashboard, ya normalizada a los tres porcentajes que muestra el panel. El
+	// gráfico la carga al entrar, así que no arranca de cero: la fuente es el RRD
+	// de Proxmox, cacheado en Redis para no golpear la infraestructura en cada
+	// visita.
+	ObtenerHistorial(ctx context.Context) ([]PuntoHistorialNodo, error)
+}
+
+// ==========================================
+// Histórico del nodo (GET /api/node/history)
+// ==========================================
+
+// MuestraNodoRRD es una muestra cruda del histórico del host, tal como sale de
+// Proxmox en /nodes/{node}/rrddata. La normaliza el servicio.
+type MuestraNodoRRD struct {
+	Timestamp  int64   // segundos UNIX
+	CPU        float64 // fracción [0,1] sobre los hilos lógicos del host
+	MemUsada   int64   // bytes
+	MemTotal   int64   // bytes
+	DiscoUsado int64   // bytes del rootfs del nodo
+	DiscoTotal int64   // bytes del rootfs del nodo
+}
+
+// PuntoHistorialNodo es una muestra del histórico ya normalizada: los tres
+// porcentajes que dibuja el gráfico del Dashboard.
+type PuntoHistorialNodo struct {
+	Timestamp      int64   `json:"timestamp"`      // segundos UNIX
+	CPUPercent     float64 `json:"cpuPercent"`     // 0–100, 2 decimales
+	RAMPercent     float64 `json:"ramPercent"`     // 0–100, 2 decimales
+	StoragePercent float64 `json:"storagePercent"` // 0–100, 2 decimales
 }

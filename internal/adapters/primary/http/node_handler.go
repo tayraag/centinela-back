@@ -79,6 +79,34 @@ func aEstadoNodeResponse(e *ports.EstadoNodo, stale bool) EstadoNodeResponse {
 }
 
 // ==========================================
+// GET /api/node/history
+// ==========================================
+
+// ObtenerHistorial devuelve la serie histórica del host para el gráfico del Dashboard.
+//
+// @Summary      Histórico de uso del nodo
+// @Description  Devuelve la serie histórica del host (CPU, memoria y rootfs) normalizada a porcentajes. Es lo que hace que el gráfico del Dashboard ya esté formado al entrar, en vez de arrancar de cero y esperar minutos a que se llene. La fuente es el RRD de Proxmox, cacheado en Redis para no golpear la infraestructura en cada visita.
+// @Tags         Nodo
+// @Produce      json
+// @Security     BearerAuth
+// @Success      200 {array} ports.PuntoHistorialNodo "Muestras de más vieja a más nueva"
+// @Failure      502 {object} ErrorResponse "PROXMOX_UNAVAILABLE — Proxmox caído, sin red o token rechazado"
+// @Failure      504 {object} ErrorResponse "PROXMOX_TIMEOUT — Proxmox no respondió a tiempo"
+// @Router       /node/history [get]
+func (h *NodeHandler) ObtenerHistorial(c *gin.Context) {
+	serie, err := h.service.ObtenerHistorial(c.Request.Context())
+	if err != nil {
+		mapearErrorProxmox(c, err)
+		return
+	}
+	if serie == nil {
+		// Un array vacío y no null: el frontend siempre recibe una lista.
+		serie = []ports.PuntoHistorialNodo{}
+	}
+	c.JSON(http.StatusOK, serie)
+}
+
+// ==========================================
 // GET /api/node/storages
 // ==========================================
 

@@ -72,6 +72,7 @@ func (s *Simulador) rutas() {
 	m.HandleFunc("GET "+base+"/cluster/resources", s.clusterResources)
 	m.HandleFunc("GET "+base+"/cluster/nextid", s.siguienteID)
 	m.HandleFunc("GET "+base+"/nodes/{node}/status", s.estadoNodo)
+	m.HandleFunc("GET "+base+"/nodes/{node}/rrddata", s.rrddataNodo)
 	m.HandleFunc("GET "+base+"/nodes/{node}/{tipo}", s.listarPorTipo)
 
 	// Estado, acciones y métricas por instancia (RF-04, RF-05, RF-11)
