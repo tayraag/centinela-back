@@ -99,6 +99,7 @@ const (
 	AccionApagarVM    = "SHUTDOWN"
 	AccionSuspenderVM = "SUSPENDER_VM"
 	AccionResumeVM    = "REANUDAR_VM"
+	AccionInstancePermissionsPurged = "INSTANCE_PERMISSIONS_PURGED"
 )
 
 // Resultados de auditoría

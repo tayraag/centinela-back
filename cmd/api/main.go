@@ -151,8 +151,9 @@ func main() {
 	tareaRepo := postgres.NewTareaRepository(db)
 	seguimientoTareas := services.NewSeguimientoTareas(proxmoxClient, tareaRepo,
 		services.ConfigSeguimiento{
-			Workers:     enteroDeEntorno("UPID_WORKERS", 8),
-			UpidTimeout: duracionDeEntorno("UPID_TIMEOUT", 3*time.Minute),
+			Workers:        enteroDeEntorno("UPID_WORKERS", 8),
+			UpidTimeout:    duracionDeEntorno("UPID_TIMEOUT", 3*time.Minute),
+			PermisosPurger: instanceRepo,
 			OnTaskFinished: func(ctx context.Context, tarea *domain.TareaAsincrona, recursoTipo string, r services.ResultadoTarea) {
 				resultado := ports.ResultadoExito
 				if r.Estado != ports.TareaCompleted {

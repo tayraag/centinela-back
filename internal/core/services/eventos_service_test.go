@@ -28,6 +28,13 @@ func (p *permisosFalsos) VerificarAcceso(_ context.Context, _ uuid.UUID, vmid in
 	return p.permisos[vmid], nil
 }
 
+func (p *permisosFalsos) PurgarPermisosPorVmid(_ context.Context, vmid int, _ string, _ *uuid.UUID) ([]string, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	delete(p.permisos, vmid)
+	return []string{}, nil
+}
+
 // auditoriaGrabadora guarda los registros para verificarlos.
 type auditoriaGrabadora struct {
 	auditoriaNula
