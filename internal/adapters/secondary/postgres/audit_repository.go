@@ -149,7 +149,6 @@ func (r *auditRepositoryImpl) Listar(ctx context.Context, orgID uuid.UUID, filtr
 			InstanciaNombre: row.Auditoria.InstanciaNombre,
 			RecursoTipo:     row.Auditoria.RecursoTipo,
 			RecursoID:       row.Auditoria.RecursoID,
-			Upid:            row.Auditoria.Upid,
 			Resultado:       row.Auditoria.Resultado,
 			Detalles:        detalles,
 		}
@@ -208,7 +207,6 @@ func (r *auditRepositoryImpl) ExportarRegistros(ctx context.Context, orgID uuid.
 			InstanciaNombre: row.Auditoria.InstanciaNombre,
 			RecursoTipo:     row.Auditoria.RecursoTipo,
 			RecursoID:       row.Auditoria.RecursoID,
-			Upid:            row.Auditoria.Upid,
 			Resultado:       row.Auditoria.Resultado,
 			Detalles:        detalles,
 		}

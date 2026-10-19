@@ -48,7 +48,6 @@ func (m *mockAuditRepository) Registrar(ctx context.Context, input ports.Registr
 		Accion:          input.Accion,
 		InstanciaID:     input.InstanciaID,
 		InstanciaNombre: input.InstanciaNombre,
-		Upid:            input.Upid,
 		Resultado:       input.Resultado,
 		Detalles:        detallesJSON,
 	}
@@ -183,8 +182,11 @@ func TestAuditService_PrepararAuditoriaTareaCorrelacion(t *testing.T) {
 					t.Fatalf("registros incorrectos: %+v %+v", inicio, fin)
 				}
 				for _, reg := range []ports.RegistrarAuditoriaInput{inicio, fin} {
-					if reg.UsuarioID != tarea.UsuarioID || reg.InstanciaID != "110" || reg.InstanciaNombre != "db-110" || reg.Detalles["upid"] != tarea.UpidProxmox || reg.Detalles["tareaId"] != tarea.ID.String() {
+					if reg.UsuarioID != tarea.UsuarioID || reg.InstanciaID != "110" || reg.InstanciaNombre != "db-110" || reg.Upid != tarea.UpidProxmox || reg.Detalles["tareaId"] != tarea.ID.String() {
 						t.Fatalf("correlación incorrecta: %+v", reg)
+					}
+					if _, expuesto := reg.Detalles["upid"]; expuesto {
+						t.Fatalf("el UPID no debe duplicarse en detalles visibles: %+v", reg.Detalles)
 					}
 				}
 				if fin.Detalles["duracionSegundos"] != 2.5 || fin.Detalles["exitstatus"] != caso.exit {

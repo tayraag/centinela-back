@@ -1,6 +1,7 @@
 package postgres_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"os"
@@ -61,6 +62,7 @@ func TestAuditRepository_CrearYRecuperarEvento(t *testing.T) {
 		InstanciaID:     "vm-101",
 		InstanciaNombre: "Servidor Test",
 		Resultado:       ports.ResultadoExito,
+		Upid:            "UPID:privado:no-exponer",
 		Detalles: map[string]any{
 			"origen": "test_unitario",
 			"campo":  "valor_prueba",
@@ -129,6 +131,13 @@ func TestAuditRepository_CrearYRecuperarEvento(t *testing.T) {
 	}
 	if detallesRecuperados["origen"] != "test_unitario" || detallesRecuperados["campo"] != "valor_prueba" {
 		t.Errorf("el objeto detalles perdió su contenido: %v", detallesRecuperados)
+	}
+	serializado, err := json.Marshal(recuperado)
+	if err != nil {
+		t.Fatalf("no se pudo serializar el DTO público: %v", err)
+	}
+	if bytes.Contains(serializado, []byte("UPID:privado:no-exponer")) || bytes.Contains(serializado, []byte(`"upid"`)) {
+		t.Fatalf("el DTO público expuso el UPID privado: %s", serializado)
 	}
 	if time.Since(recuperado.FechaHora) > 1*time.Minute {
 		t.Errorf("La fechaHora registrada es inconsistente: %v", recuperado.FechaHora)

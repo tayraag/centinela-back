@@ -98,7 +98,7 @@ func (s *auditServiceImpl) ExportarCSV(ctx context.Context, orgID uuid.UUID, fil
 	// Encabezados
 	if err := w.Write([]string{
 		"ID", "UsuarioID", "NombreUsuario", "FechaHora",
-		"Accion", "InstanciaID", "InstanciaNombre", "ResourceType", "ResourceID", "UPID", "Resultado", "Detalles",
+		"Accion", "InstanciaID", "InstanciaNombre", "ResourceType", "ResourceID", "Resultado", "Detalles",
 	}); err != nil {
 		return nil, fmt.Errorf("error al escribir encabezados CSV: %w", err)
 	}
@@ -119,7 +119,6 @@ func (s *auditServiceImpl) ExportarCSV(ctx context.Context, orgID uuid.UUID, fil
 			r.InstanciaNombre,
 			r.RecursoTipo,
 			r.RecursoID,
-			r.Upid,
 			r.Resultado,
 			string(r.Detalles),
 		}
@@ -205,9 +204,7 @@ func (s *auditServiceImpl) PrepararAuditoriaTarea(t *domain.TareaAsincrona, cier
 			Upid: t.UpidProxmox, Resultado: resultado, Detalles: detalles,
 		}
 	}
-	detalles := map[string]any{
-		"upid": t.UpidProxmox, "tareaId": t.ID.String(), "instanciaNombre": nombre,
-	}
+	detalles := map[string]any{"tareaId": t.ID.String(), "instanciaNombre": nombre}
 	if tipo, ok := meta["resource_type"]; ok {
 		detalles["resource_type"] = tipo
 	}

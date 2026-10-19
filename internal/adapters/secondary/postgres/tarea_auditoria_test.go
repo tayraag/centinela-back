@@ -104,8 +104,11 @@ func TestRF08ParticionesCorrelacionFiltrosYCierreConcurrente(t *testing.T) {
 				if err := json.Unmarshal([]byte(reg.Detalles), &detalles); err != nil {
 					t.Fatal(err)
 				}
-				if detalles["upid"] != tarea.UpidProxmox || detalles["tareaId"] != tarea.ID.String() || reg.UsuarioID == nil || *reg.UsuarioID != usuario || reg.InstanciaNombre != "db-110" {
+				if detalles["tareaId"] != tarea.ID.String() || reg.UsuarioID == nil || *reg.UsuarioID != usuario || reg.InstanciaNombre != "db-110" {
 					t.Fatalf("correlación incorrecta: %+v", reg)
+				}
+				if _, expuesto := detalles["upid"]; expuesto {
+					t.Fatalf("el UPID privado no debe exponerse en detalles: %v", detalles)
 				}
 				if reg.Resultado == "SUCCESS" && detalles["duracionSegundos"].(float64) < 2 {
 					t.Fatalf("duración incorrecta: %v", detalles)
@@ -181,8 +184,11 @@ func TestRF08TimeoutPersistido(t *testing.T) {
 	if err := json.Unmarshal([]byte(*fin.Detalles), &detalles); err != nil {
 		t.Fatal(err)
 	}
-	if detalles["motivo"] != "TIMEOUT" || detalles["exitstatus"] != nil || detalles["upid"] != tarea.UpidProxmox {
+	if detalles["motivo"] != "TIMEOUT" || detalles["exitstatus"] != nil || fin.Upid != tarea.UpidProxmox {
 		t.Fatalf("timeout incorrecto: %v", detalles)
+	}
+	if _, expuesto := detalles["upid"]; expuesto {
+		t.Fatalf("el UPID privado no debe exponerse en detalles: %v", detalles)
 	}
 }
 

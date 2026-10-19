@@ -43,7 +43,6 @@ type AuditoriaDTO struct {
 	InstanciaNombre string          `json:"instanciaNombre,omitempty"`
 	RecursoTipo     string          `json:"resourceType,omitempty"`
 	RecursoID       string          `json:"resourceId,omitempty"`
-	Upid            string          `json:"upid,omitempty"`
 	Resultado       string          `json:"resultado"`
 	Detalles        json.RawMessage `json:"detalles,omitempty" swaggertype:"object"`
 }
