@@ -89,9 +89,12 @@ type MuestraNodoRRD struct {
 
 // PuntoHistorialNodo es una muestra del histórico ya normalizada: los tres
 // porcentajes que dibuja el gráfico del Dashboard.
+//
+// RAM y almacenamiento se omiten cuando el punto del RRD no trae su total
+// (maxmem/maxdisk): publicar 0% hacía que el gráfico mostrara una caída al piso.
 type PuntoHistorialNodo struct {
-	Timestamp      int64   `json:"timestamp"`      // segundos UNIX
-	CPUPercent     float64 `json:"cpuPercent"`     // 0–100, 2 decimales
-	RAMPercent     float64 `json:"ramPercent"`     // 0–100, 2 decimales
-	StoragePercent float64 `json:"storagePercent"` // 0–100, 2 decimales
+	Timestamp      int64    `json:"timestamp"`                // segundos UNIX
+	CPUPercent     float64  `json:"cpuPercent"`               // 0–100, 2 decimales
+	RAMPercent     *float64 `json:"ramPercent,omitempty"`     // 0–100, 2 decimales; ausente = sin dato
+	StoragePercent *float64 `json:"storagePercent,omitempty"` // 0–100, 2 decimales; ausente = sin dato
 }
