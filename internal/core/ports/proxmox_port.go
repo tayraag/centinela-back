@@ -153,6 +153,12 @@ type ProxmoxPort interface {
 	// ObtenerMetricasRRD consulta GET /nodes/{node}/{tipo}/{vmid}/rrddata?timeframe={timeframe}.
 	ObtenerMetricasRRD(ctx context.Context, nodo, tipo string, vmid int, timeframe string) ([]domain.PuntoMetricaDTO, error)
 
+	// ObtenerMetricasNodoRRD consulta GET /nodes/{node}/rrddata?timeframe={timeframe}:
+	// el histórico del host (CPU, memoria y rootfs). Es la fuente del backfill que
+	// hace que el gráfico del Dashboard ya esté formado al entrar en vez de
+	// arrancar de cero.
+	ObtenerMetricasNodoRRD(ctx context.Context, nodo, timeframe string) ([]MuestraNodoRRD, error)
+
 	// ObtenerEstadoActual consulta GET /nodes/{node}/{tipo}/{vmid}/status/current.
 	ObtenerEstadoActual(ctx context.Context, nodo, tipo string, vmid int) (*domain.MetricasEnVivoDTO, error)
 

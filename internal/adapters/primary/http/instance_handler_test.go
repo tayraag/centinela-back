@@ -142,6 +142,10 @@ func (m *mockProxmoxPort) ObtenerMetricasRRD(ctx context.Context, nodo, tipo str
 	return nil, nil
 }
 
+func (m *mockProxmoxPort) ObtenerMetricasNodoRRD(ctx context.Context, nodo, timeframe string) ([]ports.MuestraNodoRRD, error) {
+	return nil, nil
+}
+
 func (m *mockProxmoxPort) ObtenerEstadoActual(ctx context.Context, nodo, tipo string, vmid int) (*domain.MetricasEnVivoDTO, error) {
 	return nil, nil
 }

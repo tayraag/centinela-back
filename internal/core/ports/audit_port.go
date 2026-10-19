@@ -18,10 +18,14 @@ import (
 type FiltrosAuditoria struct {
 	UsuarioID   *uuid.UUID // Filtrar por usuario específico
 	Accion      string     // Ej: "LOGIN", "CREAR_USUARIO", "INICIAR_VM"
-	InstanciaID string     // ID de la instancia Proxmox afectada
-	Resultado   string     // "SUCCESS" | "FAILED" | "PENDIENTE" | "" (todos)
-	Desde       *time.Time // Rango temporal: desde (inclusive)
-	Hasta       *time.Time // Rango temporal: hasta (inclusive)
+	// ExcluirAcciones deja afuera del listado las acciones indicadas. Se usa para
+	// que el feed del Dashboard no traiga el ruido del canal de eventos
+	// (EVENTOS_CONEXION / EVENTOS_CIERRE) sin quitarlo de la vista completa.
+	ExcluirAcciones []string
+	InstanciaID     string     // ID de la instancia Proxmox afectada
+	Resultado       string     // "SUCCESS" | "FAILED" | "PENDIENTE" | "" (todos)
+	Desde           *time.Time // Rango temporal: desde (inclusive)
+	Hasta           *time.Time // Rango temporal: hasta (inclusive)
 }
 
 // OpcionesAuditoria define paginación y ordenamiento para el listado.

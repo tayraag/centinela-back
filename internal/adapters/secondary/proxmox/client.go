@@ -680,6 +680,59 @@ type puntoRRDProxmox struct {
 	NetOut    *float64 `json:"netout"`
 	DiskRead  *float64 `json:"diskread"`
 	DiskWrite *float64 `json:"diskwrite"`
+	// Del nodo: uso y tamaño del rootfs. Proxmox también los manda en las
+	// respuestas por instancia, así que se parsean siempre y solo los usa el
+	// histórico del host.
+	Disk    *float64 `json:"disk"`
+	MaxDisk *float64 `json:"maxdisk"`
+}
+
+// ObtenerMetricasNodoRRD consulta la serie histórica del host. Es la misma
+// forma que la de instancia pero contra /nodes/{node}/rrddata, sin tipo ni vmid.
+func (c *Client) ObtenerMetricasNodoRRD(ctx context.Context, nodo, timeframe string) ([]ports.MuestraNodoRRD, error) {
+	if timeframe == "" {
+		timeframe = "hour"
+	}
+
+	path := fmt.Sprintf("/api2/json/nodes/%s/rrddata?timeframe=%s",
+		url.PathEscape(nodo),
+		url.QueryEscape(timeframe),
+	)
+
+	raw, err := c.doRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var parsed struct {
+		Data []puntoRRDProxmox `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return nil, fmt.Errorf("%w: respuesta de rrddata del nodo inválida: %v", ports.ErrProxmoxNoDisponible, err)
+	}
+
+	muestras := make([]ports.MuestraNodoRRD, 0, len(parsed.Data))
+	for _, p := range parsed.Data {
+		m := ports.MuestraNodoRRD{Timestamp: p.Time}
+		if p.CPU != nil {
+			m.CPU = *p.CPU
+		}
+		if p.Mem != nil {
+			m.MemUsada = int64(*p.Mem)
+		}
+		if p.MaxMem != nil {
+			m.MemTotal = int64(*p.MaxMem)
+		}
+		if p.Disk != nil {
+			m.DiscoUsado = int64(*p.Disk)
+		}
+		if p.MaxDisk != nil {
+			m.DiscoTotal = int64(*p.MaxDisk)
+		}
+		muestras = append(muestras, m)
+	}
+
+	return muestras, nil
 }
 
 // ObtenerMetricasRRD consulta la serie temporal histórica de métricas de una VM o contenedor.

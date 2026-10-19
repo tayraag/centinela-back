@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"el-centinela/internal/core/ports"
@@ -123,6 +124,18 @@ func parsearFiltrosAuditoria(c *gin.Context) ports.FiltrosAuditoria {
 		Accion:      c.Query("accion"),
 		InstanciaID: c.Query("instanciaId"),
 		Resultado:   c.Query("resultado"),
+	}
+
+	// excluirAccion acepta valores repetidos y separados por coma. El feed del
+	// Dashboard lo usa para no traer el ruido del canal de eventos, que hoy
+	// desplaza a los movimientos reales; la vista completa no lo manda y sigue
+	// mostrando todo.
+	for _, valor := range c.QueryArray("excluirAccion") {
+		for _, parte := range strings.Split(valor, ",") {
+			if accion := strings.TrimSpace(parte); accion != "" {
+				filtros.ExcluirAcciones = append(filtros.ExcluirAcciones, accion)
+			}
+		}
 	}
 
 	if uidStr := c.Query("usuarioId"); uidStr != "" {

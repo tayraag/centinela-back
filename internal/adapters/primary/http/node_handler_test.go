@@ -18,10 +18,17 @@ type nodoServiceFalso struct {
 	estado *ports.EstadoNodo
 	stale  bool
 	err    error
+
+	historial    []ports.PuntoHistorialNodo
+	errHistorial error
 }
 
 func (f nodoServiceFalso) ObtenerEstado(context.Context) (*ports.EstadoNodo, bool, error) {
 	return f.estado, f.stale, f.err
+}
+
+func (f nodoServiceFalso) ObtenerHistorial(context.Context) ([]ports.PuntoHistorialNodo, error) {
+	return f.historial, f.errHistorial
 }
 
 func pedirEstadoNodo(t *testing.T, svc ports.NodoService) (int, map[string]any) {

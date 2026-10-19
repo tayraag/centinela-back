@@ -226,6 +226,9 @@ func aplicarFiltros(query *gorm.DB, filtros ports.FiltrosAuditoria) *gorm.DB {
 	if filtros.Accion != "" {
 		query = query.Where("a.accion = ?", filtros.Accion)
 	}
+	if len(filtros.ExcluirAcciones) > 0 {
+		query = query.Where("a.accion NOT IN ?", filtros.ExcluirAcciones)
+	}
 	if filtros.InstanciaID != "" {
 		query = query.Where("a.instancia_id = ?", filtros.InstanciaID)
 	}
