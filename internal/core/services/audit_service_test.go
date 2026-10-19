@@ -164,7 +164,7 @@ func TestAuditService_PrepararAuditoriaTareaCorrelacion(t *testing.T) {
 			{"exito", "OK", "", "SUCCESS"},
 			{"error", "permission denied", "PROXMOX_ERROR", "FAILED"},
 			{"timeout", "", "TIMEOUT", "FAILED"},
-			{"advertencias", "WARNINGS: 1", "", "FAILED"},
+			{"advertencias", "WARNINGS: 1", "", "SUCCESS"},
 		} {
 			t.Run(accion+"/"+caso.nombre, func(t *testing.T) {
 				meta := `{"instanciaNombre":"db-110","resource_type":"lxc"}`
@@ -197,6 +197,22 @@ func TestAuditService_PrepararAuditoriaTareaCorrelacion(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestAuditService_CreacionConAdvertenciasSigueSiendoFailed(t *testing.T) {
+	svc := services.NewAuditService(newMockAuditRepository())
+	meta := `{"instanciaNombre":"web-108","resource_type":"qemu","cores":4,"ramMb":4096,"discoGb":40}`
+	tarea := domain.TareaAsincrona{
+		ID: uuid.New(), UsuarioID: uuid.New(), Accion: ports.AccionProxmoxCrearVM,
+		UpidProxmox: "UPID:pve1:qmcreate:108", InstanciaID: "108",
+		FechaCreacion: time.Now(), Metadatos: &meta,
+	}
+
+	fin := svc.PrepararAuditoriaTarea(&tarea, map[string]any{"exitstatus": "WARNINGS: 1", "motivo": nil, "error": nil}, tarea.FechaCreacion.Add(3*time.Second))
+
+	if fin.Resultado != ports.ResultadoFailed || fin.Detalles["exitstatus"] != "WARNINGS: 1" {
+		t.Fatalf("una creación con advertencias no puede considerarse exitosa: %+v", fin)
 	}
 }
 
