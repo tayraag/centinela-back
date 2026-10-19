@@ -413,14 +413,13 @@ func (s *userServiceImpl) ActualizarPerfil(ctx context.Context, usuarioID uuid.U
 		cambios["nombre_completo"] = input.NombreCompleto
 	}
 
-	if input.EmailUsuario != "" && input.EmailUsuario != usuario.EmailUsuario {
-		// Verificar unicidad en la misma organización
-		if existe, err := s.userRepo.ExisteEmailEnOrg(ctx, input.EmailUsuario, usuario.OrganizacionID, &usuarioID); err != nil {
+	if input.Nombre != nil {
+		cambios["nombre_completo"] = *input.Nombre
+	}
+	if input.EmailUsuario != nil {
+		if err := s.solicitarCambioEmail(ctx, usuario, input); err != nil {
 			return nil, err
-		} else if existe {
-			return nil, ports.ErrEmailYaRegistrado
 		}
-		cambios["email_usuario"] = input.EmailUsuario
 	}
 
 	if len(cambios) > 0 {

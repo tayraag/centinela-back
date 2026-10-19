@@ -52,7 +52,7 @@ func (h *AccountHandler) ObtenerPerfil(c *gin.Context) {
 // ActualizarPerfil permite al usuario modificar su nombre completo y email.
 //
 // @Summary      Actualizar mi perfil
-// @Description  Permite al usuario modificar su propio `nombreCompleto` y/o `emailUsuario`. No permite cambiar rol ni organización.
+// @Description  Actualiza el nombre. Un correo distinto exige contrasenaActual y codigo2fa y queda pendiente hasta confirmar el token enviado al nuevo correo.
 // @Tags         Mi cuenta
 // @Accept       json
 // @Produce      json
@@ -70,11 +70,13 @@ func (h *AccountHandler) ActualizarPerfil(c *gin.Context) {
 		return
 	}
 
-	if input.EmailUsuario != "" {
-		input.EmailUsuario = strings.ToLower(strings.TrimSpace(input.EmailUsuario))
+	if input.EmailUsuario != nil {
+		v := strings.ToLower(strings.TrimSpace(*input.EmailUsuario))
+		input.EmailUsuario = &v
 	}
 
 	userID := extraerUserID(c)
+	input.IP = c.ClientIP()
 	usuario, err := h.service.ActualizarPerfil(c.Request.Context(), userID, input)
 	if err != nil {
 		responderErrorUsuario(c, err)
@@ -120,3 +122,34 @@ func (h *AccountHandler) CambiarContrasena(c *gin.Context) {
 
 // ==========================================
 // DELETE /api/account/sessions/current
+
+type ConfirmarEmailInput struct {
+	Token string `json:"token" binding:"required,len=64,hexadecimal"`
+}
+
+// ConfirmarEmail consume el token entregado exclusivamente a la nueva casilla.
+// @Summary Confirmar mi nuevo correo
+// @Description Confirma una solicitud del usuario autenticado. Token de un solo uso, válido durante 15 minutos.
+// @Tags Mi cuenta
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param body body ConfirmarEmailInput true "Token enviado a la nueva casilla"
+// @Success 200 {object} map[string]string
+// @Failure 400 {object} ErrorResponse
+// @Failure 401 {object} ErrorResponse
+// @Failure 409 {object} ErrorResponse
+// @Failure 500 {object} ErrorResponse
+// @Router /account/profile/email/confirm [post]
+func (h *AccountHandler) ConfirmarEmail(c *gin.Context) {
+	var input ConfirmarEmailInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		SendError(c, http.StatusBadRequest, "INVALID_REQUEST", "Token inválido.")
+		return
+	}
+	if err := h.service.ConfirmarEmail(c.Request.Context(), extraerUserID(c), input.Token, c.ClientIP()); err != nil {
+		responderErrorUsuario(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "Correo confirmado correctamente."})
+}

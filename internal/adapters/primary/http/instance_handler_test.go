@@ -248,6 +248,10 @@ type mockUserRepository struct {
 	permisosVMIDs []int
 }
 
+func (m *mockUserRepository) ConfirmarCambioEmail(context.Context, uuid.UUID, string, string, ports.RegistrarAuditoriaInput) error {
+	return nil
+}
+
 func (m *mockUserRepository) ListarUsuarios(ctx context.Context, orgID uuid.UUID, filtros ports.FiltrosUsuario) (*ports.ListaUsuariosResult, error) {
 	return nil, nil
 }

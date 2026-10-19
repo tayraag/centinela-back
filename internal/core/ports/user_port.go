@@ -68,16 +68,16 @@ type PermisoInstanciaDTO struct {
 
 // UsuarioDetalleDTO es la proyección completa del usuario incluyendo instancias permitidas.
 type UsuarioDetalleDTO struct {
-	ID                        uuid.UUID  `json:"id"`
-	NombreCompleto            string     `json:"nombreCompleto"`
-	NombreUsuario             string     `json:"nombreUsuario"`
-	EmailUsuario              string     `json:"emailUsuario"`
-	OrganizacionID            uuid.UUID  `json:"organizacionId"`
-	Rol                       string     `json:"rol"`
-	Activo                    bool       `json:"activo"`
-	TotpVinculado             bool       `json:"totpVinculado"`
-	CambioContrasenaRequerido bool       `json:"cambioContrasenaRequerido"`
-	FechaCreacion             time.Time  `json:"fechaCreacion"`
+	ID                        uuid.UUID             `json:"id"`
+	NombreCompleto            string                `json:"nombreCompleto"`
+	NombreUsuario             string                `json:"nombreUsuario"`
+	EmailUsuario              string                `json:"emailUsuario"`
+	OrganizacionID            uuid.UUID             `json:"organizacionId"`
+	Rol                       string                `json:"rol"`
+	Activo                    bool                  `json:"activo"`
+	TotpVinculado             bool                  `json:"totpVinculado"`
+	CambioContrasenaRequerido bool                  `json:"cambioContrasenaRequerido"`
+	FechaCreacion             time.Time             `json:"fechaCreacion"`
 	FechaUltimoAcceso         *time.Time            `json:"fechaUltimoAcceso"`
 	InstanciasPermitidas      []int                 `json:"instanciasPermitidas"` // VMIDs de Proxmox
 	Permisos                  []PermisoInstanciaDTO `json:"permisos"`
@@ -131,8 +131,12 @@ type ActualizarUsuarioInput struct {
 
 // ActualizarPerfilInput contiene los campos que el propio usuario puede modificar de sí mismo.
 type ActualizarPerfilInput struct {
-	NombreCompleto string `json:"nombreCompleto" binding:"omitempty,min=2,max=255"`
-	EmailUsuario   string `json:"emailUsuario"   binding:"omitempty,email"`
+	Nombre           *string `json:"nombre" binding:"omitempty,min=2,max=255"`
+	NombreCompleto   string  `json:"nombreCompleto" binding:"omitempty,min=2,max=255"`
+	EmailUsuario     *string `json:"emailUsuario" binding:"omitempty,email"`
+	ContrasenaActual *string `json:"contrasenaActual"`
+	Codigo2FA        *string `json:"codigo2fa"`
+	IP               string  `json:"-"`
 }
 
 // CambiarContrasenaInput es el body para que el usuario cambie su propia contraseña.
@@ -167,6 +171,9 @@ var (
 )
 
 type UserRepository interface {
+	// ConfirmarCambioEmail actualiza el correo y registra la auditoría en la misma transacción.
+	ConfirmarCambioEmail(ctx context.Context, id uuid.UUID, original, nuevo string, audit RegistrarAuditoriaInput) error
+
 	// ListarUsuarios devuelve usuarios de una organización con filtros opcionales.
 	ListarUsuarios(ctx context.Context, orgID uuid.UUID, filtros FiltrosUsuario) (*ListaUsuariosResult, error)
 
@@ -212,8 +219,15 @@ type UserRepository interface {
 // Puerto: Servicio de Usuarios
 // ==========================================
 
+// Errores de validación y reautenticación del perfil.
+var ErrPerfilInvalido = errors.New("datos de reautenticación requeridos")
+var ErrPerfilAuth = errors.New("contraseña actual incorrecta")
+var ErrPerfilOTP = errors.New("código TOTP inválido")
+var ErrEmailToken = errors.New("token inválido o vencido")
+
 // UserService define la lógica de negocio para la gestión de usuarios.
 type UserService interface {
+	ConfirmarEmail(ctx context.Context, usuarioID uuid.UUID, token, ip string) error
 	// --- Gestión de usuarios (solo ADMIN) ---
 
 	// ListarUsuarios devuelve la lista de usuarios de la organización con estadísticas.

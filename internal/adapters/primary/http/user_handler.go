@@ -511,6 +511,12 @@ const mensajeEmailYaRegistrado = "El correo ingresado ya se encuentra registrado
 // base) es 500 y su detalle queda en el log, no en la respuesta.
 func responderErrorUsuario(c *gin.Context, err error) {
 	switch {
+	case errors.Is(err, ports.ErrPerfilInvalido), errors.Is(err, ports.ErrEmailToken):
+		SendError(c, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+	case errors.Is(err, ports.ErrPerfilAuth):
+		SendError(c, http.StatusUnauthorized, "AUTH_FAILED", "Reautenticación incorrecta.")
+	case errors.Is(err, ports.ErrPerfilOTP):
+		SendError(c, http.StatusUnauthorized, "INVALID_OTP_CODE", "Código 2FA inválido.")
 	case errors.Is(err, ports.ErrUsuarioNoEncontrado), errors.Is(err, ports.ErrUsuarioEliminado):
 		// Una cuenta eliminada es inmutable: para editarla, reactivarla o
 		// resetearla, es como si no existiera.

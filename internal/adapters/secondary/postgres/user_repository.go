@@ -350,3 +350,22 @@ func violacionUnicidad(err error) error {
 	}
 	return nil
 }
+
+// ConfirmarCambioEmail persiste el correo y su auditoría de forma atómica.
+func (r *UserRepository) ConfirmarCambioEmail(ctx context.Context, id uuid.UUID, original, nuevo string, audit ports.RegistrarAuditoriaInput) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Comparación con el correo original invalida solicitudes obsoletas.
+		result := tx.Model(&domain.Usuario{}).Where("id = ? AND email_usuario = ? AND eliminado_en IS NULL AND activo = ?", id, original, true).Update("email_usuario", nuevo)
+		if result.Error != nil {
+			if err := violacionUnicidad(result.Error); err != nil {
+				return err
+			}
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return ports.ErrEmailToken
+		}
+		// Mismo tx: el INSERT fallido revierte también la actualización del correo.
+		return (&auditRepositoryImpl{db: tx}).Registrar(ctx, audit)
+	})
+}

@@ -279,6 +279,7 @@ func main() {
 		{
 			account.GET("/profile", accountHandler.ObtenerPerfil)
 			account.PUT("/profile", accountHandler.ActualizarPerfil)
+			account.POST("/profile/email/confirm", accountHandler.ConfirmarEmail)
 			account.PUT("/password", accountHandler.CambiarContrasena)
 		}
 
