@@ -28,12 +28,17 @@ type MetricasVivoService interface {
 	// valida que el usuario siga activo y pueda ver la instancia. Devuelve
 	// ErrTicketInvalido (no existe, venció, ya se usó o la cuenta fue
 	// eliminada), ErrCuentaSuspendida o ErrAccesoInstanciaDenegado.
-	ConsumirTicket(ctx context.Context, ticket string, vmid int) (uuid.UUID, error)
+	ConsumirTicket(ctx context.Context, ticket string, vmid int) (SesionWebSocket, error)
 
 	// Vigilar se suscribe a los avisos de corte del bus y revisa periódicamente
 	// el estado del usuario y su permiso. Por el canal devuelto llega UN motivo
 	// (MotivoWS*) cuando la conexión debe cerrarse; se libera al cancelar ctx.
-	// Como el ticket solo identifica al usuario, un logout corta todas sus
-	// conexiones WebSocket, no solo las de esa sesión.
-	Vigilar(ctx context.Context, usuarioID uuid.UUID, vmid int) (<-chan string, error)
+	Vigilar(ctx context.Context, identidad SesionWebSocket, vmid int) (<-chan string, error)
+}
+
+// SesionWebSocket vincula el ticket efímero con la sesión autenticada que lo
+// emitió, permitiendo revocar conexiones de una sesión sin afectar las demás.
+type SesionWebSocket struct {
+	UsuarioID uuid.UUID `json:"usuario_id"`
+	SesionID  uuid.UUID `json:"sesion_id"`
 }

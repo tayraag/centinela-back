@@ -336,7 +336,7 @@ type WsTicketResponse struct {
 // EmitirWsTicket genera un ticket efímero de un solo uso para abrir conexiones WebSocket de métricas.
 //
 // @Summary      Generar ticket efímero para WebSocket
-// @Description  Genera un UUID criptográfico de un solo uso con TTL de 30 segundos almacenado en Redis bajo la clave `ws:ticket:<uuid>`. Permite autenticar el handshake de WebSocket sin exponer el JWT en los query parameters.
+// @Description  Genera un UUID criptográfico de un solo uso con TTL de 30 segundos almacenado en Redis bajo la clave `ws:ticket:<uuid>`, ligado al usuario y a su sesión actual. Permite autenticar el handshake de WebSocket sin exponer el JWT en los query parameters y cerrar selectivamente la conexión si esa sesión es revocada.
 // @Tags         Autenticación
 // @Produce      json
 // @Security     BearerAuth
@@ -355,13 +355,24 @@ func (h *AuthHandler) EmitirWsTicket(c *gin.Context) {
 		SendError(c, http.StatusUnauthorized, "INVALID_TOKEN", "Identificador de usuario inválido.")
 		return
 	}
+	userID, err := uuid.Parse(userIDStr)
+	if err != nil {
+		SendError(c, http.StatusUnauthorized, "INVALID_TOKEN", "Identificador de usuario inválido.")
+		return
+	}
+	sesionVal, existe := c.Get(middleware.ContextKeySesionID)
+	sesionID, ok := sesionVal.(uuid.UUID)
+	if !existe || !ok || sesionID == uuid.Nil {
+		SendError(c, http.StatusUnauthorized, "INVALID_TOKEN", "No se pudo identificar la sesión autenticada.")
+		return
+	}
 
 	ticket := uuid.New().String()
 	clave := "ws:ticket:" + ticket
 	ttl := 30 * time.Second
 
 	if h.kv != nil {
-		if err := h.kv.Set(c.Request.Context(), clave, userIDStr, ttl); err != nil {
+		if err := h.kv.Set(c.Request.Context(), clave, ports.SesionWebSocket{UsuarioID: userID, SesionID: sesionID}, ttl); err != nil {
 			SendError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Error al generar ticket de WebSocket.")
 			return
 		}

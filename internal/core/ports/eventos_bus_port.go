@@ -21,9 +21,8 @@ const (
 	MensajeEvento = "EVENT"
 	// MensajeLogout avisa que se cerró una sesión: se corta el stream de esa sesión.
 	MensajeLogout = "LOGOUT"
-	// MensajeSesionesRevocadas avisa que se revocaron todas las sesiones de un
-	// usuario (desactivación, eliminación, reset de contraseña o de 2FA): se
-	// cortan todos sus streams.
+	// MensajeSesionesRevocadas avisa una revocación masiva cuando sesionId está
+	// ausente, o la revocación selectiva de esa sesión cuando está presente.
 	MensajeSesionesRevocadas = "SESSIONS_REVOKED"
 )
 

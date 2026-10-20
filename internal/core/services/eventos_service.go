@@ -149,7 +149,7 @@ func (s *eventosService) motivoDeCierre(msg ports.MensajeBus, t ticketEventos) s
 			return MotivoLogout
 		}
 	case ports.MensajeSesionesRevocadas:
-		if msg.UsuarioID != nil && *msg.UsuarioID == t.UsuarioID {
+		if msg.UsuarioID != nil && *msg.UsuarioID == t.UsuarioID && (msg.SesionID == nil || *msg.SesionID == t.SesionID) {
 			return MotivoSesionesRevocadas
 		}
 	}

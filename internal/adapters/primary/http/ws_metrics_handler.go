@@ -113,7 +113,7 @@ func (h *MetricsWSHandler) CerrarConexiones() {
 // StreamMetrics establece el canal WebSocket y transmite métricas cada 2 segundos.
 //
 // @Summary      Canal WebSocket de métricas de instancia en tiempo real
-// @Description  Establece un canal bidireccional vía WebSocket que emite métricas instantáneas cada 2 segundos. Requiere parámetro query `?ticket=<uuid>` emitido previamente vía POST /api/auth/ws-ticket. El servidor cierra el canal con código 1008 y el motivo como reason cuando el usuario pierde el acceso: `LOGOUT` (cerró sesión; corta todas sus conexiones WebSocket), `SESSIONS_REVOKED` (baja, suspensión o reset de credenciales), `USER_INACTIVE` (suspendido o eliminado), `INSTANCE_ACCESS_DENIED` (le quitaron el permiso sobre la instancia) o `EVENTS_UNAVAILABLE` (se perdió el canal de avisos; reconectar con un ticket nuevo). Al apagarse el servidor cierra con 1001; si la instancia deja de existir, con 1000 e `INSTANCE_NOT_FOUND`. Cada mensaje es un JSON de métricas: `cpu` en porcentaje (0 a 100) y `cpu` y `mem` en null si la instancia no está encendida; si Proxmox falla en un intervalo, el mensaje no trae métricas sino `{"timestamp","vmid","status":"unavailable","error":{"errorCode":"PROXMOX_UNAVAILABLE|PROXMOX_TIMEOUT","message"}}` y la conexión sigue. Solo acepta el Origin del front (ALLOWED_ORIGINS), hasta 10 conexiones simultáneas por usuario y mensajes del cliente de hasta 512 bytes; el servidor manda un ping cada 25 s y libera la conexión si no tiene respuesta en 60 s.
+// @Description  Establece un canal bidireccional vía WebSocket que emite métricas instantáneas cada 2 segundos. Requiere parámetro query `?ticket=<uuid>` emitido previamente vía POST /api/auth/ws-ticket. El ticket identifica al usuario y a la sesión que lo emitió. El servidor cierra el canal con código 1008 y el motivo como reason cuando se pierde el acceso: `LOGOUT` (se cerró esa sesión), `SESSIONS_REVOKED` (se revocó esa sesión o todas las del usuario), `USER_INACTIVE` (suspendido o eliminado), `INSTANCE_ACCESS_DENIED` (le quitaron el permiso sobre la instancia) o `EVENTS_UNAVAILABLE` (se perdió el canal de avisos; reconectar con un ticket nuevo). Al apagarse el servidor cierra con 1001; si la instancia deja de existir, con 1000 e `INSTANCE_NOT_FOUND`. Cada mensaje es un JSON de métricas: `cpu` en porcentaje (0 a 100) y `cpu` y `mem` en null si la instancia no está encendida; si Proxmox falla en un intervalo, el mensaje no trae métricas sino `{"timestamp","vmid","status":"unavailable","error":{"errorCode":"PROXMOX_UNAVAILABLE|PROXMOX_TIMEOUT","message"}}` y la conexión sigue. Solo acepta el Origin del front (ALLOWED_ORIGINS), hasta 10 conexiones simultáneas por usuario y mensajes del cliente de hasta 512 bytes; el servidor manda un ping cada 25 s y libera la conexión si no tiene respuesta en 60 s.
 // @Tags         Métricas en tiempo real
 // @Param        vmid   path  int     true  "Identificador de instancia (VMID)"
 // @Param        ticket query string  true  "Ticket efímero de un solo uso"
@@ -146,7 +146,7 @@ func (h *MetricsWSHandler) StreamMetrics(c *gin.Context) {
 	}
 
 	// 3. Consumir el ticket (GETDEL, un solo uso) y validar usuario y permiso
-	userID, err := h.acceso.ConsumirTicket(c.Request.Context(), c.Query("ticket"), vmid)
+	identidad, err := h.acceso.ConsumirTicket(c.Request.Context(), c.Query("ticket"), vmid)
 	switch {
 	case errors.Is(err, ports.ErrTicketInvalido):
 		SendError(c, http.StatusUnauthorized, "UNAUTHORIZED", "Ticket inválido, vencido o ya utilizado.")
@@ -162,6 +162,7 @@ func (h *MetricsWSHandler) StreamMetrics(c *gin.Context) {
 		SendError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "No se pudo comprobar el acceso.")
 		return
 	}
+	userID := identidad.UsuarioID
 
 	// 4. Tope de conexiones simultáneas del usuario
 	if !h.reservarConexion(userID) {
@@ -188,7 +189,7 @@ func (h *MetricsWSHandler) StreamMetrics(c *gin.Context) {
 	//    Sin vigilancia no se abre el canal (fail-closed).
 	ctx, cancel := context.WithCancel(c.Request.Context())
 	defer cancel()
-	cortes, err := h.acceso.Vigilar(ctx, userID, vmid)
+	cortes, err := h.acceso.Vigilar(ctx, identidad, vmid)
 	if err != nil {
 		log.Printf("[WS] no se pudo vigilar el acceso de %s: %v", userID, err)
 		SendError(c, http.StatusServiceUnavailable, "EVENTS_UNAVAILABLE", "No se pudo abrir el canal de métricas. Reintente.")

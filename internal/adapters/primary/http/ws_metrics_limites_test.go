@@ -75,7 +75,7 @@ func nuevoEntornoLimitesWS(t *testing.T, limites adaptersHttp.LimitesWS) *entorn
 func (e *entornoLimitesWS) ticket(t *testing.T) string {
 	t.Helper()
 	ticket := uuid.NewString()
-	if err := e.kv.Set(context.Background(), "ws:ticket:"+ticket, e.admin.String(), 30*time.Second); err != nil {
+	if err := e.kv.Set(context.Background(), "ws:ticket:"+ticket, ports.SesionWebSocket{UsuarioID: e.admin, SesionID: uuid.New()}, 30*time.Second); err != nil {
 		t.Fatal(err)
 	}
 	return ticket

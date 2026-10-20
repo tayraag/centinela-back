@@ -14,7 +14,7 @@ import (
 )
 
 // prefijoTicketWS es la clave del ticket del WebSocket de métricas (RF-05):
-// SET ws:ticket:<uuid> <usuario_id> EX 30.
+// SET ws:ticket:<uuid> {usuario_id, sesion_id} EX 30.
 const prefijoTicketWS = "ws:ticket:"
 
 // metricasVivoService implementa ports.MetricasVivoService.
@@ -34,37 +34,37 @@ func NewMetricasVivoService(kv ports.KeyValueStore, authRepo ports.AuthRepositor
 	return &metricasVivoService{kv: kv, authRepo: authRepo, instancia: instancia, intervalo: intervalo}
 }
 
-func (s *metricasVivoService) ConsumirTicket(ctx context.Context, ticket string, vmid int) (uuid.UUID, error) {
+func (s *metricasVivoService) ConsumirTicket(ctx context.Context, ticket string, vmid int) (ports.SesionWebSocket, error) {
 	ticket = strings.TrimSpace(ticket)
 	if ticket == "" {
-		return uuid.Nil, ports.ErrTicketInvalido
+		return ports.SesionWebSocket{}, ports.ErrTicketInvalido
 	}
 	valor, err := s.kv.GetDel(ctx, prefijoTicketWS+ticket)
 	if err != nil {
 		if !errors.Is(err, ports.ErrClaveNoEncontrada) {
 			log.Printf("[WS] no se pudo validar el ticket: %v", err)
 		}
-		return uuid.Nil, ports.ErrTicketInvalido
+		return ports.SesionWebSocket{}, ports.ErrTicketInvalido
 	}
-	usuarioID, err := uuid.Parse(valor)
-	if err != nil {
-		return uuid.Nil, ports.ErrTicketInvalido
+	var identidad ports.SesionWebSocket
+	if err := json.Unmarshal([]byte(valor), &identidad); err != nil || identidad.UsuarioID == uuid.Nil || identidad.SesionID == uuid.Nil {
+		return ports.SesionWebSocket{}, ports.ErrTicketInvalido
 	}
-	motivo, err := s.verificar(ctx, usuarioID, vmid)
+	motivo, err := s.verificar(ctx, identidad.UsuarioID, vmid)
 	if err != nil {
 		// Fail-closed: si no se puede comprobar el acceso, no se abre el canal.
-		return uuid.Nil, err
+		return ports.SesionWebSocket{}, err
 	}
 	if motivo != "" {
 		switch motivo {
 		case ports.MotivoWSAccesoDenegado:
-			return uuid.Nil, ports.ErrAccesoInstanciaDenegado
+			return ports.SesionWebSocket{}, ports.ErrAccesoInstanciaDenegado
 		case ports.MotivoWSUsuarioInactivo:
-			return uuid.Nil, s.errorDeCuenta(ctx, usuarioID)
+			return ports.SesionWebSocket{}, s.errorDeCuenta(ctx, identidad.UsuarioID)
 		}
-		return uuid.Nil, ports.ErrTicketInvalido
+		return ports.SesionWebSocket{}, ports.ErrTicketInvalido
 	}
-	return usuarioID, nil
+	return identidad, nil
 }
 
 // errorDeCuenta: una cuenta eliminada no existe para la autenticación (ticket
@@ -76,7 +76,8 @@ func (s *metricasVivoService) errorDeCuenta(ctx context.Context, usuarioID uuid.
 	return ports.ErrTicketInvalido
 }
 
-func (s *metricasVivoService) Vigilar(ctx context.Context, usuarioID uuid.UUID, vmid int) (<-chan string, error) {
+func (s *metricasVivoService) Vigilar(ctx context.Context, identidad ports.SesionWebSocket, vmid int) (<-chan string, error) {
+	usuarioID := identidad.UsuarioID
 	mensajes, cancelar, err := s.kv.Subscribe(ctx, ports.CanalEventos)
 	if err != nil {
 		return nil, err
@@ -102,7 +103,7 @@ func (s *metricasVivoService) Vigilar(ctx context.Context, usuarioID uuid.UUID, 
 					}
 					return
 				}
-				if motivo := motivoDeCorteWS(m.Contenido, usuarioID); motivo != "" {
+				if motivo := motivoDeCorteWS(m.Contenido, identidad); motivo != "" {
 					cortar(motivo)
 					return
 				}
@@ -124,11 +125,14 @@ func (s *metricasVivoService) Vigilar(ctx context.Context, usuarioID uuid.UUID, 
 	return motivos, nil
 }
 
-// motivoDeCorteWS: un LOGOUT o SESSIONS_REVOKED del usuario corta todas sus
-// conexiones (el ticket no guarda la sesión).
-func motivoDeCorteWS(contenido string, usuarioID uuid.UUID) string {
+// motivoDeCorteWS aplica avisos masivos sin sesionId a todas las conexiones del
+// usuario y avisos selectivos solamente a la sesión indicada.
+func motivoDeCorteWS(contenido string, identidad ports.SesionWebSocket) string {
 	var msg ports.MensajeBus
-	if err := json.Unmarshal([]byte(contenido), &msg); err != nil || msg.UsuarioID == nil || *msg.UsuarioID != usuarioID {
+	if err := json.Unmarshal([]byte(contenido), &msg); err != nil || msg.UsuarioID == nil || *msg.UsuarioID != identidad.UsuarioID {
+		return ""
+	}
+	if msg.SesionID != nil && *msg.SesionID != identidad.SesionID {
 		return ""
 	}
 	switch msg.Tipo {

@@ -49,7 +49,7 @@ func (m *mockInstanceRepoForWS) PurgarPermisosPorVmid(_ context.Context, _ int, 
 
 type mockProxmoxForWS struct {
 	ports.ProxmoxPort
-	instancias    map[int]*ports.InstanciaProxmoxDTO
+	instancias     map[int]*ports.InstanciaProxmoxDTO
 	metricasEnVivo *domain.MetricasEnVivoDTO
 }
 
@@ -85,10 +85,12 @@ func TestAuth_EmitirWsTicket(t *testing.T) {
 
 	r := gin.New()
 	adminID := uuid.New()
+	sesionID := uuid.New()
 
 	r.POST("/api/auth/ws-ticket", func(c *gin.Context) {
 		// Simular middleware RequireAuth inyectando userID
 		c.Set("userID", adminID.String())
+		c.Set("sesionID", sesionID)
 		c.Next()
 	}, authHandler.EmitirWsTicket)
 
@@ -114,8 +116,9 @@ func TestAuth_EmitirWsTicket(t *testing.T) {
 
 	// Verificar persistencia en KV
 	val, err := kv.Get(context.Background(), "ws:ticket:"+resp.Ticket)
-	if err != nil || val != adminID.String() {
-		t.Errorf("El ticket en KV no coincide con el usuario: val=%s err=%v", val, err)
+	var identidad ports.SesionWebSocket
+	if err != nil || json.Unmarshal([]byte(val), &identidad) != nil || identidad.UsuarioID != adminID || identidad.SesionID != sesionID {
+		t.Errorf("El ticket en KV no coincide con usuario y sesión: val=%s err=%v", val, err)
 	}
 }
 
@@ -187,7 +190,7 @@ func TestMetricsWS_HandshakeYStreaming(t *testing.T) {
 
 	t.Run("falla 403 para OPERATOR sin permiso sobre la instancia", func(t *testing.T) {
 		ticket := uuid.New().String()
-		_ = kv.Set(context.Background(), "ws:ticket:"+ticket, operatorID.String(), 30*time.Second)
+		_ = kv.Set(context.Background(), "ws:ticket:"+ticket, ports.SesionWebSocket{UsuarioID: operatorID, SesionID: uuid.New()}, 30*time.Second)
 
 		// Operador no tiene permiso sobre vmid 200
 		urlSinPermiso := "ws" + strings.TrimPrefix(server.URL, "http") + "/api/ws/instances/200/metrics?ticket=" + ticket
@@ -202,7 +205,7 @@ func TestMetricsWS_HandshakeYStreaming(t *testing.T) {
 
 	t.Run("conexión exitosa con ticket válido y recepción de métricas cada 2s", func(t *testing.T) {
 		ticket := uuid.New().String()
-		_ = kv.Set(context.Background(), "ws:ticket:"+ticket, adminID.String(), 30*time.Second)
+		_ = kv.Set(context.Background(), "ws:ticket:"+ticket, ports.SesionWebSocket{UsuarioID: adminID, SesionID: uuid.New()}, 30*time.Second)
 
 		conn, resp, err := websocket.DefaultDialer.Dial(wsURL+"?ticket="+ticket, nil)
 		if err != nil {
@@ -253,7 +256,7 @@ func TestMetricsWS_HandshakeYStreaming(t *testing.T) {
 
 	t.Run("intento de reutilizar el mismo ticket es rechazado con 401", func(t *testing.T) {
 		ticketReutilizable := uuid.New().String()
-		_ = kv.Set(context.Background(), "ws:ticket:"+ticketReutilizable, adminID.String(), 30*time.Second)
+		_ = kv.Set(context.Background(), "ws:ticket:"+ticketReutilizable, ports.SesionWebSocket{UsuarioID: adminID, SesionID: uuid.New()}, 30*time.Second)
 
 		// 1er uso: OK
 		conn, _, err := websocket.DefaultDialer.Dial(wsURL+"?ticket="+ticketReutilizable, nil)
@@ -274,7 +277,8 @@ func TestMetricsWS_HandshakeYStreaming(t *testing.T) {
 
 	t.Run("un logout del usuario cierra el WebSocket con 1008 y motivo LOGOUT", func(t *testing.T) {
 		ticket := uuid.New().String()
-		_ = kv.Set(context.Background(), "ws:ticket:"+ticket, operatorID.String(), 30*time.Second)
+		sesion := uuid.New()
+		_ = kv.Set(context.Background(), "ws:ticket:"+ticket, ports.SesionWebSocket{UsuarioID: operatorID, SesionID: sesion}, 30*time.Second)
 		conn, _, err := websocket.DefaultDialer.Dial(wsURL+"?ticket="+ticket, nil)
 		if err != nil {
 			t.Fatalf("Handshake falló: %v", err)
@@ -284,7 +288,6 @@ func TestMetricsWS_HandshakeYStreaming(t *testing.T) {
 			t.Fatalf("Primer mensaje: %v", err)
 		}
 
-		sesion := uuid.New()
 		_ = kv.Publish(context.Background(), ports.CanalEventos, ports.MensajeBus{Tipo: ports.MensajeLogout, UsuarioID: &operatorID, SesionID: &sesion})
 
 		_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))

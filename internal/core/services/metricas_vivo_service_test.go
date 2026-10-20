@@ -98,6 +98,10 @@ type entornoWS struct {
 	operador uuid.UUID
 }
 
+func identidadWS(usuario uuid.UUID) ports.SesionWebSocket {
+	return ports.SesionWebSocket{UsuarioID: usuario, SesionID: uuid.New()}
+}
+
 func nuevoEntornoWS() *entornoWS {
 	admin, operador := uuid.New(), uuid.New()
 	acceso := &accesoWSFalso{
@@ -115,7 +119,7 @@ func nuevoEntornoWS() *entornoWS {
 func (e *entornoWS) ticket(t *testing.T, usuario uuid.UUID) string {
 	t.Helper()
 	ticket := uuid.NewString()
-	if err := e.kv.Set(context.Background(), "ws:ticket:"+ticket, usuario.String(), 30*time.Second); err != nil {
+	if err := e.kv.Set(context.Background(), "ws:ticket:"+ticket, identidadWS(usuario), 30*time.Second); err != nil {
 		t.Fatal(err)
 	}
 	return ticket
@@ -136,8 +140,8 @@ func TestMetricasVivo_ConsumirTicket(t *testing.T) {
 	ctx := context.Background()
 
 	ticket := e.ticket(t, e.operador)
-	if id, err := e.svc.ConsumirTicket(ctx, ticket, 110); err != nil || id != e.operador {
-		t.Fatalf("Ticket válido con permiso: %v %v", id, err)
+	if identidad, err := e.svc.ConsumirTicket(ctx, ticket, 110); err != nil || identidad.UsuarioID != e.operador || identidad.SesionID == uuid.Nil {
+		t.Fatalf("Ticket válido con permiso: %v %v", identidad, err)
 	}
 	if _, err := e.svc.ConsumirTicket(ctx, ticket, 110); !errors.Is(err, ports.ErrTicketInvalido) {
 		t.Errorf("Un ticket reutilizado debe ser inválido: %v", err)
@@ -177,23 +181,22 @@ func TestMetricasVivo_ConsumirTicket(t *testing.T) {
 func TestMetricasVivo_VigilarCortaAlPerderElAcceso(t *testing.T) {
 	casos := []struct {
 		nombre string
-		causa  func(e *entornoWS)
+		causa  func(e *entornoWS, identidad ports.SesionWebSocket)
 		motivo string
 	}{
-		{"logout", func(e *entornoWS) {
-			sesion := uuid.New()
-			_ = e.kv.Publish(context.Background(), ports.CanalEventos, ports.MensajeBus{Tipo: ports.MensajeLogout, UsuarioID: &e.operador, SesionID: &sesion})
+		{"logout", func(e *entornoWS, identidad ports.SesionWebSocket) {
+			_ = e.kv.Publish(context.Background(), ports.CanalEventos, ports.MensajeBus{Tipo: ports.MensajeLogout, UsuarioID: &e.operador, SesionID: &identidad.SesionID})
 		}, ports.MotivoWSLogout},
-		{"sesiones revocadas", func(e *entornoWS) {
+		{"sesiones revocadas", func(e *entornoWS, _ ports.SesionWebSocket) {
 			_ = e.kv.Publish(context.Background(), ports.CanalEventos, ports.MensajeBus{Tipo: ports.MensajeSesionesRevocadas, UsuarioID: &e.operador})
 		}, ports.MotivoWSSesionesRevocadas},
-		{"permiso quitado", func(e *entornoWS) {
+		{"permiso quitado", func(e *entornoWS, _ ports.SesionWebSocket) {
 			e.acceso.cambiar(func() { delete(e.acceso.permisos[e.operador], 110) })
 		}, ports.MotivoWSAccesoDenegado},
-		{"suspendido", func(e *entornoWS) {
+		{"suspendido", func(e *entornoWS, _ ports.SesionWebSocket) {
 			e.acceso.cambiar(func() { u := e.acceso.usuarios[e.operador]; u.Activo = false; e.acceso.usuarios[e.operador] = u })
 		}, ports.MotivoWSUsuarioInactivo},
-		{"eliminado", func(e *entornoWS) {
+		{"eliminado", func(e *entornoWS, _ ports.SesionWebSocket) {
 			e.acceso.cambiar(func() {
 				u := e.acceso.usuarios[e.operador]
 				ahora := time.Now()
@@ -207,18 +210,38 @@ func TestMetricasVivo_VigilarCortaAlPerderElAcceso(t *testing.T) {
 			e := nuevoEntornoWS()
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
-			cortes, err := e.svc.Vigilar(ctx, e.operador, 110)
+			identidad := identidadWS(e.operador)
+			cortes, err := e.svc.Vigilar(ctx, identidad, 110)
 			if err != nil {
 				t.Fatal(err)
 			}
 			if m := esperarMotivo(t, cortes, 100*time.Millisecond); m != "" {
 				t.Fatalf("Con acceso vigente no debe cortarse: %s", m)
 			}
-			c.causa(e)
+			c.causa(e, identidad)
 			if m := esperarMotivo(t, cortes, time.Second); m != c.motivo {
 				t.Errorf("motivo = %q, se esperaba %q", m, c.motivo)
 			}
 		})
+	}
+}
+
+func TestMetricasVivo_RevocacionSelectivaSoloCortaLaSesionIndicada(t *testing.T) {
+	e := nuevoEntornoWS()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	revocada := identidadWS(e.operador)
+	conservada := identidadWS(e.operador)
+	corteRevocada, _ := e.svc.Vigilar(ctx, revocada, 110)
+	corteConservada, _ := e.svc.Vigilar(ctx, conservada, 110)
+	_ = e.kv.Publish(ctx, ports.CanalEventos, ports.MensajeBus{
+		Tipo: ports.MensajeSesionesRevocadas, UsuarioID: &e.operador, SesionID: &revocada.SesionID,
+	})
+	if motivo := esperarMotivo(t, corteRevocada, time.Second); motivo != ports.MotivoWSSesionesRevocadas {
+		t.Fatalf("la sesión revocada no se cortó: %q", motivo)
+	}
+	if motivo := esperarMotivo(t, corteConservada, 150*time.Millisecond); motivo != "" {
+		t.Fatalf("la sesión conservada no debía cortarse: %q", motivo)
 	}
 }
 
@@ -228,7 +251,7 @@ func TestMetricasVivo_VigilarNoCortaSinMotivo(t *testing.T) {
 	e := nuevoEntornoWS()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	cortes, err := e.svc.Vigilar(ctx, e.operador, 110)
+	cortes, err := e.svc.Vigilar(ctx, identidadWS(e.operador), 110)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -249,7 +272,7 @@ func TestMetricasVivo_VigilarNoCortaSinMotivo(t *testing.T) {
 func TestMetricasVivo_VigilarTerminaAlCancelar(t *testing.T) {
 	e := nuevoEntornoWS()
 	ctx, cancel := context.WithCancel(context.Background())
-	if _, err := e.svc.Vigilar(ctx, e.operador, 110); err != nil {
+	if _, err := e.svc.Vigilar(ctx, identidadWS(e.operador), 110); err != nil {
 		t.Fatal(err)
 	}
 	cancel()

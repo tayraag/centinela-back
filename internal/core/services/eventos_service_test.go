@@ -564,6 +564,19 @@ func TestCorte_RevocarSesionesCortaTodosLosStreamsDelUsuario(t *testing.T) {
 	seCorta(t, conexion2, services.MotivoSesionesRevocadas)
 }
 
+func TestCorte_RevocacionSelectivaConservaElStreamActual(t *testing.T) {
+	e := nuevoEntornoEventos(t, "ADMIN")
+	revocada, _ := e.conectar(t)
+	conservada, _ := e.conectar(t)
+	_ = e.kv.Publish(context.Background(), ports.CanalEventos, ports.MensajeBus{
+		Tipo: ports.MensajeSesionesRevocadas, UsuarioID: &e.repo.usuario.ID, SesionID: &revocada.SesionID,
+	})
+	seCorta(t, revocada, services.MotivoSesionesRevocadas)
+	ev := eventoDe(t, ports.RecursoVM, "110")
+	_ = e.eventos.Publicar(context.Background(), ev)
+	recibeEvento(t, conservada, ev)
+}
+
 func TestCorte_UsuarioDesactivadoSeCortaEnElSiguienteEvento(t *testing.T) {
 	e := nuevoEntornoEventos(t, "ADMIN")
 	conexion, _ := e.conectar(t)
