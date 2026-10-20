@@ -18,7 +18,7 @@ func TestVerifyP4_FallbackMemoriaDevuelve503(t *testing.T) {
 	if provider == nil {
 		t.Fatal("aprovisionadorSeguro no debe devolver nil")
 	}
-	h := apihttp.NewInstanceHandler(nil, nil, nil, nil, nil, nil, provider)
+	h := apihttp.NewInstanceHandler(nil, nil, nil, nil, nil, nil, nil, provider)
 	router := gin.New()
 	router.POST("/api/instances", h.CrearInstancia)
 	body := `{"type":"VM","node":"pve1","name":"web","cpu":{"cores":1},` +

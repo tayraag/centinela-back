@@ -26,6 +26,7 @@ import (
 	"el-centinela/internal/core/domain"
 	"el-centinela/internal/core/ports"
 	"el-centinela/internal/core/services"
+	"el-centinela/internal/infrastructure/crypto"
 
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
@@ -134,17 +135,24 @@ func main() {
 		log.Fatalf("❌ PROXMOX_PROTECTED_VMIDS inválida: %v", err)
 	}
 
+	// Referencias públicas de instancias: el VMID nunca sale de la API (IDOR y
+	// enumeración). Sin el secreto la API no arranca.
+	refsInstancia, err := crypto.NuevoOfuscadorVMID(os.Getenv("INSTANCE_ID_SALT"))
+	if err != nil {
+		log.Fatalf("❌ %v (generar con: openssl rand -base64 48)", err)
+	}
+
 	// 4. Inicializar servicios de dominio (inyección de dependencias)
 	nodoNombre := valorODefecto(os.Getenv("PROXMOX_NODE"), "proxmox")
-	auditService := services.NewAuditService(auditRepo)
+	auditService := services.NewAuditService(auditRepo, refsInstancia)
 	authService := services.NewAuthService(authRepo, kvStore, emailService, auditService)
 	userService := services.NewUserService(userRepo, authRepo, kvStore, auditService, emailService)
 	cuotasService := services.NewCuotasService(proxmoxClient, proxmoxClient, kvStore)
 
 	// 5. Inicializar handlers HTTP
 	authHandler := httpHandlers.NewAuthHandler(authService, kvStore)
-	userHandler := httpHandlers.NewUserHandler(userService)
-	accountHandler := httpHandlers.NewAccountHandler(userService)
+	userHandler := httpHandlers.NewUserHandler(userService, refsInstancia)
+	accountHandler := httpHandlers.NewAccountHandler(userService, refsInstancia)
 	auditHandler := httpHandlers.NewAuditHandler(auditService)
 	eventosService := services.NewEventosService(kvStore, authRepo, instanceRepo, auditService)
 	tareaRepo := postgres.NewTareaRepository(db)
@@ -173,11 +181,11 @@ func main() {
 		})
 	seguimientoTareas.Iniciar(ctx)
 	instanceHandler := httpHandlers.NewInstanceHandlerConNodo(proxmoxClient, userRepo, seguimientoTareas, tareaRepo, auditService,
-		services.NewInventarioService(proxmoxClient), nodoNombre, aprovisionadorSeguro(kvStore, cuotasService))
-	eventsHandler := httpHandlers.NewEventsHandler(eventosService)
+		services.NewInventarioService(proxmoxClient), refsInstancia, nodoNombre, aprovisionadorSeguro(kvStore, cuotasService))
+	eventsHandler := httpHandlers.NewEventsHandler(eventosService, refsInstancia)
 	nodeHandler := httpHandlers.NewNodeHandler(services.NewNodoService(proxmoxClient, kvStore, nodoNombre), proxmoxClient, nodoNombre)
 	wsMetricsHandler := httpHandlers.NewMetricsWSHandler(proxmoxClient, services.NewMetricasVivoService(kvStore, authRepo, instanceRepo, 0),
-		nodoNombre, middleware.OrigenesPermitidos(), httpHandlers.LimitesWSPorDefecto)
+		refsInstancia, nodoNombre, middleware.OrigenesPermitidos(), httpHandlers.LimitesWSPorDefecto)
 
 	// 6. Configurar el Router HTTP (Gin)
 	// Usamos gin.New() para tener control total sobre los middlewares.
@@ -314,7 +322,7 @@ func main() {
 		// ==========================================
 		// Canal WebSocket de telemetría en tiempo real (RF-05 / RNF-06)
 		// ==========================================
-		api.GET("/ws/instances/:vmid/metrics", wsMetricsHandler.StreamMetrics)
+		api.GET("/ws/instances/:instanceRef/metrics", middleware.ResolveInstanceRef(refsInstancia, "instanceRef"), wsMetricsHandler.StreamMetrics)
 
 		// ==========================================
 		// Rutas de Instancias Proxmox
@@ -327,13 +335,18 @@ func main() {
 		{
 			instances.GET("", instanceHandler.ListarInstancias)
 			instances.POST("", middleware.RequireRole("ADMIN"), instanceHandler.CrearInstancia)
-			instances.GET("/:vmid", middleware.RequireInstanceAccess(instanceRepo, "vmid", ports.NivelAccesoReadOnly), instanceHandler.ObtenerInstancia)
-			instances.POST("/:vmid/start", middleware.RequireInstanceAccess(instanceRepo, "vmid", ports.NivelAccesoFullAccess), middleware.RejectProtectedInstance(vmidsProtegidos, "vmid"), middleware.RequireInstanceIdle(exclusion, "vmid"), instanceHandler.IniciarInstancia)
+
+			// Rutas de una instancia: :instanceRef es la referencia pública (inst_...).
+			// ResolveInstanceRef la traduce al VMID antes que nada; una referencia
+			// inválida responde 404 RESOURCE_NOT_FOUND, igual que una instancia inexistente.
 			// Las acciones destructivas llevan además RejectProtectedInstance (VMIDs de infraestructura).
-			instances.POST("/:vmid/stop", middleware.RequireInstanceAccess(instanceRepo, "vmid", ports.NivelAccesoFullAccess), middleware.RejectProtectedInstance(vmidsProtegidos, "vmid"), middleware.RequireInstanceIdle(exclusion, "vmid"), instanceHandler.DetenerInstancia)
-			instances.POST("/:vmid/status/:action", middleware.RequireInstanceAccess(instanceRepo, "vmid", ports.NivelAccesoFullAccess), middleware.RejectProtectedInstance(vmidsProtegidos, "vmid"), middleware.RequireInstanceIdle(exclusion, "vmid"), instanceHandler.CambiarEstado)
-			instances.PUT("/:vmid/config", middleware.RequireInstanceAccess(instanceRepo, "vmid", ports.NivelAccesoFullAccess), middleware.RejectProtectedInstance(vmidsProtegidos, "vmid"), middleware.RequireInstanceIdle(exclusion, "vmid"), configHandler.ActualizarConfig)
-			instances.DELETE("/:vmid", middleware.RequireRole("ADMIN"), middleware.RejectProtectedInstance(vmidsProtegidos, "vmid"), middleware.RequireInstanceIdle(exclusion, "vmid"), instanceHandler.EliminarInstancia)
+			instancia := instances.Group("/:instanceRef", middleware.ResolveInstanceRef(refsInstancia, "instanceRef"))
+			instancia.GET("", middleware.RequireInstanceAccess(instanceRepo, ports.NivelAccesoReadOnly), instanceHandler.ObtenerInstancia)
+			instancia.POST("/start", middleware.RequireInstanceAccess(instanceRepo, ports.NivelAccesoFullAccess), middleware.RejectProtectedInstance(vmidsProtegidos), middleware.RequireInstanceIdle(exclusion), instanceHandler.IniciarInstancia)
+			instancia.POST("/stop", middleware.RequireInstanceAccess(instanceRepo, ports.NivelAccesoFullAccess), middleware.RejectProtectedInstance(vmidsProtegidos), middleware.RequireInstanceIdle(exclusion), instanceHandler.DetenerInstancia)
+			instancia.POST("/status/:action", middleware.RequireInstanceAccess(instanceRepo, ports.NivelAccesoFullAccess), middleware.RejectProtectedInstance(vmidsProtegidos), middleware.RequireInstanceIdle(exclusion), instanceHandler.CambiarEstado)
+			instancia.PUT("/config", middleware.RequireInstanceAccess(instanceRepo, ports.NivelAccesoFullAccess), middleware.RejectProtectedInstance(vmidsProtegidos), middleware.RequireInstanceIdle(exclusion), configHandler.ActualizarConfig)
+			instancia.DELETE("", middleware.RequireRole("ADMIN"), middleware.RejectProtectedInstance(vmidsProtegidos), middleware.RequireInstanceIdle(exclusion), instanceHandler.EliminarInstancia)
 		}
 		// ==========================================
 		// Swagger UI: apagada por defecto.

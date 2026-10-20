@@ -87,7 +87,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Devuelve el perfil completo del usuario autenticado, incluyendo sus instancias Proxmox permitidas.",
+                "description": "Devuelve el perfil completo del usuario autenticado, incluyendo sus instancias Proxmox permitidas (como referencias públicas, el mismo id del inventario).",
                 "produces": [
                     "application/json"
                 ],
@@ -99,7 +99,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/ports.UsuarioDetalleDTO"
+                            "$ref": "#/definitions/http.UsuarioDetalleResponse"
                         }
                     },
                     "401": {
@@ -604,7 +604,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/ports.UsuarioDetalleDTO"
+                            "$ref": "#/definitions/http.UsuarioDetalleResponse"
                         }
                     },
                     "400": {
@@ -998,7 +998,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Devuelve las instancias de Proxmox a las que tiene acceso el usuario, con su nivel (FULL_ACCESS o READ_ONLY). Si no tiene permisos asignados, devuelve un array vacío.",
+                "description": "Devuelve las instancias de Proxmox a las que tiene acceso el usuario (vmid es la referencia pública, el mismo id del inventario), con su nivel (FULL_ACCESS o READ_ONLY). Si no tiene permisos asignados, devuelve un array vacío.",
                 "produces": [
                     "application/json"
                 ],
@@ -1060,7 +1060,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Reemplaza atómicamente todos los permisos de instancia del usuario, con su nivel de acceso. Envía ` + "`" + `{\"permisos\": [{\"vmid\": 100, \"nivelAcceso\": \"READ_ONLY\"}]}` + "`" + `. Si se omite nivelAcceso en un ítem, se asume FULL_ACCESS. Para quitar todos los permisos, enviar ` + "`" + `{\"permisos\": []}` + "`" + `.",
+                "description": "Reemplaza atómicamente todos los permisos de instancia del usuario, con su nivel de acceso. Envía ` + "`" + `{\"permisos\": [{\"vmid\": \"inst_...\", \"nivelAcceso\": \"READ_ONLY\"}]}` + "`" + `: ` + "`" + `vmid` + "`" + ` lleva el ` + "`" + `id` + "`" + ` de cada instancia tal como lo devuelve GET /api/instances, nunca el número. Una referencia inválida (alterada, de otro servidor o un número) responde 400 INVALID_REQUEST y no se cambia ningún permiso. Si se omite nivelAcceso en un ítem, se asume FULL_ACCESS. Para quitar todos los permisos, enviar ` + "`" + `{\"permisos\": []}` + "`" + `.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1094,12 +1094,9 @@ const docTemplate = `{
                         "description": "Sin contenido"
                     },
                     "400": {
-                        "description": "Bad Request",
+                        "description": "INVALID_REQUEST — falta permisos o algún vmid no es una referencia válida",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
+                            "$ref": "#/definitions/http.ErrorResponse"
                         }
                     },
                     "401": {
@@ -1589,7 +1586,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "OPERATIVO. Lee en vivo el inventario de Proxmox VE (VMs y contenedores). Un ADMIN recibe el cluster completo; un OPERATOR recibe únicamente las instancias que tiene asignadas. Incluye telemetría (CPU en porcentaje 0-100, RAM en bytes y MaxRam en bytes), nivel de acceso y tarea activa. Si la instancia está apagada (stopped), cpuUsage y ramUsage serán estrictamente null. ip puede ser null; activeTask es el objeto { tareaId, action, status } de la tarea RUNNING de la instancia, o null si no tiene ninguna.",
+                "description": "OPERATIVO. Lee en vivo el inventario de Proxmox VE (VMs y contenedores). Un ADMIN recibe el cluster completo; un OPERATOR recibe únicamente las instancias que tiene asignadas. ` + "`" + `id` + "`" + ` es la referencia pública opaca de la instancia (` + "`" + `inst_` + "`" + ` + 22 caracteres): es estable y es la que se usa en todas las rutas /instances/{instanceRef}; el VMID de Proxmox nunca se expone. Incluye telemetría (CPU en porcentaje 0-100, RAM en bytes y MaxRam en bytes), nivel de acceso y tarea activa. Si la instancia está apagada (stopped), cpuUsage y ramUsage serán estrictamente null. ip puede ser null; activeTask es el objeto { tareaId, action, status } de la tarea RUNNING de la instancia, o null si no tiene ninguna.",
                 "produces": [
                     "application/json"
                 ],
@@ -1639,7 +1636,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "ADMIN ONLY. El contrato plano RF-07 descrito en el body es el formato canónico. Durante la migración del frontend también se acepta el payload anidado anterior con ` + "`" + `type` + "`" + `, ` + "`" + `node` + "`" + `, ` + "`" + `name` + "`" + `, ` + "`" + `cpu.cores` + "`" + `, ` + "`" + `ram.memoryMb` + "`" + `, ` + "`" + `disk.storageId/sizeGb` + "`" + `, ` + "`" + `network.bridge/vlan/firewall/ipv4` + "`" + ` y ` + "`" + `os.templateId` + "`" + `; para LXC ese formato requiere ` + "`" + `password` + "`" + `. CuotasService usa el lock Redis ` + "`" + `lock:instance:provisioning` + "`" + ` con TTL de 30 s y hasta 2 s de espera. Consulta la capacidad cacheada (o Proxmox si falta), valida CPU lógica, RAM con 15% de headroom y disco contra ` + "`" + `avail` + "`" + ` del storage, y registra una reserva temporal. Luego obtiene el VMID mediante ` + "`" + `/cluster/nextid` + "`" + `, despacha la creación QEMU o LXC y solo responde 202 con vmid y tareaId después de persistir la tarea RUNNING y su auditoría inicial. El UPID permanece privado en el backend. El resultado llega por TASK_FINISHED con accion CREATE; cuando Proxmox finaliza con exitstatus OK, el creador recibe FULL_ACCESS y se vuelve a invalidar la capacidad.",
+                "description": "ADMIN ONLY. El contrato plano RF-07 descrito en el body es el formato canónico. Durante la migración del frontend también se acepta el payload anidado anterior con ` + "`" + `type` + "`" + `, ` + "`" + `node` + "`" + `, ` + "`" + `name` + "`" + `, ` + "`" + `cpu.cores` + "`" + `, ` + "`" + `ram.memoryMb` + "`" + `, ` + "`" + `disk.storageId/sizeGb` + "`" + `, ` + "`" + `network.bridge/vlan/firewall/ipv4` + "`" + ` y ` + "`" + `os.templateId` + "`" + `; para LXC ese formato requiere ` + "`" + `password` + "`" + `. CuotasService usa el lock Redis ` + "`" + `lock:instance:provisioning` + "`" + ` con TTL de 30 s y hasta 2 s de espera. Consulta la capacidad cacheada (o Proxmox si falta), valida CPU lógica, RAM con 15% de headroom y disco contra ` + "`" + `avail` + "`" + ` del storage, y registra una reserva temporal. Luego obtiene el VMID mediante ` + "`" + `/cluster/nextid` + "`" + `, despacha la creación QEMU o LXC y solo responde 202 con vmid (la referencia pública de la instancia, nunca el número) y tareaId después de persistir la tarea RUNNING y su auditoría inicial. El UPID permanece privado en el backend. El resultado llega por TASK_FINISHED con accion CREATE; cuando Proxmox finaliza con exitstatus OK, el creador recibe FULL_ACCESS y se vuelve a invalidar la capacidad.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1719,7 +1716,7 @@ const docTemplate = `{
                 }
             }
         },
-        "/instances/{vmid}": {
+        "/instances/{instanceRef}": {
             "get": {
                 "security": [
                     {
@@ -1736,9 +1733,9 @@ const docTemplate = `{
                 "summary": "Obtener instancia",
                 "parameters": [
                     {
-                        "type": "integer",
-                        "description": "VMID de la instancia",
-                        "name": "vmid",
+                        "type": "string",
+                        "description": "Referencia pública de la instancia (inst_...)",
+                        "name": "instanceRef",
                         "in": "path",
                         "required": true
                     }
@@ -1750,12 +1747,6 @@ const docTemplate = `{
                             "$ref": "#/definitions/http.InstanciaDetalleResponse"
                         }
                     },
-                    "400": {
-                        "description": "INVALID_VMID — el vmid de la ruta no es un número entero",
-                        "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
-                        }
-                    },
                     "401": {
                         "description": "MISSING_TOKEN | INVALID_TOKEN | TOKEN_REVOKED",
                         "schema": {
@@ -1763,13 +1754,13 @@ const docTemplate = `{
                         }
                     },
                     "403": {
-                        "description": "WRONG_TOKEN_TYPE | 2FA_REQUIRED | PASSWORD_CHANGE_REQUIRED | NO_ROLE | NO_USER | INVALID_USER_ID | INSTANCE_ACCESS_DENIED — el OPERATOR no tiene este vmid asignado",
+                        "description": "WRONG_TOKEN_TYPE | 2FA_REQUIRED | PASSWORD_CHANGE_REQUIRED | NO_ROLE | NO_USER | INVALID_USER_ID | INSTANCE_ACCESS_DENIED — el OPERATOR no tiene esta instancia asignada",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
                     },
                     "404": {
-                        "description": "INSTANCE_NOT_FOUND — la instancia no existe en Proxmox",
+                        "description": "RESOURCE_NOT_FOUND — la referencia no corresponde a ninguna instancia (token alterado, inventado o VMID numérico) o la instancia no existe en Proxmox; ambos casos responden exactamente igual",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -1810,9 +1801,9 @@ const docTemplate = `{
                 "summary": "Eliminar instancia",
                 "parameters": [
                     {
-                        "type": "integer",
-                        "description": "VMID de la instancia",
-                        "name": "vmid",
+                        "type": "string",
+                        "description": "Referencia pública de la instancia (inst_...)",
+                        "name": "instanceRef",
                         "in": "path",
                         "required": true
                     }
@@ -1824,12 +1815,6 @@ const docTemplate = `{
                             "$ref": "#/definitions/http.AccionAceptadaResponse"
                         }
                     },
-                    "400": {
-                        "description": "INVALID_VMID — el vmid de la ruta no es un número entero",
-                        "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
-                        }
-                    },
                     "401": {
                         "description": "MISSING_TOKEN | INVALID_TOKEN | TOKEN_REVOKED",
                         "schema": {
@@ -1837,13 +1822,13 @@ const docTemplate = `{
                         }
                     },
                     "403": {
-                        "description": "WRONG_TOKEN_TYPE | 2FA_REQUIRED | PASSWORD_CHANGE_REQUIRED | NO_ROLE | INVALID_ROLE | INSUFFICIENT_PERMISSIONS | INVALID_VMID | INSTANCE_PROTECTED — solo ADMIN puede eliminar instancias",
+                        "description": "WRONG_TOKEN_TYPE | 2FA_REQUIRED | PASSWORD_CHANGE_REQUIRED | NO_ROLE | INVALID_ROLE | INSUFFICIENT_PERMISSIONS | INSTANCE_PROTECTED — solo ADMIN puede eliminar instancias",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
                     },
                     "404": {
-                        "description": "INSTANCE_NOT_FOUND — la instancia no existe en Proxmox",
+                        "description": "RESOURCE_NOT_FOUND — la referencia no corresponde a ninguna instancia (token alterado, inventado o VMID numérico) o la instancia no existe en Proxmox; ambos casos responden exactamente igual",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -1881,7 +1866,7 @@ const docTemplate = `{
                 }
             }
         },
-        "/instances/{vmid}/config": {
+        "/instances/{instanceRef}/config": {
             "put": {
                 "security": [
                     {
@@ -1901,9 +1886,9 @@ const docTemplate = `{
                 "summary": "Cambiar CPU y RAM de una instancia",
                 "parameters": [
                     {
-                        "type": "integer",
-                        "description": "VMID de la instancia",
-                        "name": "vmid",
+                        "type": "string",
+                        "description": "Referencia pública de la instancia (inst_...)",
+                        "name": "instanceRef",
                         "in": "path",
                         "required": true
                     },
@@ -1925,7 +1910,7 @@ const docTemplate = `{
                         }
                     },
                     "400": {
-                        "description": "INVALID_VMID | INVALID_REQUEST — sin cores ni ramMb, o valores no enteros, menores a 1 o RAM menor a 16 MiB",
+                        "description": "INVALID_REQUEST — sin cores ni ramMb, o valores no enteros, menores a 1 o RAM menor a 16 MiB",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -1943,7 +1928,7 @@ const docTemplate = `{
                         }
                     },
                     "404": {
-                        "description": "INSTANCE_NOT_FOUND",
+                        "description": "RESOURCE_NOT_FOUND — referencia inválida o instancia inexistente (misma respuesta)",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -1981,14 +1966,14 @@ const docTemplate = `{
                 }
             }
         },
-        "/instances/{vmid}/pause": {
+        "/instances/{instanceRef}/pause": {
             "post": {
                 "security": [
                     {
                         "BearerAuth": []
                     }
                 ],
-                "description": "PLANIFICADO; NO OPERATIVO. Contrato objetivo para pausar una VM o contenedor en Proxmox VE. La ruta no está registrada y actualmente responde 404 NOT_FOUND; pause tampoco es una acción válida en POST /instances/{vmid}/status/{action} (responde 400 INVALID_ACTION).",
+                "description": "PLANIFICADO; NO OPERATIVO. Contrato objetivo para pausar una VM o contenedor en Proxmox VE. La ruta no está registrada y actualmente responde 404 NOT_FOUND; pause tampoco es una acción válida en POST /instances/{instanceRef}/status/{action} (responde 400 INVALID_ACTION).",
                 "produces": [
                     "application/json"
                 ],
@@ -1998,9 +1983,9 @@ const docTemplate = `{
                 "summary": "Pausar instancia (planificado)",
                 "parameters": [
                     {
-                        "type": "integer",
-                        "description": "VMID de la instancia",
-                        "name": "vmid",
+                        "type": "string",
+                        "description": "Referencia pública de la instancia (inst_...)",
+                        "name": "instanceRef",
                         "in": "path",
                         "required": true
                     }
@@ -2010,12 +1995,6 @@ const docTemplate = `{
                         "description": "Acción aceptada: tareaId público para correlacionar TASK_FINISHED",
                         "schema": {
                             "$ref": "#/definitions/http.AccionAceptadaResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "INVALID_VMID",
-                        "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
                         }
                     },
                     "401": {
@@ -2031,7 +2010,7 @@ const docTemplate = `{
                         }
                     },
                     "404": {
-                        "description": "INSTANCE_NOT_FOUND",
+                        "description": "RESOURCE_NOT_FOUND",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -2064,7 +2043,7 @@ const docTemplate = `{
                 "x-implementation-status": "planned"
             }
         },
-        "/instances/{vmid}/start": {
+        "/instances/{instanceRef}/start": {
             "post": {
                 "security": [
                     {
@@ -2081,9 +2060,9 @@ const docTemplate = `{
                 "summary": "Iniciar instancia",
                 "parameters": [
                     {
-                        "type": "integer",
-                        "description": "VMID de la instancia",
-                        "name": "vmid",
+                        "type": "string",
+                        "description": "Referencia pública de la instancia (inst_...)",
+                        "name": "instanceRef",
                         "in": "path",
                         "required": true
                     }
@@ -2095,12 +2074,6 @@ const docTemplate = `{
                             "$ref": "#/definitions/http.AccionAceptadaResponse"
                         }
                     },
-                    "400": {
-                        "description": "INVALID_VMID — el vmid de la ruta no es un número entero",
-                        "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
-                        }
-                    },
                     "401": {
                         "description": "MISSING_TOKEN | INVALID_TOKEN | TOKEN_REVOKED",
                         "schema": {
@@ -2108,13 +2081,13 @@ const docTemplate = `{
                         }
                     },
                     "403": {
-                        "description": "WRONG_TOKEN_TYPE | 2FA_REQUIRED | PASSWORD_CHANGE_REQUIRED | NO_ROLE | NO_USER | INVALID_USER_ID | INSTANCE_ACCESS_DENIED — el OPERATOR no tiene FULL_ACCESS sobre este vmid | INSTANCE_PROTECTED — infraestructura de El Centinela",
+                        "description": "WRONG_TOKEN_TYPE | 2FA_REQUIRED | PASSWORD_CHANGE_REQUIRED | NO_ROLE | NO_USER | INVALID_USER_ID | INSTANCE_ACCESS_DENIED — el OPERATOR no tiene FULL_ACCESS sobre esta instancia | INSTANCE_PROTECTED — infraestructura de El Centinela",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
                     },
                     "404": {
-                        "description": "INSTANCE_NOT_FOUND — la instancia no existe en Proxmox",
+                        "description": "RESOURCE_NOT_FOUND — la referencia no corresponde a ninguna instancia (token alterado, inventado o VMID numérico) o la instancia no existe en Proxmox; ambos casos responden exactamente igual",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -2152,14 +2125,14 @@ const docTemplate = `{
                 }
             }
         },
-        "/instances/{vmid}/status/{action}": {
+        "/instances/{instanceRef}/status/{action}": {
             "post": {
                 "security": [
                     {
                         "BearerAuth": []
                     }
                 ],
-                "description": "OPERATIVO. Ejecuta una acción de ciclo de vida (start, stop, shutdown, reboot) sobre una VM o contenedor. El endpoint genérico complementa a /start y /stop manteniendo retrocompatibilidad. La acción Pause NO está implementada: use POST /instances/{vmid}/pause, que hoy responde 404 NOT_FOUND.",
+                "description": "OPERATIVO. Ejecuta una acción de ciclo de vida (start, stop, shutdown, reboot) sobre una VM o contenedor. El endpoint genérico complementa a /start y /stop manteniendo retrocompatibilidad. La acción Pause NO está implementada: use POST /instances/{instanceRef}/pause, que hoy responde 404 NOT_FOUND.",
                 "produces": [
                     "application/json"
                 ],
@@ -2169,9 +2142,9 @@ const docTemplate = `{
                 "summary": "Cambiar estado de instancia",
                 "parameters": [
                     {
-                        "type": "integer",
-                        "description": "VMID de la instancia",
-                        "name": "vmid",
+                        "type": "string",
+                        "description": "Referencia pública de la instancia (inst_...)",
+                        "name": "instanceRef",
                         "in": "path",
                         "required": true
                     },
@@ -2191,7 +2164,7 @@ const docTemplate = `{
                         }
                     },
                     "400": {
-                        "description": "INVALID_VMID | INVALID_ACTION — acción distinta de start, stop, shutdown o reboot",
+                        "description": "INVALID_ACTION — acción distinta de start, stop, shutdown o reboot",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -2209,7 +2182,7 @@ const docTemplate = `{
                         }
                     },
                     "404": {
-                        "description": "INSTANCE_NOT_FOUND — la instancia no existe en Proxmox",
+                        "description": "RESOURCE_NOT_FOUND — la referencia no corresponde a ninguna instancia (token alterado, inventado o VMID numérico) o la instancia no existe en Proxmox; ambos casos responden exactamente igual",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -2247,7 +2220,7 @@ const docTemplate = `{
                 }
             }
         },
-        "/instances/{vmid}/stop": {
+        "/instances/{instanceRef}/stop": {
             "post": {
                 "security": [
                     {
@@ -2264,9 +2237,9 @@ const docTemplate = `{
                 "summary": "Detener instancia",
                 "parameters": [
                     {
-                        "type": "integer",
-                        "description": "VMID de la instancia",
-                        "name": "vmid",
+                        "type": "string",
+                        "description": "Referencia pública de la instancia (inst_...)",
+                        "name": "instanceRef",
                         "in": "path",
                         "required": true
                     }
@@ -2276,12 +2249,6 @@ const docTemplate = `{
                         "description": "Acción aceptada: tareaId público para correlacionar TASK_FINISHED",
                         "schema": {
                             "$ref": "#/definitions/http.AccionAceptadaResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "INVALID_VMID — el vmid de la ruta no es un número entero",
-                        "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
                         }
                     },
                     "401": {
@@ -2297,7 +2264,7 @@ const docTemplate = `{
                         }
                     },
                     "404": {
-                        "description": "INSTANCE_NOT_FOUND — la instancia no existe en Proxmox",
+                        "description": "RESOURCE_NOT_FOUND — la referencia no corresponde a ninguna instancia (token alterado, inventado o VMID numérico) o la instancia no existe en Proxmox; ambos casos responden exactamente igual",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -2574,18 +2541,18 @@ const docTemplate = `{
                 }
             }
         },
-        "/ws/instances/{vmid}/metrics": {
+        "/ws/instances/{instanceRef}/metrics": {
             "get": {
-                "description": "Establece un canal bidireccional vía WebSocket que emite métricas instantáneas cada 2 segundos. Requiere parámetro query ` + "`" + `?ticket=\u003cuuid\u003e` + "`" + ` emitido previamente vía POST /api/auth/ws-ticket. El ticket identifica al usuario y a la sesión que lo emitió. El servidor cierra el canal con código 1008 y el motivo como reason cuando se pierde el acceso: ` + "`" + `LOGOUT` + "`" + ` (se cerró esa sesión), ` + "`" + `SESSIONS_REVOKED` + "`" + ` (se revocó esa sesión o todas las del usuario), ` + "`" + `USER_INACTIVE` + "`" + ` (suspendido o eliminado), ` + "`" + `INSTANCE_ACCESS_DENIED` + "`" + ` (le quitaron el permiso sobre la instancia) o ` + "`" + `EVENTS_UNAVAILABLE` + "`" + ` (se perdió el canal de avisos; reconectar con un ticket nuevo). Al apagarse el servidor cierra con 1001; si la instancia deja de existir, con 1000 e ` + "`" + `INSTANCE_NOT_FOUND` + "`" + `. Cada mensaje es un JSON de métricas: ` + "`" + `cpu` + "`" + ` en porcentaje (0 a 100) y ` + "`" + `cpu` + "`" + ` y ` + "`" + `mem` + "`" + ` en null si la instancia no está encendida; si Proxmox falla en un intervalo, el mensaje no trae métricas sino ` + "`" + `{\"timestamp\",\"vmid\",\"status\":\"unavailable\",\"error\":{\"errorCode\":\"PROXMOX_UNAVAILABLE|PROXMOX_TIMEOUT\",\"message\"}}` + "`" + ` y la conexión sigue. Solo acepta el Origin del front (ALLOWED_ORIGINS), hasta 10 conexiones simultáneas por usuario y mensajes del cliente de hasta 512 bytes; el servidor manda un ping cada 25 s y libera la conexión si no tiene respuesta en 60 s.",
+                "description": "Establece un canal bidireccional vía WebSocket que emite métricas instantáneas cada 2 segundos. La ruta lleva la referencia pública de la instancia (` + "`" + `id` + "`" + ` del inventario); una referencia inválida o un VMID numérico responden 404 RESOURCE_NOT_FOUND antes de consumir el ticket. Cada mensaje identifica la instancia en ` + "`" + `vmid` + "`" + ` con la misma referencia, nunca con el número. Requiere parámetro query ` + "`" + `?ticket=\u003cuuid\u003e` + "`" + ` emitido previamente vía POST /api/auth/ws-ticket. El ticket identifica al usuario y a la sesión que lo emitió. El servidor cierra el canal con código 1008 y el motivo como reason cuando se pierde el acceso: ` + "`" + `LOGOUT` + "`" + ` (se cerró esa sesión), ` + "`" + `SESSIONS_REVOKED` + "`" + ` (se revocó esa sesión o todas las del usuario), ` + "`" + `USER_INACTIVE` + "`" + ` (suspendido o eliminado), ` + "`" + `INSTANCE_ACCESS_DENIED` + "`" + ` (le quitaron el permiso sobre la instancia) o ` + "`" + `EVENTS_UNAVAILABLE` + "`" + ` (se perdió el canal de avisos; reconectar con un ticket nuevo). Al apagarse el servidor cierra con 1001; si la instancia deja de existir, con 1000 e ` + "`" + `INSTANCE_NOT_FOUND` + "`" + `. Cada mensaje es un JSON de métricas: ` + "`" + `cpu` + "`" + ` en porcentaje (0 a 100) y ` + "`" + `cpu` + "`" + ` y ` + "`" + `mem` + "`" + ` en null si la instancia no está encendida; si Proxmox falla en un intervalo, el mensaje no trae métricas sino ` + "`" + `{\"timestamp\",\"vmid\",\"status\":\"unavailable\",\"error\":{\"errorCode\":\"PROXMOX_UNAVAILABLE|PROXMOX_TIMEOUT\",\"message\"}}` + "`" + ` y la conexión sigue. Solo acepta el Origin del front (ALLOWED_ORIGINS), hasta 10 conexiones simultáneas por usuario y mensajes del cliente de hasta 512 bytes; el servidor manda un ping cada 25 s y libera la conexión si no tiene respuesta en 60 s.",
                 "tags": [
                     "Métricas en tiempo real"
                 ],
                 "summary": "Canal WebSocket de métricas de instancia en tiempo real",
                 "parameters": [
                     {
-                        "type": "integer",
-                        "description": "Identificador de instancia (VMID)",
-                        "name": "vmid",
+                        "type": "string",
+                        "description": "Referencia pública de la instancia (inst_...)",
+                        "name": "instanceRef",
                         "in": "path",
                         "required": true
                     },
@@ -2601,12 +2568,6 @@ const docTemplate = `{
                     "101": {
                         "description": "Switching Protocols a WebSocket"
                     },
-                    "400": {
-                        "description": "INVALID_VMID",
-                        "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
-                        }
-                    },
                     "401": {
                         "description": "UNAUTHORIZED",
                         "schema": {
@@ -2620,7 +2581,7 @@ const docTemplate = `{
                         }
                     },
                     "404": {
-                        "description": "INSTANCE_NOT_FOUND",
+                        "description": "RESOURCE_NOT_FOUND — referencia inválida o la instancia no existe en Proxmox (misma respuesta en ambos casos)",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -2759,9 +2720,9 @@ const docTemplate = `{
                     "example": "0192a8b3-4f89-7e23-9a0c-0305e82c3301"
                 },
                 "vmid": {
-                    "type": "integer",
-                    "minimum": 100,
-                    "example": 115
+                    "description": "referencia pública, no el número",
+                    "type": "string",
+                    "example": "inst_3Hk9aQ2mXv7LpR4sT1bN8c"
                 }
             }
         },
@@ -3002,8 +2963,9 @@ const docTemplate = `{
                     "example": "qemu"
                 },
                 "vmid": {
-                    "type": "integer",
-                    "example": 110
+                    "description": "referencia pública, no el VMID numérico",
+                    "type": "string",
+                    "example": "inst_3Hk9aQ2mXv7LpR4sT1bN8c"
                 }
             }
         },
@@ -3039,8 +3001,8 @@ const docTemplate = `{
                     "example": 24.5
                 },
                 "id": {
-                    "type": "integer",
-                    "example": 110
+                    "type": "string",
+                    "example": "inst_3Hk9aQ2mXv7LpR4sT1bN8c"
                 },
                 "ip": {
                     "type": "string",
@@ -3148,6 +3110,45 @@ const docTemplate = `{
                     "type": "number",
                     "minimum": 0,
                     "example": 42.25
+                }
+            }
+        },
+        "http.PermisoInstanciaRequest": {
+            "type": "object",
+            "required": [
+                "vmid"
+            ],
+            "properties": {
+                "nivelAcceso": {
+                    "type": "string",
+                    "enum": [
+                        "FULL_ACCESS",
+                        "READ_ONLY"
+                    ],
+                    "example": "READ_ONLY"
+                },
+                "vmid": {
+                    "description": "referencia pública",
+                    "type": "string",
+                    "example": "inst_3Hk9aQ2mXv7LpR4sT1bN8c"
+                }
+            }
+        },
+        "http.PermisoInstanciaResponse": {
+            "type": "object",
+            "properties": {
+                "nivelAcceso": {
+                    "type": "string",
+                    "enum": [
+                        "FULL_ACCESS",
+                        "READ_ONLY"
+                    ],
+                    "example": "FULL_ACCESS"
+                },
+                "vmid": {
+                    "description": "referencia pública",
+                    "type": "string",
+                    "example": "inst_3Hk9aQ2mXv7LpR4sT1bN8c"
                 }
             }
         },
@@ -3291,7 +3292,7 @@ const docTemplate = `{
                 },
                 "recursoId": {
                     "type": "string",
-                    "example": "110"
+                    "example": "inst_3Hk9aQ2mXv7LpR4sT1bN8c"
                 },
                 "recursoTipo": {
                     "type": "string",
@@ -3529,6 +3530,62 @@ const docTemplate = `{
                 }
             }
         },
+        "http.UsuarioDetalleResponse": {
+            "type": "object",
+            "properties": {
+                "activo": {
+                    "type": "boolean"
+                },
+                "cambioContrasenaRequerido": {
+                    "type": "boolean"
+                },
+                "eliminadoEn": {
+                    "type": "string"
+                },
+                "emailUsuario": {
+                    "type": "string"
+                },
+                "fechaCreacion": {
+                    "type": "string"
+                },
+                "fechaUltimoAcceso": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "instanciasPermitidas": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "example": [
+                        "inst_3Hk9aQ2mXv7LpR4sT1bN8c"
+                    ]
+                },
+                "nombreCompleto": {
+                    "type": "string"
+                },
+                "nombreUsuario": {
+                    "type": "string"
+                },
+                "organizacionId": {
+                    "type": "string"
+                },
+                "permisos": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/http.PermisoInstanciaResponse"
+                    }
+                },
+                "rol": {
+                    "type": "string"
+                },
+                "totpVinculado": {
+                    "type": "boolean"
+                }
+            }
+        },
         "http.WsTicketResponse": {
             "type": "object",
             "properties": {
@@ -3549,7 +3606,7 @@ const docTemplate = `{
                 "permisos": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/ports.PermisoInstanciaInput"
+                        "$ref": "#/definitions/http.PermisoInstanciaRequest"
                     }
                 }
             }
@@ -3581,7 +3638,7 @@ const docTemplate = `{
                 "permisos": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/ports.PermisoInstanciaInput"
+                        "$ref": "#/definitions/http.PermisoInstanciaResponse"
                     }
                 }
             }
@@ -3831,29 +3888,6 @@ const docTemplate = `{
                 }
             }
         },
-        "ports.PermisoInstanciaDTO": {
-            "type": "object",
-            "properties": {
-                "nivelAcceso": {
-                    "description": "\"FULL_ACCESS\" | \"READ_ONLY\"",
-                    "type": "string"
-                },
-                "vmid": {
-                    "type": "integer"
-                }
-            }
-        },
-        "ports.PermisoInstanciaInput": {
-            "type": "object",
-            "properties": {
-                "nivelAcceso": {
-                    "type": "string"
-                },
-                "vmid": {
-                    "type": "integer"
-                }
-            }
-        },
         "ports.PuntoHistorialNodo": {
             "type": "object",
             "properties": {
@@ -3921,61 +3955,6 @@ const docTemplate = `{
                 "expiresIn": {
                     "description": "segundos hasta expiración del access token",
                     "type": "integer"
-                }
-            }
-        },
-        "ports.UsuarioDetalleDTO": {
-            "type": "object",
-            "properties": {
-                "activo": {
-                    "type": "boolean"
-                },
-                "cambioContrasenaRequerido": {
-                    "type": "boolean"
-                },
-                "eliminadoEn": {
-                    "description": "solo si el usuario fue eliminado (DELETE)",
-                    "type": "string"
-                },
-                "emailUsuario": {
-                    "type": "string"
-                },
-                "fechaCreacion": {
-                    "type": "string"
-                },
-                "fechaUltimoAcceso": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "instanciasPermitidas": {
-                    "description": "VMIDs de Proxmox",
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
-                },
-                "nombreCompleto": {
-                    "type": "string"
-                },
-                "nombreUsuario": {
-                    "type": "string"
-                },
-                "organizacionId": {
-                    "type": "string"
-                },
-                "permisos": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/ports.PermisoInstanciaDTO"
-                    }
-                },
-                "rol": {
-                    "type": "string"
-                },
-                "totpVinculado": {
-                    "type": "boolean"
                 }
             }
         },

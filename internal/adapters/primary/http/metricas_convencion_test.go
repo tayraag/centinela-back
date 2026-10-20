@@ -45,14 +45,14 @@ func TestMetricas_PorcentajeYNullCuandoEstaApagada(t *testing.T) {
 		110: {Vmid: 110, Nombre: "web", Tipo: "qemu", Nodo: "pve", Estado: "running", Cpu: 0.2449, Mem: 1024, MaxMem: 4096, MaxCpu: 2},
 		201: {Vmid: 201, Nombre: "db", Tipo: "lxc", Nodo: "pve", Estado: "stopped", Cpu: 0, Mem: 0, MaxMem: 2048, MaxCpu: 1},
 	}}
-	h := adaptersHttp.NewInstanceHandler(px, &mockUserRepository{}, seguimientoNulo{}, &mockTareaRepository{}, &mockAuditService{}, inventarioNulo{})
+	h := adaptersHttp.NewInstanceHandler(px, &mockUserRepository{}, seguimientoNulo{}, &mockTareaRepository{}, &mockAuditService{}, inventarioNulo{}, adaptersHttp.RefsPrueba)
 	r := gin.New()
 	r.Use(func(c *gin.Context) {
 		c.Set(string(middleware.ContextKeyRol), "ADMIN")
 		c.Set(string(middleware.ContextKeyUserID), uuid.New().String())
 	})
 	r.GET("/api/instances", h.ListarInstancias)
-	r.GET("/api/instances/:vmid", h.ObtenerInstancia)
+	r.GET("/api/instances/:vmid", adaptersHttp.ResolverPrueba, h.ObtenerInstancia)
 	pedir := func(ruta string) any {
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, ruta, nil))
@@ -64,26 +64,26 @@ func TestMetricas_PorcentajeYNullCuandoEstaApagada(t *testing.T) {
 		return cuerpo
 	}
 
-	inventario := map[float64]map[string]any{}
+	inventario := map[string]map[string]any{}
 	for _, i := range pedir("/api/instances").([]any) {
 		inst := i.(map[string]any)
-		inventario[inst["id"].(float64)] = inst
+		inventario[inst["id"].(string)] = inst
 	}
-	if inventario[110]["cpuUsage"] != 24.49 || inventario[110]["ramUsage"] != float64(1024) {
-		t.Errorf("Inventario, encendida: cpuUsage en porcentaje y ramUsage: %v", inventario[110])
+	if inventario[adaptersHttp.RefInst(110)]["cpuUsage"] != 24.49 || inventario[adaptersHttp.RefInst(110)]["ramUsage"] != float64(1024) {
+		t.Errorf("Inventario, encendida: cpuUsage en porcentaje y ramUsage: %v", inventario[adaptersHttp.RefInst(110)])
 	}
-	if v, ok := inventario[201]["cpuUsage"]; !ok || v != nil {
-		t.Errorf("Inventario, apagada: cpuUsage debe ser null: %v", inventario[201])
+	if v, ok := inventario[adaptersHttp.RefInst(201)]["cpuUsage"]; !ok || v != nil {
+		t.Errorf("Inventario, apagada: cpuUsage debe ser null: %v", inventario[adaptersHttp.RefInst(201)])
 	}
-	if v, ok := inventario[201]["ramUsage"]; !ok || v != nil {
-		t.Errorf("Inventario, apagada: ramUsage debe ser null: %v", inventario[201])
+	if v, ok := inventario[adaptersHttp.RefInst(201)]["ramUsage"]; !ok || v != nil {
+		t.Errorf("Inventario, apagada: ramUsage debe ser null: %v", inventario[adaptersHttp.RefInst(201)])
 	}
 
-	encendida := pedir("/api/instances/110").(map[string]any)
+	encendida := pedir(adaptersHttp.ConRef("/api/instances/110")).(map[string]any)
 	if encendida["cpu"] != 24.49 || encendida["mem"] != float64(1024) || encendida["maxMem"] != float64(4096) {
 		t.Errorf("Detalle, encendida: cpu en porcentaje: %v", encendida)
 	}
-	apagada := pedir("/api/instances/201").(map[string]any)
+	apagada := pedir(adaptersHttp.ConRef("/api/instances/201")).(map[string]any)
 	if v, ok := apagada["cpu"]; !ok || v != nil {
 		t.Errorf("Detalle, apagada: cpu debe ser null: %v", apagada)
 	}

@@ -157,16 +157,16 @@ func TestMetricsWS_HandshakeYStreaming(t *testing.T) {
 		},
 	}
 
-	wsHandler := adaptersHttp.NewMetricsWSHandler(proxmoxMock, services.NewMetricasVivoService(kv, authRepo, instanceRepo, 0), "proxmox",
+	wsHandler := adaptersHttp.NewMetricsWSHandler(proxmoxMock, services.NewMetricasVivoService(kv, authRepo, instanceRepo, 0), adaptersHttp.RefsPrueba, "proxmox",
 		map[string]struct{}{}, adaptersHttp.LimitesWSPorDefecto)
 
 	r := gin.New()
-	r.GET("/api/ws/instances/:vmid/metrics", wsHandler.StreamMetrics)
+	r.GET("/api/ws/instances/:vmid/metrics", adaptersHttp.ResolverPrueba, wsHandler.StreamMetrics)
 
 	server := httptest.NewServer(r)
 	defer server.Close()
 
-	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/api/ws/instances/100/metrics"
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + adaptersHttp.ConRef("/api/ws/instances/100/metrics")
 
 	t.Run("falla 401 sin ticket", func(t *testing.T) {
 		_, resp, err := websocket.DefaultDialer.Dial(wsURL, nil)
@@ -193,7 +193,7 @@ func TestMetricsWS_HandshakeYStreaming(t *testing.T) {
 		_ = kv.Set(context.Background(), "ws:ticket:"+ticket, ports.SesionWebSocket{UsuarioID: operatorID, SesionID: uuid.New()}, 30*time.Second)
 
 		// Operador no tiene permiso sobre vmid 200
-		urlSinPermiso := "ws" + strings.TrimPrefix(server.URL, "http") + "/api/ws/instances/200/metrics?ticket=" + ticket
+		urlSinPermiso := "ws" + strings.TrimPrefix(server.URL, "http") + adaptersHttp.ConRef("/api/ws/instances/200/metrics?ticket=") + ticket
 		_, resp, err := websocket.DefaultDialer.Dial(urlSinPermiso, nil)
 		if err == nil {
 			t.Fatal("Se esperaba error de conexión por 403")
@@ -224,11 +224,14 @@ func TestMetricsWS_HandshakeYStreaming(t *testing.T) {
 			t.Fatalf("Error leyendo primer mensaje de métricas: %v", err)
 		}
 
-		var metrica1 domain.MetricasEnVivoDTO
+		var metrica1 struct {
+			VMID string `json:"vmid"`
+			domain.MetricasEnVivoDTO
+		}
 		if err := json.Unmarshal(msg1, &metrica1); err != nil {
 			t.Fatalf("Error parseando métricas JSON: %v", err)
 		}
-		if metrica1.VMID != 100 || metrica1.Status != "running" {
+		if metrica1.VMID != adaptersHttp.RefInst(100) || strings.Contains(string(msg1), `"vmid":100`) || metrica1.Status != "running" {
 			t.Errorf("Métrica 1 inesperada: %+v", metrica1)
 		}
 
@@ -239,11 +242,14 @@ func TestMetricsWS_HandshakeYStreaming(t *testing.T) {
 			t.Fatalf("Error leyendo segundo intervalo de métricas: %v", err)
 		}
 
-		var metrica2 domain.MetricasEnVivoDTO
+		var metrica2 struct {
+			VMID string `json:"vmid"`
+			domain.MetricasEnVivoDTO
+		}
 		if err := json.Unmarshal(msg2, &metrica2); err != nil {
 			t.Fatalf("Error parseando métricas 2 JSON: %v", err)
 		}
-		if metrica2.VMID != 100 {
+		if metrica2.VMID != adaptersHttp.RefInst(100) {
 			t.Errorf("Métrica 2 inesperada: %+v", metrica2)
 		}
 

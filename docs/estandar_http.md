@@ -56,15 +56,14 @@ Cuando la API devuelva un error (códigos 400 a 500), el cuerpo de la respuesta 
 
 | HTTP | errorCode | Cuándo |
 | ---- | --------- | ------ |
-| 400 | `INVALID_VMID` | El vmid de la ruta no es un número. |
 | 403 | `INSTANCE_ACCESS_DENIED` | El OPERATOR no tiene permiso (o nivel suficiente) sobre la instancia. |
 | 400 | `INVALID_ACTION` | La acción de `/status/:action` no es `start`, `stop`, `shutdown` ni `reboot`. |
-| 403 | `INSTANCE_PROTECTED` | La instancia es infraestructura de El Centinela (VMID 100–105, configurable con `PROXMOX_PROTECTED_VMIDS`) y no admite operaciones de energía (`start`, `stop`, `shutdown`, `reboot`). |
-| 409 | `INSTANCE_INVALID_STATE` | `DELETE /api/instances/:vmid` sobre una instancia que no está `stopped`. Hay que apagarla antes de borrarla. |
+| 403 | `INSTANCE_PROTECTED` | La instancia es infraestructura de El Centinela (VMID 100–105 en Proxmox, configurable con `PROXMOX_PROTECTED_VMIDS`) y no admite operaciones de energía (`start`, `stop`, `shutdown`, `reboot`). |
+| 409 | `INSTANCE_INVALID_STATE` | `DELETE /api/instances/:instanceRef` sobre una instancia que no está `stopped`. Hay que apagarla antes de borrarla. |
 | 409 | `INSTANCE_INVALID_STATE` | El estado actual es incompatible con la acción: `start` exige `stopped`; `stop`, `shutdown` y `reboot` exigen `running`. Se valida antes de enviar órdenes a Proxmox. |
-| 404 | `INSTANCE_NOT_FOUND` | El vmid no existe en Proxmox. |
+| 404 | `RESOURCE_NOT_FOUND` | La referencia de la ruta (`:instanceRef`, `inst_...`) no corresponde a ninguna instancia: está alterada, es inventada, es de otro servidor o es un VMID numérico; o la instancia no existe en Proxmox. Los dos casos responden exactamente igual, para que el error no sirva para probar referencias. |
 | 409 | `INSTANCE_BUSY` | La instancia está ejecutando otra tarea: hay una tarea `RUNNING` suya, otra operación tiene el lock `lock:instance:{vmid}:operation`, o Proxmox la tiene bloqueada. Lo responde la guarda `RequireInstanceIdle` sin contactar a Proxmox. Reintentar cuando llegue el `TASK_FINISHED` de la tarea anterior. |
-| 409 | `RESOURCE_QUOTA_EXCEEDED` | Lo pedido no entra en el margen del nodo (RAM con 15% de headroom, vCPU o storage): al crear una instancia, o al aumentar su CPU/RAM con `PUT /api/instances/:vmid/config` (se compara solo el incremento). No se escribió nada en Proxmox. |
+| 409 | `RESOURCE_QUOTA_EXCEEDED` | Lo pedido no entra en el margen del nodo (RAM con 15% de headroom, vCPU o storage): al crear una instancia, o al aumentar su CPU/RAM con `PUT /api/instances/:instanceRef/config` (se compara solo el incremento). No se escribió nada en Proxmox. |
 | 503 | `INSTANCE_LOCK_UNAVAILABLE` | No se pudo verificar si la instancia está ocupada (falló la consulta de tareas en curso). No se envió nada a Proxmox; se puede reintentar. |
 | 502 | `PROXMOX_UNAVAILABLE` | Proxmox no está disponible: red caída, token rechazado o error del propio Proxmox. La orden **no** llegó a aplicarse. |
 | 504 | `PROXMOX_TIMEOUT` | Proxmox no respondió a tiempo. **La orden pudo haberse aplicado**: en acciones de energía, verificar el estado de la instancia antes de reintentar. |
@@ -179,7 +178,7 @@ El recurso existe pero su estado actual impide la operación.
 - DELETE /bloques/{id} → 409 si el bloque tiene turnos activos
 - POST /reservas-temporales → 409 si el slot no tiene disponibilidad
 - POST /lista-espera → 409 si ya existe una inscripción activa para ese trámite
-- POST /api/instances/{vmid}/stop → 409 `INSTANCE_BUSY` si la instancia todavía está procesando un `start`
+- POST /api/instances/{instanceRef}/stop → 409 `INSTANCE_BUSY` si la instancia todavía está procesando un `start`
 
 **Distinción con 400 y 404:**
 - *Situación:* Datos del request inválidos o malformados → **400**

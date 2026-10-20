@@ -4,7 +4,6 @@ import (
 	"errors"
 	"log"
 	"net/http"
-	"strconv"
 
 	"el-centinela/internal/core/ports"
 
@@ -18,16 +17,13 @@ import (
 // o en curso (tarea RUNNING en tareas_asincronas), responde 409 INSTANCE_BUSY
 // sin llegar al handler, así que no se contacta a Proxmox.
 //
-// Va después de RequireInstanceAccess y RejectProtectedInstance: un pedido sin
+// Va después de ResolveInstanceRef, RequireInstanceAccess y RejectProtectedInstance: un pedido sin
 // permiso nunca llega a tomar el lock.
-func RequireInstanceIdle(exclusion ports.ExclusionInstancias, paramVmid string) gin.HandlerFunc {
+func RequireInstanceIdle(exclusion ports.ExclusionInstancias) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		vmid, err := strconv.Atoi(c.Param(paramVmid))
-		if err != nil || vmid <= 0 {
-			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{
-				"errorCode": "INVALID_VMID",
-				"message":   "El identificador de instancia debe ser un número entero válido.",
-			})
+		vmid, ok := VmidResuelto(c)
+		if !ok {
+			AbortRecursoNoEncontrado(c)
 			return
 		}
 

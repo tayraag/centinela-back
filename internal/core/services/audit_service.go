@@ -5,8 +5,10 @@ import (
 	"context"
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 	"time"
 
@@ -19,11 +21,77 @@ import (
 // auditServiceImpl implementa ports.AuditService.
 type auditServiceImpl struct {
 	repo ports.AuditRepository
+	refs ports.ReferenciasInstancia // VMID guardado -> referencia pública en listado y exportaciones
 }
 
-// NewAuditService crea una nueva instancia del servicio de auditoría.
-func NewAuditService(repo ports.AuditRepository) ports.AuditService {
-	return &auditServiceImpl{repo: repo}
+// NewAuditService crea una nueva instancia del servicio de auditoría. refs
+// traduce el VMID de cada registro a la referencia pública en el listado y las
+// exportaciones (y el filtro instanciaId de vuelta al VMID). Sin refs esos
+// campos salen vacíos: el VMID nunca se expone.
+func NewAuditService(repo ports.AuditRepository, refs ...ports.ReferenciasInstancia) ports.AuditService {
+	s := &auditServiceImpl{repo: repo, refs: refsNulas{}}
+	if len(refs) > 0 && refs[0] != nil {
+		s.refs = refs[0]
+	}
+	return s
+}
+
+// refsNulas no traduce nada: sin traductor configurado, ningún VMID sale.
+type refsNulas struct{}
+
+func (refsNulas) OfuscarVMID(int) (string, error)    { return "", errSinReferencias }
+func (refsNulas) DesofuscarVMID(string) (int, error) { return 0, errSinReferencias }
+
+var errSinReferencias = errors.New("sin traductor de referencias de instancia")
+
+// filtroInterno traduce el filtro instanciaId (referencia pública) al VMID que
+// guarda la tabla. false si la referencia no es válida: no hay registros que
+// mostrar (un VMID numérico tampoco se acepta como filtro).
+func (s *auditServiceImpl) filtroInterno(filtros ports.FiltrosAuditoria) (ports.FiltrosAuditoria, bool) {
+	if filtros.InstanciaID == "" {
+		return filtros, true
+	}
+	vmid, err := s.refs.DesofuscarVMID(filtros.InstanciaID)
+	if err != nil {
+		return filtros, false
+	}
+	filtros.InstanciaID = strconv.Itoa(vmid)
+	return filtros, true
+}
+
+// publicos devuelve una copia de los registros con el VMID reemplazado por la
+// referencia pública: instanciaId, resourceId (VM y LXC) y los VMID dentro de
+// detalles.
+func (s *auditServiceImpl) publicos(originales []ports.AuditoriaDTO) []ports.AuditoriaDTO {
+	registros := make([]ports.AuditoriaDTO, len(originales))
+	copy(registros, originales)
+	for i := range registros {
+		r := &registros[i]
+		if len(r.Detalles) > 0 {
+			r.Detalles = json.RawMessage(ports.DetallesAuditoriaPublicos(s.refs, string(r.Detalles), r.InstanciaID))
+		}
+		if r.RecursoTipo == ports.RecursoVM || r.RecursoTipo == ports.RecursoLXC {
+			r.RecursoID = ports.IDInstanciaPublico(s.refs, r.RecursoID)
+		}
+		r.InstanciaID = ports.IDInstanciaPublico(s.refs, r.InstanciaID)
+	}
+	return registros
+}
+
+// registrosExportables devuelve los registros de las exportaciones ya traducidos.
+func (s *auditServiceImpl) registrosExportables(ctx context.Context, orgID uuid.UUID, filtros ports.FiltrosAuditoria) ([]ports.AuditoriaDTO, error) {
+	filtros, valido := s.filtroInterno(filtros)
+	if !valido {
+		return []ports.AuditoriaDTO{}, nil
+	}
+	registros, err := s.repo.ExportarRegistros(ctx, orgID, filtros)
+	if err != nil {
+		return nil, fmt.Errorf("error al obtener registros para exportar: %w", err)
+	}
+	if registros == nil {
+		registros = []ports.AuditoriaDTO{}
+	}
+	return s.publicos(registros), nil
 }
 
 // ==========================================
@@ -75,7 +143,16 @@ func (s *auditServiceImpl) ListarAuditoria(ctx context.Context, orgID uuid.UUID,
 		opciones.Direccion = "desc"
 	}
 
-	return s.repo.Listar(ctx, orgID, filtros, opciones)
+	filtros, valido := s.filtroInterno(filtros)
+	if !valido {
+		return &ports.PaginaAuditoria{Pagina: opciones.Pagina, Items: []ports.AuditoriaDTO{}}, nil
+	}
+	pagina, err := s.repo.Listar(ctx, orgID, filtros, opciones)
+	if err != nil || pagina == nil {
+		return pagina, err
+	}
+	pagina.Items = s.publicos(pagina.Items)
+	return pagina, nil
 }
 
 // ==========================================
@@ -84,9 +161,9 @@ func (s *auditServiceImpl) ListarAuditoria(ctx context.Context, orgID uuid.UUID,
 
 // ExportarCSV construye y devuelve un archivo CSV con todos los registros que cumplen los filtros.
 func (s *auditServiceImpl) ExportarCSV(ctx context.Context, orgID uuid.UUID, filtros ports.FiltrosAuditoria) ([]byte, error) {
-	registros, err := s.repo.ExportarRegistros(ctx, orgID, filtros)
+	registros, err := s.registrosExportables(ctx, orgID, filtros)
 	if err != nil {
-		return nil, fmt.Errorf("error al obtener registros para exportar: %w", err)
+		return nil, err
 	}
 
 	var buf bytes.Buffer
@@ -141,9 +218,9 @@ func (s *auditServiceImpl) ExportarCSV(ctx context.Context, orgID uuid.UUID, fil
 
 // ExportarJSON construye y devuelve un archivo JSON con todos los registros que cumplen los filtros.
 func (s *auditServiceImpl) ExportarJSON(ctx context.Context, orgID uuid.UUID, filtros ports.FiltrosAuditoria) ([]byte, error) {
-	registros, err := s.repo.ExportarRegistros(ctx, orgID, filtros)
+	registros, err := s.registrosExportables(ctx, orgID, filtros)
 	if err != nil {
-		return nil, fmt.Errorf("error al obtener registros para exportar: %w", err)
+		return nil, err
 	}
 
 	data, err := json.MarshalIndent(registros, "", "  ")

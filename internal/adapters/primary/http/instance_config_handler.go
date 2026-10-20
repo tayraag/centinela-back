@@ -18,12 +18,12 @@ type InstanceConfigHandler struct {
 	audit    ports.AuditService
 }
 
-// NewInstanceConfigHandler crea el handler de PUT /api/instances/:vmid/config.
+// NewInstanceConfigHandler crea el handler de PUT /api/instances/:instanceRef/config.
 func NewInstanceConfigHandler(servicio ports.ConfiguracionInstancias, audit ports.AuditService) *InstanceConfigHandler {
 	return &InstanceConfigHandler{servicio: servicio, audit: audit}
 }
 
-// ConfigInstanciaRequest es el cuerpo de PUT /api/instances/:vmid/config. Al
+// ConfigInstanciaRequest es el cuerpo de PUT /api/instances/:instanceRef/config. Al
 // menos uno de los dos campos; los que vengan, enteros positivos.
 type ConfigInstanciaRequest struct {
 	Cores *int `json:"cores" minimum:"1" example:"4"`
@@ -44,19 +44,19 @@ type ConfigInstanciaResponse struct {
 // @Accept       json
 // @Produce      json
 // @Security     BearerAuth
-// @Param        vmid path int                    true "VMID de la instancia"
-// @Param        body body ConfigInstanciaRequest true "Nuevos cores y/o RAM"
+// @Param        instanceRef path string               true "Referencia pública de la instancia (inst_...)"
+// @Param        body        body ConfigInstanciaRequest true "Nuevos cores y/o RAM"
 // @Success      200 {object} ConfigInstanciaResponse
-// @Failure      400 {object} ErrorResponse "INVALID_VMID | INVALID_REQUEST — sin cores ni ramMb, o valores no enteros, menores a 1 o RAM menor a 16 MiB"
+// @Failure      400 {object} ErrorResponse "INVALID_REQUEST — sin cores ni ramMb, o valores no enteros, menores a 1 o RAM menor a 16 MiB"
 // @Failure      401 {object} ErrorResponse "MISSING_TOKEN | INVALID_TOKEN | TOKEN_REVOKED"
 // @Failure      403 {object} ErrorResponse "INSTANCE_ACCESS_DENIED — se requiere FULL_ACCESS (READ_ONLY no alcanza) | INSTANCE_PROTECTED — infraestructura de El Centinela"
-// @Failure      404 {object} ErrorResponse "INSTANCE_NOT_FOUND"
+// @Failure      404 {object} ErrorResponse "RESOURCE_NOT_FOUND — referencia inválida o instancia inexistente (misma respuesta)"
 // @Failure      409 {object} ErrorResponse "RESOURCE_QUOTA_EXCEEDED — el incremento supera el margen del nodo; no se escribió en Proxmox | INSTANCE_BUSY — otra operación en curso o la config cambió en el medio"
 // @Failure      500 {object} ErrorResponse "AUDIT_PERSISTENCE_FAILED — la operación terminó, pero PostgreSQL no pudo confirmar su auditoría; verificar el estado antes de reintentar"
 // @Failure      502 {object} ErrorResponse "PROXMOX_UNAVAILABLE | CONFIG_APPLIED_VERIFICATION_FAILED — Proxmox aceptó el cambio, pero no se pudo determinar si requiere reinicio"
 // @Failure      503 {object} ErrorResponse "INSTANCE_LOCK_UNAVAILABLE | PROVISIONING_COORDINATION_UNAVAILABLE — no se pudo coordinar la validación de capacidad"
 // @Failure      504 {object} ErrorResponse "PROXMOX_TIMEOUT"
-// @Router       /instances/{vmid}/config [put]
+// @Router       /instances/{instanceRef}/config [put]
 func (h *InstanceConfigHandler) ActualizarConfig(c *gin.Context) {
 	vmid, ok := extraerVmid(c)
 	if !ok {

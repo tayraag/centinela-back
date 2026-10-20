@@ -39,6 +39,7 @@ Editar `.env` con valores reales. Los campos obligatorios son:
 | `JWT_ACCESS_TTL_HOURS` | Vida del access token en horas                                       | `8`                                     |
 | `JWT_REFRESH_TTL_DAYS` | Vida del refresh token en días                                       | `30`                                    |
 | `TOTP_ENCRYPTION_KEY`  | Clave AES-256 para cifrar secretos TOTP (exactamente 32 chars ASCII) | `0123456789abcdef0123456789abcdef`      |
+| `INSTANCE_ID_SALT`     | Secreto (≥32 chars) que cifra el VMID en la referencia pública `inst_...` de cada instancia. Sin él la API no arranca; si cambia, cambian todas las referencias | `openssl rand -base64 48`               |
 | `APP_NAME`             | Nombre que aparece en Google Authenticator                           | `El Centinela`                          |
 | `APP_ENV`              | Entorno de ejecución; usar `production` en producción                | `development`                           |
 | `EMAIL_PROVIDER`       | Proveedor de correo: `smtp` en producción; `mock` solo local/tests/CI | `smtp`                                  |
@@ -554,15 +555,17 @@ centinela-back/
  | GET    | `/api/node/templates`                 | `RequireAuth` + `RequireRole("ADMIN")` | Catálogo de plantillas LXC e imágenes ISO (RF-07) |
  | POST   | `/api/events/ticket`                  | `RequireAuth`                          | Ticket de un solo uso (30 s) para stream SSE      |
  | GET    | `/api/events?ticket=`                 | Ticket de un solo uso                  | Stream SSE de eventos (ver docs/eventos-tiempo-real.md) |
- | GET    | `/api/ws/instances/:vmid/metrics`     | Ticket efímero query                   | Canal WebSocket de métricas en vivo cada 2s (RF-05) |
+ | GET    | `/api/ws/instances/:instanceRef/metrics` | `ResolveInstanceRef` + ticket efímero query | Canal WebSocket de métricas en vivo cada 2s (RF-05) |
  | GET    | `/api/instances`                      | `RequireAuth`                          | Inventario de instancias filtrado por rol y permisos |
  | POST   | `/api/instances`                      | `RequireAuth` + `RequireRole("ADMIN")` | Aprovisionar VM/CT con reserva de cuotas          |
- | GET    | `/api/instances/:vmid`                | `RequireInstanceAccess` (RO)           | Detalle en vivo de una instancia                  |
- | POST   | `/api/instances/:vmid/start`          | `RequireInstanceAccess` (FA) + `RejectProtectedInstance` + `RequireInstanceIdle` | Iniciar instancia (asíncrono 202 con UPID)        |
- | POST   | `/api/instances/:vmid/stop`           | `RequireInstanceAccess` (FA) + `RejectProtectedInstance` + `RequireInstanceIdle` | Detener instancia forzadamente (asíncrono 202)    |
- | POST   | `/api/instances/:vmid/status/:action` | `RequireInstanceAccess` (FA) + `RejectProtectedInstance` + `RequireInstanceIdle` | Cambiar estado (shutdown / reboot)                |
- | PUT    | `/api/instances/:vmid/config`         | `RequireInstanceAccess` (FA) + `RejectProtectedInstance` + `RequireInstanceIdle` | Cambiar `cores` y/o `ramMb`: valida el incremento contra el nodo (409 `RESOURCE_QUOTA_EXCEEDED`) y responde `requiresReboot` |
- | DELETE | `/api/instances/:vmid`                | `RequireRole("ADMIN")` + `RejectProtectedInstance` + `RequireInstanceIdle` | Eliminar instancia (asíncrono 202 con UPID)       |
+ | GET    | `/api/instances/:instanceRef`                | `ResolveInstanceRef` + `RequireInstanceAccess` (RO)           | Detalle en vivo de una instancia                  |
+ | POST   | `/api/instances/:instanceRef/start`          | `ResolveInstanceRef` + `RequireInstanceAccess` (FA) + `RejectProtectedInstance` + `RequireInstanceIdle` | Iniciar instancia (asíncrono 202 con `tareaId`)        |
+ | POST   | `/api/instances/:instanceRef/stop`           | `ResolveInstanceRef` + `RequireInstanceAccess` (FA) + `RejectProtectedInstance` + `RequireInstanceIdle` | Detener instancia forzadamente (asíncrono 202)    |
+ | POST   | `/api/instances/:instanceRef/status/:action` | `ResolveInstanceRef` + `RequireInstanceAccess` (FA) + `RejectProtectedInstance` + `RequireInstanceIdle` | Cambiar estado (shutdown / reboot)                |
+ | PUT    | `/api/instances/:instanceRef/config`         | `ResolveInstanceRef` + `RequireInstanceAccess` (FA) + `RejectProtectedInstance` + `RequireInstanceIdle` | Cambiar `cores` y/o `ramMb`: valida el incremento contra el nodo (409 `RESOURCE_QUOTA_EXCEEDED`) y responde `requiresReboot` |
+ | DELETE | `/api/instances/:instanceRef`                | `ResolveInstanceRef` + `RequireRole("ADMIN")` + `RejectProtectedInstance` + `RequireInstanceIdle` | Eliminar instancia (asíncrono 202 con `tareaId`)       |
+
+> `:instanceRef` es la referencia pública de la instancia (`inst_` + 22 caracteres): la `id` que devuelve `GET /api/instances`. La API nunca expone el VMID de Proxmox (ni en rutas, respuestas, eventos SSE, WebSocket, permisos ni auditoría). `ResolveInstanceRef` la traduce al VMID antes que nada; una referencia alterada, inventada, de otro servidor o un VMID numérico responde `404 RESOURCE_NOT_FOUND`, igual que una instancia que no existe. Ver `docs/contrato-etapa1.md`.
 
 > `RequireInstanceIdle` permite una sola operación a la vez por instancia: si hay una tarea `RUNNING` suya o el lock Redis `lock:instance:{vmid}:operation` está tomado, responde `409 INSTANCE_BUSY` sin contactar a Proxmox (en una ráfaga de pedidos simultáneos pasa uno solo). Si no puede consultar la base, `503 INSTANCE_LOCK_UNAVAILABLE`. Ver `docs/contrato-etapa1.md`.
 
@@ -700,9 +703,13 @@ curl.exe -s "http://localhost:8080/api/admin/users/$UID" -H "Authorization: Bear
 > (`FULL_ACCESS` o `READ_ONLY`). Ya no se acepta el array plano viejo
 > `{"vmids": [...]}` — un `PUT` con ese formato responde `400 INVALID_REQUEST`.
 > Si se omite `nivelAcceso` en un ítem, se asume `FULL_ACCESS`.
+> `vmid` ya no es el número: lleva la referencia pública (`inst_...`) que
+> devuelve `GET /api/instances` en `id`. Un número o una referencia inválida
+> responden `400 INVALID_REQUEST` y no se cambia ningún permiso.
 
 ```powershell
-Set-Content body_permisos.json '{"permisos":[{"vmid":100,"nivelAcceso":"FULL_ACCESS"},{"vmid":102,"nivelAcceso":"READ_ONLY"}]}' -Encoding ascii -NoNewline
+# vmid lleva la "id" de cada instancia en GET /api/instances (inst_...), nunca el número
+Set-Content body_permisos.json '{"permisos":[{"vmid":"inst_3Hk9aQ2mXv7LpR4sT1bN8c","nivelAcceso":"FULL_ACCESS"},{"vmid":"inst_0Zq4Wd8nKe2YtB6uJm1xPa","nivelAcceso":"READ_ONLY"}]}' -Encoding ascii -NoNewline
 curl.exe -s -i -X PUT "http://localhost:8080/api/admin/users/$UID/permissions" -H "Content-Type: application/json" -H "Authorization: Bearer $ACCESS" -d "@body_permisos.json"
 ```
 
@@ -712,11 +719,11 @@ Verificar que se guardaron:
 
 ```powershell
 curl.exe -s "http://localhost:8080/api/admin/users/$UID/permissions" -H "Authorization: Bearer $ACCESS"
-# {"permisos":[{"vmid":100,"nivelAcceso":"FULL_ACCESS"},{"vmid":102,"nivelAcceso":"READ_ONLY"}]}
+# {"permisos":[{"vmid":"inst_3Hk9aQ2mXv7LpR4sT1bN8c","nivelAcceso":"FULL_ACCESS"},{"vmid":"inst_0Zq4Wd8nKe2YtB6uJm1xPa","nivelAcceso":"READ_ONLY"}]}
 ```
 
 Con `nivelAcceso: "READ_ONLY"`, ese operador puede hacer `GET
-/api/instances/{vmid}` pero un `POST /api/instances/{vmid}/start` le da `403
+/api/instances/{instanceRef}` pero un `POST /api/instances/{instanceRef}/start` le da `403
 INSTANCE_ACCESS_DENIED`.
 
 ---

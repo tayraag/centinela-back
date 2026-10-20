@@ -48,16 +48,13 @@ func ParseVmidsProtegidos(raw string) (map[int]bool, error) {
 //
 // Comportamiento:
 //   - VMID protegido → 403 INSTANCE_PROTECTED.
-//   - VMID no parseable como entero → 400 INVALID_VMID.
+//   - Sin VMID resuelto por ResolveInstanceRef → 404 RESOURCE_NOT_FOUND.
 //   - Cualquier otro VMID → pasa.
-func RejectProtectedInstance(protegidos map[int]bool, paramName string) gin.HandlerFunc {
+func RejectProtectedInstance(protegidos map[int]bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		vmid, err := strconv.Atoi(c.Param(paramName))
-		if err != nil {
-			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{
-				"errorCode": "INVALID_VMID",
-				"message":   "El identificador de instancia debe ser un número entero válido.",
-			})
+		vmid, ok := VmidResuelto(c)
+		if !ok {
+			AbortRecursoNoEncontrado(c)
 			return
 		}
 

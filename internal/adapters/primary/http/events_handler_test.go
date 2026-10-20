@@ -44,7 +44,7 @@ func (f *eventosFalso) Publicar(context.Context, ports.RealtimeEvent) error { re
 
 func routerEventos(f *eventosFalso) *gin.Engine {
 	gin.SetMode(gin.TestMode)
-	h := NewEventsHandler(f)
+	h := NewEventsHandler(f, RefsPrueba)
 	r := gin.New()
 	r.GET("/api/events", h.Stream)
 	r.POST("/api/events/ticket", func(c *gin.Context) {
@@ -169,6 +169,9 @@ func TestStream_EnviaEventosLatidosYCorte(t *testing.T) {
 	if !strings.Contains(bloque, "id: "+ev.ID.String()) || !strings.Contains(bloque, `data: {"id":"`+ev.ID.String()) {
 		t.Errorf("El evento debe llegar con id y data en JSON:\n%s", bloque)
 	}
+	if !strings.Contains(bloque, `"recursoId":"`+RefInst(110)+`"`) || strings.Contains(bloque, `"recursoId":"110"`) {
+		t.Errorf("recursoId debe llegar como referencia pública, nunca el VMID:\n%s", bloque)
+	}
 
 	f.cierre <- "LOGOUT"
 	bloque = leerHasta(`{"motivo":"LOGOUT"}`)
@@ -231,5 +234,40 @@ func TestStream_SobreviveAlWriteTimeoutDelServidor(t *testing.T) {
 	leerHasta(": conectado")
 	for i := 0; i < 3; i++ {
 		leerHasta(": ping")
+	}
+}
+
+// El evento que viaja por el bus lleva el VMID; el que llega al front, la
+// referencia pública, también dentro de los textos de Proxmox. El original no
+// se toca: lo comparten todos los streams.
+func TestEventoPublico_OcultaElVmid(t *testing.T) {
+	ev, _ := ports.NewRealtimeEvent(ports.EventoTareaFinalizada, ports.SeveridadWarning, "La tarea de apagado falló")
+	ev = ev.ConRecurso(ports.RecursoLXC, "201").ConDetalles(map[string]any{
+		"tareaId": "3f2504e0-4f89-11d3-9a0c-0305e82c3302", "accion": "STOP", "estado": ports.TareaFailed,
+		"exitstatus": "CT 201 not running", "motivo": ports.MotivoProxmoxError, "error": "CT 201 not running (lock-201.conf, vm 2010)",
+	})
+
+	publico := eventoPublico(RefsPrueba, ev)
+	ref := RefInst(201)
+	if publico.RecursoID != ref {
+		t.Errorf("recursoId: se esperaba %q, vino %q", ref, publico.RecursoID)
+	}
+	if publico.Detalles["exitstatus"] != "CT "+ref+" not running" {
+		t.Errorf("exitstatus debe nombrar la referencia: %v", publico.Detalles["exitstatus"])
+	}
+	if publico.Detalles["error"] != "CT "+ref+" not running (lock-"+ref+".conf, vm 2010)" {
+		t.Errorf("error debe reemplazar solo el VMID suelto (2010 es otro número): %v", publico.Detalles["error"])
+	}
+	if publico.Detalles["tareaId"] != "3f2504e0-4f89-11d3-9a0c-0305e82c3302" || publico.Detalles["motivo"] != ports.MotivoProxmoxError {
+		t.Errorf("El resto de detalles se conserva: %v", publico.Detalles)
+	}
+	if ev.RecursoID != "201" || ev.Detalles["error"] != "CT 201 not running (lock-201.conf, vm 2010)" {
+		t.Errorf("No debe modificarse el evento original: %+v", ev)
+	}
+
+	host, _ := ports.NewRealtimeEvent(ports.EventoAlerta, ports.SeveridadCritical, "El uso de CPU del host superó el 90%")
+	host = host.ConRecurso(ports.RecursoHost, "")
+	if got := eventoPublico(RefsPrueba, host); got.RecursoID != "" || got.Mensaje != host.Mensaje {
+		t.Errorf("Un evento del HOST pasa igual: %+v", got)
 	}
 }

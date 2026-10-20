@@ -28,7 +28,7 @@ type PuntoMetricaDTO struct {
 // MetricasEnVivoDTO proyecta las métricas instantáneas transmitidas por el WebSocket.
 type MetricasEnVivoDTO struct {
 	Timestamp int64    `json:"timestamp"`
-	VMID      int      `json:"vmid"`
+	VMID      int      `json:"-"` // interno: el WebSocket manda la referencia pública en "vmid"
 	Status    string   `json:"status"`
 	CPU       *float64 `json:"cpu"` // 0 a 100; null si la instancia no está encendida
 	CPUs      int      `json:"cpus"`

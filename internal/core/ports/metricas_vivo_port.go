@@ -22,7 +22,7 @@ const (
 )
 
 // MetricasVivoService autentica y vigila las conexiones WebSocket de métricas
-// en vivo (GET /api/ws/instances/:vmid/metrics).
+// en vivo (GET /api/ws/instances/:instanceRef/metrics).
 type MetricasVivoService interface {
 	// ConsumirTicket consume el ticket ws:ticket:<uuid> (GETDEL, un solo uso) y
 	// valida que el usuario siga activo y pueda ver la instancia. Devuelve

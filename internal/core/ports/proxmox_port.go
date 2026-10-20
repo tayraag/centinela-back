@@ -77,8 +77,8 @@ type InstanciaProxmoxDTO struct {
 // listado del inventario. Nombres de campo y valores fijados por contrato:
 // type usa "vm" (no "qemu") para las máquinas virtuales.
 type InstanciaListadaDTO struct {
-	// Campos base (contrato original — no romper)
-	ID     int    `json:"id"`
+	// Campos base. ID es la referencia pública opaca ("inst_..."), nunca el VMID.
+	ID     string `json:"id"`
 	Name   string `json:"name"`
 	Type   string `json:"type"` // "vm" | "lxc"
 	Node   string `json:"node"`

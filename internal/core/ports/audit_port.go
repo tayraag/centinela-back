@@ -114,7 +114,7 @@ const (
 	AccionApagarVM       = "APAGAR_VM"
 	AccionSuspenderVM    = "SUSPENDER_VM"
 	AccionResumeVM       = "REANUDAR_VM"
-	// AccionConfigurarInstancia: cambio de CPU o RAM (PUT /api/instances/:vmid/config).
+	// AccionConfigurarInstancia: cambio de CPU o RAM (PUT /api/instances/:instanceRef/config).
 	AccionConfigurarInstancia = "CONFIG_INSTANCE"
 )
 

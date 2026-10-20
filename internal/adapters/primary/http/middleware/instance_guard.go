@@ -2,7 +2,6 @@ package middleware
 
 import (
 	"net/http"
-	"strconv"
 
 	"el-centinela/internal/core/ports"
 
@@ -13,12 +12,11 @@ import (
 // RequireInstanceAccess es una factory que retorna un gin.HandlerFunc que valida
 // si el usuario autenticado tiene permiso para operar sobre una instancia Proxmox.
 //
-// Debe colocarse DESPUÉS de RequireAuth() en la cadena de middlewares, ya que
-// depende de los valores "userID" y "rol" inyectados por ese middleware.
+// Debe colocarse DESPUÉS de RequireAuth() y de ResolveInstanceRef en la cadena
+// de middlewares: usa el "userID" y el "rol" del primero y el VMID del segundo.
 //
 // Parámetros:
 //   - repo: implementación de InstanceRepository para consultar permisos_instancia.
-//   - paramName: nombre del parámetro de ruta que contiene el VMID (ej: "vmid").
 //   - nivelRequerido: ports.NivelAccesoFullAccess o ports.NivelAccesoReadOnly —
 //     el nivel mínimo que necesita el OPERATOR sobre ese vmid para pasar.
 //
@@ -26,9 +24,9 @@ import (
 //   - ADMIN → pasa siempre, sin consultar la base de datos.
 //   - OPERATOR con nivel suficiente sobre el vmid → pasa.
 //   - OPERATOR sin permiso, o con un nivel insuficiente → 403 INSTANCE_ACCESS_DENIED.
-//   - VMID no parseable como entero → 400 INVALID_VMID.
+//   - Sin VMID resuelto en el contexto → 404 RESOURCE_NOT_FOUND.
 //   - Error de BD → 500 INTERNAL_ERROR.
-func RequireInstanceAccess(repo ports.InstanceRepository, paramName string, nivelRequerido string) gin.HandlerFunc {
+func RequireInstanceAccess(repo ports.InstanceRepository, nivelRequerido string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// 1. Extraer rol del contexto (inyectado por RequireAuth)
 		rolVal, exists := c.Get(ContextKeyRol)
@@ -48,14 +46,10 @@ func RequireInstanceAccess(repo ports.InstanceRepository, paramName string, nive
 			return
 		}
 
-		// 3. Parsear el VMID desde el parámetro de ruta
-		vmidStr := c.Param(paramName)
-		vmid, err := strconv.Atoi(vmidStr)
-		if err != nil {
-			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{
-				"errorCode": "INVALID_VMID",
-				"message":   "El identificador de instancia debe ser un número entero válido.",
-			})
+		// 3. VMID interno resuelto desde la referencia pública de la ruta
+		vmid, ok := VmidResuelto(c)
+		if !ok {
+			AbortRecursoNoEncontrado(c)
 			return
 		}
 

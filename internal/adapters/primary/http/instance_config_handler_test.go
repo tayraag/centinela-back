@@ -62,11 +62,11 @@ func pedirConfigConAuditService(f *configuracionFalsa, cuerpo string, audit *moc
 	gin.SetMode(gin.TestMode)
 	h := adaptersHttp.NewInstanceConfigHandler(f, audit)
 	r := gin.New()
-	r.PUT("/api/instances/:vmid/config", func(c *gin.Context) {
+	r.PUT("/api/instances/:vmid/config", adaptersHttp.ResolverPrueba, func(c *gin.Context) {
 		c.Set(string(middleware.ContextKeyUserID), uuid.New().String())
 	}, h.ActualizarConfig)
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPut, "/api/instances/110/config", strings.NewReader(cuerpo))
+	req := httptest.NewRequest(http.MethodPut, adaptersHttp.ConRef("/api/instances/110/config"), strings.NewReader(cuerpo))
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)
 	var resp map[string]any
@@ -134,7 +134,7 @@ func TestConfig_ErroresDelServicio(t *testing.T) {
 	}{
 		{fmt.Errorf("%w: RAM disponible insuficiente", ports.ErrRecursosInsuficientes), http.StatusConflict, "RESOURCE_QUOTA_EXCEEDED"},
 		{fmt.Errorf("%w: detected modified configuration", ports.ErrInstanciaOcupada), http.StatusConflict, "INSTANCE_BUSY"},
-		{ports.ErrInstanciaNoEncontrada, http.StatusNotFound, "INSTANCE_NOT_FOUND"},
+		{ports.ErrInstanciaNoEncontrada, http.StatusNotFound, "RESOURCE_NOT_FOUND"},
 		{fmt.Errorf("%w: lock", ports.ErrCoordinacionAprovisionamiento), http.StatusServiceUnavailable, "PROVISIONING_COORDINATION_UNAVAILABLE"},
 	}
 	for _, c := range casos {

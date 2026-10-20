@@ -57,13 +57,13 @@ type AccionAceptadaResponse struct {
 // CreacionAceptadaResponse confirma que Proxmox aceptó la creación y que su
 // UPID privado quedó registrado antes de devolver el tareaId público.
 type CreacionAceptadaResponse struct {
-	VMID    int    `json:"vmid" binding:"required" minimum:"100" example:"115"`
+	VMID    string `json:"vmid" binding:"required" example:"inst_3Hk9aQ2mXv7LpR4sT1bN8c"` // referencia pública, no el número
 	TareaID string `json:"tareaId" binding:"required" example:"0192a8b3-4f89-7e23-9a0c-0305e82c3301"`
 }
 
 // InstanciaInventarioResponse documenta cada elemento del inventario operativo.
 type InstanciaInventarioResponse struct {
-	ID          int                 `json:"id" binding:"required" example:"110"`
+	ID          string              `json:"id" binding:"required" example:"inst_3Hk9aQ2mXv7LpR4sT1bN8c"`
 	Name        string              `json:"name" binding:"required" example:"api-produccion"`
 	Type        string              `json:"type" binding:"required" enums:"vm,lxc" example:"vm"`
 	Node        string              `json:"node" binding:"required" example:"pve-01"`
@@ -117,7 +117,8 @@ type SSEDetallesEvento struct {
 //
 // El mismo `id` viaja también en la línea `id:` del frame SSE, para que el
 // cliente pueda deduplicar. `detalles` se omite cuando el evento no trae datos
-// extra. `recursoId` se omite en los eventos del HOST (el servidor físico), que
+// extra. En VM y LXC, `recursoId` es la referencia pública de la instancia
+// (la misma `id` del inventario), nunca el VMID. Se omite en los eventos del HOST (el servidor físico), que
 // no refieren a una instancia: esos eventos, como ALERT_TRIGGERED, solo llegan
 // a usuarios ADMIN.
 type SSEEventPayload struct {
@@ -125,7 +126,7 @@ type SSEEventPayload struct {
 	Tipo        string             `json:"tipo" binding:"required" enums:"INSTANCE_STATE_CHANGED,INSTANCE_CREATED,RESOURCE_SATURATION,TASK_FINISHED,ALERT_TRIGGERED" example:"TASK_FINISHED"`
 	Severidad   string             `json:"severidad" binding:"required" enums:"INFO,WARNING,CRITICAL" example:"INFO"`
 	RecursoTipo string             `json:"recursoTipo" binding:"required" enums:"VM,LXC,HOST" example:"VM"`
-	RecursoID   string             `json:"recursoId,omitempty" example:"110"`
+	RecursoID   string             `json:"recursoId,omitempty" example:"inst_3Hk9aQ2mXv7LpR4sT1bN8c"`
 	Mensaje     string             `json:"mensaje" binding:"required" example:"La tarea de encendido finalizó correctamente"`
 	FechaHora   string             `json:"fechaHora" binding:"required" format:"date-time" example:"2026-09-30T11:24:03-03:00"`
 	Detalles    *SSEDetallesEvento `json:"detalles,omitempty"`

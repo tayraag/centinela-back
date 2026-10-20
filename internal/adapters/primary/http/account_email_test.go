@@ -32,7 +32,7 @@ func TestPerfilEmailErroresHTTP(t *testing.T) {
 	} {
 		t.Run(tc.code, func(t *testing.T) {
 			r := gin.New()
-			h := NewAccountHandler(perfilEmailServiceTest{err: tc.err})
+			h := NewAccountHandler(perfilEmailServiceTest{err: tc.err}, RefsPrueba)
 			r.PUT("/profile", h.ActualizarPerfil)
 			w := httptest.NewRecorder()
 			req := httptest.NewRequest("PUT", "/profile", strings.NewReader(`{"emailUsuario":"nuevo@example.com"}`))

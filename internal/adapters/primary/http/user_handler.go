@@ -17,11 +17,12 @@ import (
 // UserHandler maneja los endpoints HTTP de gestión de usuarios (acceso solo ADMIN).
 type UserHandler struct {
 	service ports.UserService
+	refs    ports.ReferenciasInstancia // los permisos viajan con la referencia pública, no el VMID
 }
 
 // NewUserHandler crea un nuevo UserHandler con el servicio inyectado.
-func NewUserHandler(service ports.UserService) *UserHandler {
-	return &UserHandler{service: service}
+func NewUserHandler(service ports.UserService, refs ports.ReferenciasInstancia) *UserHandler {
+	return &UserHandler{service: service, refs: refs}
 }
 
 // rolesDisponibles es la lista hardcodeada de roles del sistema.
@@ -146,7 +147,7 @@ func (h *UserHandler) CrearUsuario(c *gin.Context) {
 // @Produce      json
 // @Security     BearerAuth
 // @Param        id path string true "UUID del usuario"
-// @Success      200 {object} ports.UsuarioDetalleDTO
+// @Success      200 {object} UsuarioDetalleResponse
 // @Failure      400 {object} ErrorResponse "UUID inválido"
 // @Failure      401 {object} map[string]string
 // @Failure      403 {object} map[string]string
@@ -164,7 +165,7 @@ func (h *UserHandler) ObtenerUsuario(c *gin.Context) {
 		responderErrorUsuario(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, detalle)
+	c.JSON(http.StatusOK, detalleUsuarioPublico(h.refs, detalle))
 }
 
 // ==========================================
@@ -260,16 +261,16 @@ func (h *UserHandler) EliminarUsuario(c *gin.Context) {
 // ==========================================
 
 // asignarPermisosRequest define el body para la asignación de permisos de instancia.
-// nivelAcceso acepta "FULL_ACCESS" o "READ_ONLY"; si se omite en un ítem, se
-// asume "FULL_ACCESS".
+// vmid es la referencia pública (el id del inventario), no el número. nivelAcceso
+// acepta "FULL_ACCESS" o "READ_ONLY"; si se omite en un ítem, se asume "FULL_ACCESS".
 type asignarPermisosRequest struct {
-	Permisos []ports.PermisoInstanciaInput `json:"permisos" binding:"required"`
+	Permisos []PermisoInstanciaRequest `json:"permisos" binding:"required"`
 }
 
 // AsignarPermisos reemplaza todos los permisos de instancia de un usuario operador.
 //
 // @Summary      Asignar instancias Proxmox al usuario
-// @Description  Reemplaza atómicamente todos los permisos de instancia del usuario, con su nivel de acceso. Envía `{"permisos": [{"vmid": 100, "nivelAcceso": "READ_ONLY"}]}`. Si se omite nivelAcceso en un ítem, se asume FULL_ACCESS. Para quitar todos los permisos, enviar `{"permisos": []}`.
+// @Description  Reemplaza atómicamente todos los permisos de instancia del usuario, con su nivel de acceso. Envía `{"permisos": [{"vmid": "inst_...", "nivelAcceso": "READ_ONLY"}]}`: `vmid` lleva el `id` de cada instancia tal como lo devuelve GET /api/instances, nunca el número. Una referencia inválida (alterada, de otro servidor o un número) responde 400 INVALID_REQUEST y no se cambia ningún permiso. Si se omite nivelAcceso en un ítem, se asume FULL_ACCESS. Para quitar todos los permisos, enviar `{"permisos": []}`.
 // @Tags         Usuarios (Admin)
 // @Accept       json
 // @Produce      json
@@ -277,10 +278,10 @@ type asignarPermisosRequest struct {
 // @Param        id   path string true "UUID del usuario"
 // @Param        body body asignarPermisosRequest true "Lista de permisos (vmid + nivelAcceso) a asignar"
 // @Success      204 "Sin contenido"
-// @Failure      400 {object} map[string]string
 // @Failure      401 {object} map[string]string
 // @Failure      403 {object} map[string]string
 // @Failure      404 {object} ErrorResponse "USER_NOT_FOUND — no existe o fue eliminado"
+// @Failure      400 {object} ErrorResponse "INVALID_REQUEST — falta permisos o algún vmid no es una referencia válida"
 // @Router       /admin/users/{id}/permissions [put]
 func (h *UserHandler) AsignarPermisos(c *gin.Context) {
 	id, ok := parsearUUID(c, "id")
@@ -296,13 +297,20 @@ func (h *UserHandler) AsignarPermisos(c *gin.Context) {
 		return
 	}
 
+	permisos := make([]ports.PermisoInstanciaInput, len(req.Permisos))
 	for i, p := range req.Permisos {
+		vmid, err := h.refs.DesofuscarVMID(p.Vmid)
+		if err != nil {
+			SendError(c, http.StatusBadRequest, "INVALID_REQUEST", "Alguna instancia indicada no es válida. Use el id que devuelve el inventario.")
+			return
+		}
+		permisos[i] = ports.PermisoInstanciaInput{Vmid: vmid, NivelAcceso: p.NivelAcceso}
 		if p.NivelAcceso == "" {
-			req.Permisos[i].NivelAcceso = ports.NivelAccesoFullAccess
+			permisos[i].NivelAcceso = ports.NivelAccesoFullAccess
 		}
 	}
 
-	if err := h.service.AsignarPermisos(c.Request.Context(), id, orgID, actorID, req.Permisos); err != nil {
+	if err := h.service.AsignarPermisos(c.Request.Context(), id, orgID, actorID, permisos); err != nil {
 		responderErrorUsuario(c, err)
 		return
 	}
@@ -315,13 +323,13 @@ func (h *UserHandler) AsignarPermisos(c *gin.Context) {
 
 // permisosResponse es la respuesta del endpoint GET /permissions.
 type permisosResponse struct {
-	Permisos []ports.PermisoInstanciaInput `json:"permisos"`
+	Permisos []PermisoInstanciaResponse `json:"permisos"`
 }
 
 // ObtenerPermisos devuelve la lista de permisos (vmid + nivel de acceso) de un usuario.
 //
 // @Summary      Obtener permisos de instancia del usuario
-// @Description  Devuelve las instancias de Proxmox a las que tiene acceso el usuario, con su nivel (FULL_ACCESS o READ_ONLY). Si no tiene permisos asignados, devuelve un array vacío.
+// @Description  Devuelve las instancias de Proxmox a las que tiene acceso el usuario (vmid es la referencia pública, el mismo id del inventario), con su nivel (FULL_ACCESS o READ_ONLY). Si no tiene permisos asignados, devuelve un array vacío.
 // @Tags         Usuarios (Admin)
 // @Produce      json
 // @Security     BearerAuth
@@ -345,11 +353,8 @@ func (h *UserHandler) ObtenerPermisos(c *gin.Context) {
 		return
 	}
 
-	// Devolver siempre un array (nunca null) para consistencia con el front
-	if permisos == nil {
-		permisos = []ports.PermisoInstanciaInput{}
-	}
-	c.JSON(http.StatusOK, permisosResponse{Permisos: permisos})
+	// Siempre un array (nunca null) para consistencia con el front
+	c.JSON(http.StatusOK, permisosResponse{Permisos: permisosPublicos(h.refs, permisos)})
 }
 
 // ==========================================
@@ -398,7 +403,7 @@ func (h *UserHandler) ListarActividad(c *gin.Context) {
 		responderErrorUsuario(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, actividad)
+	c.JSON(http.StatusOK, actividadPublica(h.refs, actividad))
 }
 
 // ==========================================

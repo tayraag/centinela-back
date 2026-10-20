@@ -108,7 +108,7 @@ El inventario (`GET /api/instances`, `internal/core/services/inventario_service.
 
 Además, `cluster/resources` devuelve el nodo, dos storages (`local-lvm` y `local`) y la zona de red, igual que la captura. El backend los descarta y se queda solo con VMs y contenedores.
 
-> "Protegida" es una regla **del backend**, no del simulador: `POST /api/instances/100/stop` responde `403 INSTANCE_PROTECTED` antes de llegar a Proxmox. Pegándole directo al simulador sí se puede apagar la 100.
+> "Protegida" es una regla **del backend**, no del simulador: `POST /api/instances/<referencia de la 100>/stop` responde `403 INSTANCE_PROTECTED` antes de llegar a Proxmox (la API no acepta el VMID en la ruta: usa la `id` que devuelve `GET /api/instances`). Pegándole directo al simulador sí se puede apagar la 100.
 
 ---
 

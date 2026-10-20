@@ -63,13 +63,13 @@ func nuevoEntornoLimitesWS(t *testing.T, limites adaptersHttp.LimitesWS) *entorn
 	px := &proxmoxWSConfigurable{mockProxmoxForWS: mockProxmoxForWS{instancias: map[int]*ports.InstanciaProxmoxDTO{
 		100: {Vmid: 100, Tipo: "qemu", Nodo: "proxmox", Estado: "running"},
 	}}}
-	h := adaptersHttp.NewMetricsWSHandler(px, services.NewMetricasVivoService(kv, authRepo, &mockInstanceRepoForWS{}, 0), "proxmox",
+	h := adaptersHttp.NewMetricsWSHandler(px, services.NewMetricasVivoService(kv, authRepo, &mockInstanceRepoForWS{}, 0), adaptersHttp.RefsPrueba, "proxmox",
 		map[string]struct{}{"https://centinela.example": {}}, limites)
 	r := gin.New()
-	r.GET("/api/ws/instances/:vmid/metrics", h.StreamMetrics)
+	r.GET("/api/ws/instances/:vmid/metrics", adaptersHttp.ResolverPrueba, h.StreamMetrics)
 	srv := httptest.NewServer(r)
 	t.Cleanup(srv.Close)
-	return &entornoLimitesWS{kv: kv, admin: admin, proxmox: px, url: "ws" + strings.TrimPrefix(srv.URL, "http") + "/api/ws/instances/100/metrics"}
+	return &entornoLimitesWS{kv: kv, admin: admin, proxmox: px, url: "ws" + strings.TrimPrefix(srv.URL, "http") + adaptersHttp.ConRef("/api/ws/instances/100/metrics")}
 }
 
 func (e *entornoLimitesWS) ticket(t *testing.T) string {
@@ -247,7 +247,7 @@ func TestMetricsWS_ErroresDeProxmoxExplicitos(t *testing.T) {
 			defer conn.Close()
 			m := leerJSON(t, conn)
 			detalle, _ := m["error"].(map[string]any)
-			if m["status"] != "unavailable" || detalle["errorCode"] != c.codigo || m["vmid"] != float64(100) {
+			if m["status"] != "unavailable" || detalle["errorCode"] != c.codigo || m["vmid"] != adaptersHttp.RefInst(100) {
 				t.Errorf("Mensaje de error inesperado: %v", m)
 			}
 			if _, tieneCPU := m["cpu"]; tieneCPU {

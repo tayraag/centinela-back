@@ -6,10 +6,10 @@ import (
 	"errors"
 	"log"
 	"net/http"
-	"strconv"
 	"sync"
 	"time"
 
+	"el-centinela/internal/core/domain"
 	"el-centinela/internal/core/ports"
 
 	"github.com/gin-gonic/gin"
@@ -44,6 +44,7 @@ const tamanoMaximoMensajeCliente = 512
 type MetricsWSHandler struct {
 	proxmox  ports.ProxmoxPort
 	acceso   ports.MetricasVivoService
+	refs     ports.ReferenciasInstancia // los mensajes llevan la referencia pública, no el VMID
 	nodo     string
 	origenes map[string]struct{}
 	limites  LimitesWS
@@ -58,10 +59,11 @@ type MetricsWSHandler struct {
 
 // NewMetricsWSHandler construye el handler. origenes son los Origin de
 // navegador aceptados (los mismos de ALLOWED_ORIGINS que usa el CORS).
-func NewMetricsWSHandler(proxmox ports.ProxmoxPort, acceso ports.MetricasVivoService, nodo string, origenes map[string]struct{}, limites LimitesWS) *MetricsWSHandler {
+func NewMetricsWSHandler(proxmox ports.ProxmoxPort, acceso ports.MetricasVivoService, refs ports.ReferenciasInstancia, nodo string, origenes map[string]struct{}, limites LimitesWS) *MetricsWSHandler {
 	return &MetricsWSHandler{
 		proxmox:  proxmox,
 		acceso:   acceso,
+		refs:     refs,
 		nodo:     nodo,
 		origenes: origenes,
 		limites:  limites,
@@ -113,27 +115,29 @@ func (h *MetricsWSHandler) CerrarConexiones() {
 // StreamMetrics establece el canal WebSocket y transmite métricas cada 2 segundos.
 //
 // @Summary      Canal WebSocket de métricas de instancia en tiempo real
-// @Description  Establece un canal bidireccional vía WebSocket que emite métricas instantáneas cada 2 segundos. Requiere parámetro query `?ticket=<uuid>` emitido previamente vía POST /api/auth/ws-ticket. El ticket identifica al usuario y a la sesión que lo emitió. El servidor cierra el canal con código 1008 y el motivo como reason cuando se pierde el acceso: `LOGOUT` (se cerró esa sesión), `SESSIONS_REVOKED` (se revocó esa sesión o todas las del usuario), `USER_INACTIVE` (suspendido o eliminado), `INSTANCE_ACCESS_DENIED` (le quitaron el permiso sobre la instancia) o `EVENTS_UNAVAILABLE` (se perdió el canal de avisos; reconectar con un ticket nuevo). Al apagarse el servidor cierra con 1001; si la instancia deja de existir, con 1000 e `INSTANCE_NOT_FOUND`. Cada mensaje es un JSON de métricas: `cpu` en porcentaje (0 a 100) y `cpu` y `mem` en null si la instancia no está encendida; si Proxmox falla en un intervalo, el mensaje no trae métricas sino `{"timestamp","vmid","status":"unavailable","error":{"errorCode":"PROXMOX_UNAVAILABLE|PROXMOX_TIMEOUT","message"}}` y la conexión sigue. Solo acepta el Origin del front (ALLOWED_ORIGINS), hasta 10 conexiones simultáneas por usuario y mensajes del cliente de hasta 512 bytes; el servidor manda un ping cada 25 s y libera la conexión si no tiene respuesta en 60 s.
+// @Description  Establece un canal bidireccional vía WebSocket que emite métricas instantáneas cada 2 segundos. La ruta lleva la referencia pública de la instancia (`id` del inventario); una referencia inválida o un VMID numérico responden 404 RESOURCE_NOT_FOUND antes de consumir el ticket. Cada mensaje identifica la instancia en `vmid` con la misma referencia, nunca con el número. Requiere parámetro query `?ticket=<uuid>` emitido previamente vía POST /api/auth/ws-ticket. El ticket identifica al usuario y a la sesión que lo emitió. El servidor cierra el canal con código 1008 y el motivo como reason cuando se pierde el acceso: `LOGOUT` (se cerró esa sesión), `SESSIONS_REVOKED` (se revocó esa sesión o todas las del usuario), `USER_INACTIVE` (suspendido o eliminado), `INSTANCE_ACCESS_DENIED` (le quitaron el permiso sobre la instancia) o `EVENTS_UNAVAILABLE` (se perdió el canal de avisos; reconectar con un ticket nuevo). Al apagarse el servidor cierra con 1001; si la instancia deja de existir, con 1000 e `INSTANCE_NOT_FOUND`. Cada mensaje es un JSON de métricas: `cpu` en porcentaje (0 a 100) y `cpu` y `mem` en null si la instancia no está encendida; si Proxmox falla en un intervalo, el mensaje no trae métricas sino `{"timestamp","vmid","status":"unavailable","error":{"errorCode":"PROXMOX_UNAVAILABLE|PROXMOX_TIMEOUT","message"}}` y la conexión sigue. Solo acepta el Origin del front (ALLOWED_ORIGINS), hasta 10 conexiones simultáneas por usuario y mensajes del cliente de hasta 512 bytes; el servidor manda un ping cada 25 s y libera la conexión si no tiene respuesta en 60 s.
 // @Tags         Métricas en tiempo real
-// @Param        vmid   path  int     true  "Identificador de instancia (VMID)"
-// @Param        ticket query string  true  "Ticket efímero de un solo uso"
+// @Param        instanceRef path  string true "Referencia pública de la instancia (inst_...)"
+// @Param        ticket      query string true "Ticket efímero de un solo uso"
 // @Success      101    "Switching Protocols a WebSocket"
-// @Failure      400    {object} ErrorResponse "INVALID_VMID"
 // @Failure      401    {object} ErrorResponse "UNAUTHORIZED"
 // @Failure      403    {object} ErrorResponse "ORIGIN_NOT_ALLOWED — el Origin no es el del front | INSTANCE_ACCESS_DENIED | USER_INACTIVE"
-// @Failure      404    {object} ErrorResponse "INSTANCE_NOT_FOUND"
+// @Failure      404    {object} ErrorResponse "RESOURCE_NOT_FOUND — referencia inválida o la instancia no existe en Proxmox (misma respuesta en ambos casos)"
 // @Failure      429    {object} ErrorResponse "TOO_MANY_CONNECTIONS — el usuario ya tiene 10 WebSockets abiertos"
 // @Failure      500    {object} ErrorResponse "INTERNAL_ERROR — no se pudo comprobar el acceso"
 // @Failure      502    {object} ErrorResponse "PROXMOX_UNAVAILABLE"
 // @Failure      503    {object} ErrorResponse "EVENTS_UNAVAILABLE — no se pudo abrir el canal de avisos de corte"
 // @Failure      504    {object} ErrorResponse "PROXMOX_TIMEOUT"
-// @Router       /ws/instances/{vmid}/metrics [get]
+// @Router       /ws/instances/{instanceRef}/metrics [get]
 func (h *MetricsWSHandler) StreamMetrics(c *gin.Context) {
-	// 1. Validar VMID
-	vmidStr := c.Param("vmid")
-	vmid, err := strconv.Atoi(vmidStr)
-	if err != nil || vmid <= 0 {
-		SendError(c, http.StatusBadRequest, "INVALID_VMID", "El identificador de instancia debe ser un número entero positivo.")
+	// 1. VMID interno que ResolveInstanceRef tradujo desde :instanceRef
+	vmid, ok := extraerVmid(c)
+	if !ok {
+		return
+	}
+	ref, ok := refPublica(h.refs, vmid)
+	if !ok {
+		responderErrorRefs(c)
 		return
 	}
 
@@ -232,7 +236,7 @@ func (h *MetricsWSHandler) StreamMetrics(c *gin.Context) {
 	defer ping.Stop()
 
 	// Enviar primer punto de inmediato
-	if h.enviarMetrica(ctx, ws, nodo, tipo, vmid) != nil {
+	if h.enviarMetrica(ctx, ws, nodo, tipo, vmid, ref) != nil {
 		return
 	}
 
@@ -255,7 +259,7 @@ func (h *MetricsWSHandler) StreamMetrics(c *gin.Context) {
 				return
 			}
 		case <-ticker.C:
-			if err := h.enviarMetrica(ctx, ws, nodo, tipo, vmid); err != nil {
+			if err := h.enviarMetrica(ctx, ws, nodo, tipo, vmid, ref); err != nil {
 				// No se pudo escribir en el socket o la instancia ya no existe
 				return
 			}
@@ -267,7 +271,7 @@ func (h *MetricsWSHandler) StreamMetrics(c *gin.Context) {
 // falla en un intervalo: sin valores en cero que el front pueda graficar como reales.
 type errorMetricasWS struct {
 	Timestamp int64          `json:"timestamp"`
-	VMID      int            `json:"vmid"`
+	VMID      string         `json:"vmid"`   // referencia pública de la instancia
 	Status    string         `json:"status"` // "unavailable"
 	Error     detalleErrorWS `json:"error"`
 }
@@ -277,18 +281,25 @@ type detalleErrorWS struct {
 	Message   string `json:"message"`
 }
 
+// metricasWS son las métricas de un intervalo con la referencia pública de la
+// instancia en vmid (MetricasEnVivoDTO no serializa el número).
+type metricasWS struct {
+	VMID string `json:"vmid"`
+	*domain.MetricasEnVivoDTO
+}
+
 // errInstanciaEliminada corta el loop cuando la instancia deja de existir.
 var errInstanciaEliminada = errors.New("la instancia ya no existe")
 
 // enviarMetrica consulta Proxmox (con su propio plazo) y manda un mensaje: las
 // métricas, o un error explícito si Proxmox falló. Devuelve error si no se pudo
 // escribir en el socket o si la instancia ya no existe (después de cerrar).
-func (h *MetricsWSHandler) enviarMetrica(ctx context.Context, ws *websocket.Conn, nodo, tipo string, vmid int) error {
+func (h *MetricsWSHandler) enviarMetrica(ctx context.Context, ws *websocket.Conn, nodo, tipo string, vmid int, ref string) error {
 	ctxConsulta, cancel := context.WithTimeout(ctx, h.limites.TimeoutConsulta)
 	metricas, err := h.proxmox.ObtenerEstadoActual(ctxConsulta, nodo, tipo, vmid)
 	cancel()
 
-	var mensaje any = metricas
+	var mensaje any = metricasWS{VMID: ref, MetricasEnVivoDTO: metricas}
 	if err != nil {
 		if errors.Is(err, ports.ErrInstanciaNoEncontrada) {
 			_ = ws.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "INSTANCE_NOT_FOUND"), time.Now().Add(time.Second))
@@ -299,7 +310,7 @@ func (h *MetricsWSHandler) enviarMetrica(ctx context.Context, ws *websocket.Conn
 			detalle = detalleErrorWS{ErrorCode: "PROXMOX_TIMEOUT", Message: "Proxmox no respondió a tiempo en este intervalo."}
 		}
 		log.Printf("[WS] métricas de %d no disponibles: %v", vmid, err)
-		mensaje = errorMetricasWS{Timestamp: time.Now().Unix(), VMID: vmid, Status: "unavailable", Error: detalle}
+		mensaje = errorMetricasWS{Timestamp: time.Now().Unix(), VMID: ref, Status: "unavailable", Error: detalle}
 	}
 
 	data, err := json.Marshal(mensaje)

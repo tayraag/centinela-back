@@ -13,7 +13,7 @@ El proyecto sigue una **Arquitectura Hexagonal (Puertos y Adaptadores)** adaptad
 | **Core / Dominio**          | `internal/core/`               | Lógica de negocio pura, sin dependencias externas            |
 | **Adaptadores primarios**   | `internal/adapters/primary/`   | Reciben peticiones del exterior (HTTP handlers, middlewares) |
 | **Adaptadores secundarios** | `internal/adapters/secondary/` | Se conectan hacia afuera (PostgreSQL, Redis, Proxmox API)    |
-| **Infraestructura**         | `internal/infrastructure/`     | Utilidades transversales (JWT, bcrypt, TOTP)                 |
+| **Infraestructura**         | `internal/infrastructure/`     | Utilidades transversales (JWT, bcrypt, TOTP, referencias de instancia) |
 
 ### Flujo de una petición
 
@@ -22,7 +22,7 @@ El proyecto sigue una **Arquitectura Hexagonal (Puertos y Adaptadores)** adaptad
           │
           ▼
 ┌─────────────────────┐
-│   Middleware Chain  │  RequireAuth → RequireRole → RequireInstanceAccess → RejectProtectedInstance → RequireInstanceIdle → Logger
+│   Middleware Chain  │  RequireAuth → RequireRole → ResolveInstanceRef → RequireInstanceAccess → RejectProtectedInstance → RequireInstanceIdle → Logger
 └──────────┬──────────┘
            │
            ▼
@@ -101,15 +101,17 @@ centinela-back/
 │   │   │       ├── user_handler.go       # Endpoints de gestión de usuarios ADMIN (/api/admin/users/*)
 │   │   │       ├── node_handler.go       # Endpoints de telemetría, storages y templates del nodo (/api/node/*)
 │   │   │       ├── instance_handler.go   # Endpoints de inventario y ciclo de vida (/api/instances/*)
-│   │   │       ├── instance_config_handler.go # PUT /api/instances/:vmid/config (cores/ramMb, DeltaRAM y requiresReboot)
-│   │   │       ├── ws_metrics_handler.go # Canal WebSocket de telemetría en vivo (/api/ws/instances/:vmid/metrics)
+│   │   │       ├── instance_config_handler.go # PUT /api/instances/:instanceRef/config (cores/ramMb, DeltaRAM y requiresReboot)
+│   │   │       ├── instance_refs.go      # VMID ↔ referencia pública (inst_...) en respuestas, eventos, permisos y auditoría
+│   │   │       ├── ws_metrics_handler.go # Canal WebSocket de telemetría en vivo (/api/ws/instances/:instanceRef/metrics)
 │   │   │       ├── events_handler.go     # Canal de eventos SSE (/api/events)
 │   │   │       ├── account_handler.go    # Endpoints de perfil propio (/api/account/*)
 │   │   │       ├── audit_handler.go      # Endpoints de auditoría global (/api/admin/audit)
 │   │   │       ├── responses.go          # Helpers de respuestas HTTP estándar
 │   │   │       └── middleware/
 │   │   │           ├── auth_middleware.go    # RequireAuth, RequirePreAuth, RequireRole
-│   │   │           ├── instance_guard.go     # RequireInstanceAccess (guard de VMID)
+│   │   │           ├── instance_ref.go       # ResolveInstanceRef (:instanceRef → VMID; inválida = 404 RESOURCE_NOT_FOUND)
+│   │   │           ├── instance_guard.go     # RequireInstanceAccess (permiso del OPERATOR sobre la instancia)
 │   │   │           ├── protected_instance.go # RejectProtectedInstance (VMIDs de infraestructura)
 │   │   │           ├── instance_idle.go      # RequireInstanceIdle (exclusión mutua: 409 INSTANCE_BUSY sin contactar a Proxmox)
 │   │   │           ├── cors_middleware.go    # CORS (ALLOWED_ORIGINS; también lo usa el WebSocket de métricas)
@@ -136,6 +138,7 @@ centinela-back/
 │   │
 │   └── infrastructure/          # Utilidades técnicas transversales
 │       └── crypto/
+│           ├── instance_ref.go  # OfuscarVMID / DesofuscarVMID: referencia pública inst_... (AES-256, INSTANCE_ID_SALT)
 │           ├── jwt.go           # FirmarToken / VerificarToken (HS256)
 │           ├── password.go      # Hash/verify bcrypt
 │           └── totp.go          # QR TOTP, cifrado AES del secreto

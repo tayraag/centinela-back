@@ -86,6 +86,10 @@ func TestContratoEtapa1(t *testing.T) {
 			t.Errorf("%s debe declarar x-nullable: true", campo)
 		}
 	}
+	// id es la referencia pública opaca de la instancia, nunca el VMID entero.
+	if tipo := cadena(t, propiedad(t, definitions, inventarioDef, "id"), "type"); tipo != "string" {
+		t.Errorf("%s.id debe ser string (referencia inst_...), obtuvo %q", inventarioDef, tipo)
+	}
 
 	// activeTask es el objeto { tareaId, action, status } o null.
 	activeTask := propiedad(t, definitions, inventarioDef, "activeTask")
@@ -130,6 +134,10 @@ func TestContratoEtapa1(t *testing.T) {
 	const creacionAcceptedDef = "http.CreacionAceptadaResponse"
 	verificarRespuesta(t, creacion, "202", creacionAcceptedDef)
 	verificarObjetoRequerido(t, definitions, creacionAcceptedDef, []string{"vmid", "tareaId"})
+	// vmid lleva la referencia pública (inst_...), nunca el número de Proxmox.
+	if tipo := cadena(t, propiedad(t, definitions, creacionAcceptedDef, "vmid"), "type"); tipo != "string" {
+		t.Errorf("CreacionAceptadaResponse.vmid debe ser string (referencia inst_...), obtuvo %q", tipo)
+	}
 	if _, expuesto := objeto(t, objeto(t, definitions, creacionAcceptedDef), "properties")["upid"]; expuesto {
 		t.Error("CreacionAceptadaResponse no debe exponer el UPID de Proxmox")
 	}
@@ -159,10 +167,9 @@ func TestContratoEtapa1(t *testing.T) {
 	// Los pares error/status observados en las acciones aceptadas (503 lo
 	// agrega la guarda de exclusión mutua RequireInstanceIdle).
 	pares := []struct{ codigo, errorCode string }{
-		{"400", "INVALID_VMID"},
 		{"401", "MISSING_TOKEN"},
 		{"403", "INSTANCE_ACCESS_DENIED"},
-		{"404", "INSTANCE_NOT_FOUND"},
+		{"404", "RESOURCE_NOT_FOUND"},
 		{"409", "INSTANCE_BUSY"},
 		{"500", "INTERNAL_ERROR"},
 		{"502", "PROXMOX_UNAVAILABLE"},
@@ -170,10 +177,12 @@ func TestContratoEtapa1(t *testing.T) {
 		{"504", "PROXMOX_TIMEOUT"},
 	}
 
-	for _, ruta := range []string{"/instances/{vmid}/start", "/instances/{vmid}/stop"} {
+	for _, ruta := range []string{"/instances/{instanceRef}/start", "/instances/{instanceRef}/stop"} {
 		item := objeto(t, paths, ruta)
 		operacion := objeto(t, item, "post")
 		verificarBearer(t, operacion)
+		// La ruta recibe la referencia pública (string), no el VMID entero.
+		verificarParametro(t, operacion, "instanceRef", "path", true)
 		verificarRespuesta(t, operacion, "202", acceptedDef)
 
 		respuestas := objeto(t, operacion, "responses")
@@ -209,7 +218,7 @@ func TestContratoEtapa1(t *testing.T) {
 	}
 
 	// La ambigüedad de PROXMOX_TIMEOUT debe quedar explícita en 504.
-	timeout := descripcionRespuesta(t, paths, "/instances/{vmid}/start", "post", "504")
+	timeout := descripcionRespuesta(t, paths, "/instances/{instanceRef}/start", "post", "504")
 	if !strings.Contains(timeout, "puede haberse aplicado") {
 		t.Errorf("504 debe advertir que la acción pudo aplicarse: %q", timeout)
 	}
@@ -217,38 +226,38 @@ func TestContratoEtapa1(t *testing.T) {
 	// INSTANCE_PROTECTED existe donde RejectProtectedInstance está registrado en
 	// cmd/api/main.go: start, stop y el endpoint genérico de estado (desde el
 	// commit 8591e90, "VMIDs protegidos en acciones de energía").
-	for _, ruta := range []string{"/instances/{vmid}/start", "/instances/{vmid}/stop", "/instances/{vmid}/status/{action}"} {
+	for _, ruta := range []string{"/instances/{instanceRef}/start", "/instances/{instanceRef}/stop", "/instances/{instanceRef}/status/{action}"} {
 		if r403 := descripcionRespuesta(t, paths, ruta, "post", "403"); !strings.Contains(r403, "INSTANCE_PROTECTED") {
 			t.Errorf("%s 403 debe documentar INSTANCE_PROTECTED: %q", ruta, r403)
 		}
 	}
 
 	// La matriz de estados del ciclo de vida responde 409 INSTANCE_INVALID_STATE.
-	for _, ruta := range []string{"/instances/{vmid}/start", "/instances/{vmid}/stop", "/instances/{vmid}/status/{action}"} {
+	for _, ruta := range []string{"/instances/{instanceRef}/start", "/instances/{instanceRef}/stop", "/instances/{instanceRef}/status/{action}"} {
 		if r409 := descripcionRespuesta(t, paths, ruta, "post", "409"); !strings.Contains(r409, "INSTANCE_INVALID_STATE") {
 			t.Errorf("%s 409 debe documentar INSTANCE_INVALID_STATE: %q", ruta, r409)
 		}
 	}
 
 	// DELETE: solo ADMIN y asíncrono, con el mismo 202 { tareaId }.
-	borrado := objeto(t, objeto(t, paths, "/instances/{vmid}"), "delete")
+	borrado := objeto(t, objeto(t, paths, "/instances/{instanceRef}"), "delete")
 	verificarBearer(t, borrado)
 	verificarRespuesta(t, borrado, "202", acceptedDef)
 	if _, existe := objeto(t, borrado, "responses")["204"]; existe {
-		t.Error("DELETE /instances/{vmid} ya no responde 204: es asíncrono y responde 202")
+		t.Error("DELETE /instances/{instanceRef} ya no responde 204: es asíncrono y responde 202")
 	}
 	if descripcion := cadena(t, borrado, "description"); !strings.Contains(descripcion, "Solo ADMIN") {
-		t.Errorf("DELETE /instances/{vmid} debe aclarar que es solo ADMIN: %q", descripcion)
+		t.Errorf("DELETE /instances/{instanceRef} debe aclarar que es solo ADMIN: %q", descripcion)
 	}
-	if r403 := descripcionRespuesta(t, paths, "/instances/{vmid}", "delete", "403"); !strings.Contains(r403, "INSUFFICIENT_PERMISSIONS") {
+	if r403 := descripcionRespuesta(t, paths, "/instances/{instanceRef}", "delete", "403"); !strings.Contains(r403, "INSUFFICIENT_PERMISSIONS") {
 		t.Errorf("DELETE 403 debe documentar INSUFFICIENT_PERMISSIONS: %q", r403)
 	}
-	if r409 := descripcionRespuesta(t, paths, "/instances/{vmid}", "delete", "409"); !strings.Contains(r409, "INSTANCE_INVALID_STATE") {
+	if r409 := descripcionRespuesta(t, paths, "/instances/{instanceRef}", "delete", "409"); !strings.Contains(r409, "INSTANCE_INVALID_STATE") {
 		t.Errorf("DELETE 409 debe documentar INSTANCE_INVALID_STATE: %q", r409)
 	}
 
 	// Pause: contrato objetivo, todavía no registrado.
-	pause := objeto(t, objeto(t, paths, "/instances/{vmid}/pause"), "post")
+	pause := objeto(t, objeto(t, paths, "/instances/{instanceRef}/pause"), "post")
 	if estado := cadena(t, pause, "x-implementation-status"); estado != "planned" {
 		t.Errorf("POST pause debe marcarse planned, obtuvo %q", estado)
 	}
@@ -525,16 +534,18 @@ func TestContratoEtapa1(t *testing.T) {
 		"usagePercent", "instancesSummary", "fetchedAt", "nivelAcceso", "activeTask",
 		// T02 — acciones aceptadas.
 		"POST /api/instances", "RESOURCE_QUOTA_EXCEEDED", "PROVISIONING_COORDINATION_UNAVAILABLE",
-		"POST /api/instances/:vmid/start", "POST /api/instances/:vmid/stop",
+		"POST /api/instances/:instanceRef/start", "POST /api/instances/:instanceRef/stop",
+		// Referencias públicas en lugar del VMID (IDOR y enumeración).
+		"inst_", "INSTANCE_ID_SALT", "RESOURCE_NOT_FOUND",
 		"202", "El UPID de Proxmox permanece privado", "tareaId", "pause",
-		// T02 — los ocho pares error/status.
-		"INVALID_VMID", "MISSING_TOKEN", "INSTANCE_ACCESS_DENIED", "INSTANCE_PROTECTED",
-		"INSTANCE_NOT_FOUND", "INSTANCE_BUSY", "INTERNAL_ERROR",
+		// T02 — los pares error/status.
+		"MISSING_TOKEN", "INSTANCE_ACCESS_DENIED", "INSTANCE_PROTECTED",
+		"INSTANCE_BUSY", "INTERNAL_ERROR",
 		"PROXMOX_UNAVAILABLE", "PROXMOX_TIMEOUT",
 		// T02 — sobre real y diferencias con lo solicitado.
 		`{ "errorCode", "message" }`, "INSTANCE_INVALID_STATE",
 		// Borrado asíncrono, solo ADMIN.
-		"DELETE /api/instances/:vmid", "INSTANCE_INVALID_STATE",
+		"DELETE /api/instances/:instanceRef", "INSTANCE_INVALID_STATE",
 		// T03 — stream SSE, ticket y framing.
 		"GET /api/events", "POST /api/events/ticket", "http.SSEEventPayload",
 		"http.TaskSuccess", "http.TaskFailed", "http.SSEDetallesEvento",

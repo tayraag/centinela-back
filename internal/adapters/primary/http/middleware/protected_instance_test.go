@@ -46,7 +46,7 @@ func TestRejectProtectedInstance(t *testing.T) {
 	protegidos, _ := middleware.ParseVmidsProtegidos("")
 
 	r := gin.New()
-	r.POST("/instances/:vmid/stop", middleware.RejectProtectedInstance(protegidos, "vmid"), func(c *gin.Context) {
+	r.POST("/instances/:instanceRef/stop", middleware.ResolveInstanceRef(refsPrueba, "instanceRef"), middleware.RejectProtectedInstance(protegidos), func(c *gin.Context) {
 		c.Status(http.StatusAccepted)
 	})
 
@@ -54,10 +54,10 @@ func TestRejectProtectedInstance(t *testing.T) {
 		vmid   string
 		codigo int
 	}{
-		{"101", http.StatusForbidden},  // base de datos: protegida
-		{"102", http.StatusForbidden},  // la propia API: protegida
-		{"200", http.StatusAccepted},   // instancia común: pasa
-		{"abc", http.StatusBadRequest}, // vmid inválido
+		{ref(t, 101), http.StatusForbidden}, // base de datos: protegida
+		{ref(t, 102), http.StatusForbidden}, // la propia API: protegida
+		{ref(t, 200), http.StatusAccepted},  // instancia común: pasa
+		{"101", http.StatusNotFound},        // el VMID numérico no es una referencia
 	}
 	for _, caso := range casos {
 		w := httptest.NewRecorder()

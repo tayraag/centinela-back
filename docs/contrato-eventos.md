@@ -26,12 +26,16 @@ enum** en inglés MAYÚSCULA con guión bajo.
 | tipo        | string         | string    | Tipo de evento (ver enums)             |
 | severidad   | string         | string    | Nivel de severidad (ver enums)         |
 | recursoTipo | string         | string    | Tipo de recurso afectado (ver enums)   |
-| recursoId   | string         | string    | VMID de la VM o LXC; se omite en HOST  |
+| recursoId   | string         | string    | Referencia pública (`inst_...`) de la VM o LXC; se omite en HOST |
 | mensaje     | string         | string    | Texto legible para el usuario          |
 | fechaHora   | time.Time      | RFC3339   | Momento en que se generó el evento     |
 | detalles    | map[string]any | object    | Datos extra opcionales (según el tipo) |
 
 - `id` permite deduplicar eventos repetidos del lado del cliente.
+- `recursoId` nunca es el VMID de Proxmox: dentro del backend el evento lleva el
+  VMID (`"110"`) y el handler del stream lo traduce a la referencia pública
+  antes de mandarlo, la misma `id` que devuelve `GET /api/instances`. Si un
+  texto de `detalles` (el error de Proxmox) nombra el VMID, también se reemplaza.
 - `recursoTipo`, `recursoId` y `detalles` se completan según el tipo de evento
   (ver `ConRecurso` y `ConDetalles` en el código). `recursoId` y `detalles` no
   viajan cuando no aplican: un evento del HOST no trae `recursoId`.
@@ -60,8 +64,8 @@ enum** en inglés MAYÚSCULA con guión bajo.
 
 | Constante Go | Valor | Significado                               | Lo reciben                                      |
 |--------------|-------|-------------------------------------------|-------------------------------------------------|
-| RecursoVM    | VM    | Máquina virtual                           | ADMIN y OPERATOR con permiso sobre ese VMID     |
-| RecursoLXC   | LXC   | Contenedor LXC                            | ADMIN y OPERATOR con permiso sobre ese VMID     |
+| RecursoVM    | VM    | Máquina virtual                           | ADMIN y OPERATOR con permiso sobre esa instancia |
+| RecursoLXC   | LXC   | Contenedor LXC                            | ADMIN y OPERATOR con permiso sobre esa instancia |
 | RecursoHost  | HOST  | Servidor físico (el nodo de Proxmox)      | Solo ADMIN; al OPERATOR se le descarta en silencio |
 
 `HOST` reemplaza al valor `NODE` de versiones anteriores del contrato (nunca se

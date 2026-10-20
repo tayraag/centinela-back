@@ -81,11 +81,41 @@ nodo. `cores` son los hilos lógicos del nodo, sobre los que Proxmox calcula
 }
 ```
 
+## Identificadores de instancia: referencia pública opaca
+
+La API **nunca expone el VMID de Proxmox** (100, 101, ...): con números
+consecutivos se puede deducir cuántas instancias hay y probar rutas de
+instancias ajenas (IDOR y enumeración). En su lugar, cada instancia tiene una
+**referencia pública** con la forma `inst_` + 22 caracteres alfanuméricos, por
+ejemplo `inst_3Hk9aQ2mXv7LpR4sT1bN8c`.
+
+- Es **estable**: la misma instancia tiene siempre la misma referencia, así que
+  el front puede usarla como clave (caché, rutas del navegador, selección).
+- Es **opaca**: no se puede deducir el VMID ni el orden de creación, y no se
+  puede fabricar una válida. Se cifra con el secreto `INSTANCE_ID_SALT` (mínimo
+  32 caracteres) del servidor; sin esa variable la API no arranca. Cambiar el
+  secreto cambia todas las referencias.
+- Es la `id` del inventario, la `:instanceRef` de todas las rutas
+  `/api/instances/:instanceRef/...` y del WebSocket, el `recursoId` de los
+  eventos SSE de VM y LXC y el `instanciaId`/`resourceId` de la auditoría.
+- **Los campos que se llamaban `vmid` conservan el nombre**, pero ahora son un
+  string con la referencia: el detalle, el `202` de creación, los mensajes del
+  WebSocket, los permisos de usuario (`permisos[].vmid` e
+  `instanciasPermitidas`) y los `vmid` dentro de `detalles` de la auditoría.
+- Una referencia alterada, inventada, de otro servidor o un VMID numérico en la
+  ruta responde `404 RESOURCE_NOT_FOUND`, **exactamente igual** que una
+  instancia que no existe en Proxmox: el error no dice por qué falló.
+
+```json
+{ "errorCode": "RESOURCE_NOT_FOUND", "message": "La instancia solicitada no existe." }
+```
+
 ## Inventario de instancias — operativo
 
 `GET /api/instances` devuelve un array. Cada elemento contiene siempre:
 
-- `id`, `name`, `type`, `node` y `status`.
+- `id` (la referencia pública de la instancia, string), `name`, `type`, `node`
+  y `status`.
 - `ip`: cadena o `null`. Se obtiene en vivo: en las VM, con el QEMU Guest
   Agent; en los contenedores, con sus interfaces. Se informa la primera IPv4
   (sin contar loopback) o, si no hay, la primera IPv6 global. Vale `null` si la
@@ -113,14 +143,14 @@ nodo. `cores` son los hilos lógicos del nodo, sobre los que Proxmox calcula
 
 **Convención de CPU y RAM en toda la API** (definida por la PM): la CPU viaja
 siempre en porcentaje de 0 a 100, y CPU y RAM usada valen `null` con la instancia
-apagada. Vale para el inventario, el detalle (`GET /api/instances/:vmid`, campos
+apagada. Vale para el inventario, el detalle (`GET /api/instances/:instanceRef`, campos
 `cpu` y `mem`), el WebSocket de métricas (`cpu` y `mem`) y el estado del nodo
 (`cpu.usagePercent`).
 
 ```json
 [
   {
-    "id": 110,
+    "id": "inst_3Hk9aQ2mXv7LpR4sT1bN8c",
     "name": "api-produccion",
     "type": "vm",
     "node": "pve-01",
@@ -133,7 +163,7 @@ apagada. Vale para el inventario, el detalle (`GET /api/instances/:vmid`, campos
     "activeTask": null
   },
   {
-    "id": 201,
+    "id": "inst_0Zq4Wd8nKe2YtB6uJm1xPa",
     "name": "db-pruebas",
     "type": "lxc",
     "node": "pve-01",
@@ -213,10 +243,14 @@ inicial dentro de la misma transacción:
 
 ```json
 {
-  "vmid": 115,
+  "vmid": "inst_5Rv1Lc9hGs3NwF7kDy2Tqe",
   "tareaId": "0192a8b3-4f89-7e23-9a0c-0305e82c3301"
 }
 ```
+
+`vmid` conserva su nombre pero ahora es un string: la referencia pública de la
+instancia nueva (la misma `id` que tendrá en el inventario). El número que
+asignó Proxmox no se devuelve.
 
 `tareaId` es la referencia pública opaca administrada por Centinela. El UPID
 real se conserva en PostgreSQL para que el worker consulte Proxmox y correlacione
@@ -226,7 +260,8 @@ exportaciones.
 Si falla ese registro luego de que Proxmox aceptó la orden, devuelve
 `500 TASK_TRACKING_UNAVAILABLE` y advierte que no se debe reintentar sin
 verificar el estado. Al terminar, el worker libera la reserva y publica
-`TASK_FINISHED` con `accion: "CREATE"` y el VMID en `recursoId`. Un resultado
+`TASK_FINISHED` con `accion: "CREATE"` y la referencia de la instancia en
+`recursoId`. Un resultado
 `OK` o `WARNINGS` asigna atómicamente `FULL_ACCESS` al usuario creador antes de
 publicar el evento.
 
@@ -236,21 +271,21 @@ Las acciones de energía sobre una instancia son `POST` y responden `202 Accepte
 El verbo `POST` es el que el servidor tiene registrado; no existe `PUT` ni `PATCH`
 para estas rutas. El borrado usa `DELETE` y responde igual, `202 Accepted`.
 
-| Ruta                   | Método | Rol            | Estado      | Respuesta |
-|------------------------|--------|----------------|-------------|-----------|
-| `:vmid/start`          | POST   | ADMIN/OPERATOR | operativo   | `202`     |
-| `:vmid/stop`           | POST   | ADMIN/OPERATOR | operativo   | `202`     |
-| `:vmid/status/:action` | POST   | ADMIN/OPERATOR | operativo   | `202`     |
-| `:vmid`                | DELETE | solo ADMIN     | operativo   | `202`     |
-| `:vmid/pause`          | POST   | ADMIN/OPERATOR | planificada | `404`     |
+| Ruta                          | Método | Rol            | Estado      | Respuesta |
+|-------------------------------|--------|----------------|-------------|-----------|
+| `:instanceRef/start`          | POST   | ADMIN/OPERATOR | operativo   | `202`     |
+| `:instanceRef/stop`           | POST   | ADMIN/OPERATOR | operativo   | `202`     |
+| `:instanceRef/status/:action` | POST   | ADMIN/OPERATOR | operativo   | `202`     |
+| `:instanceRef`                | DELETE | solo ADMIN     | operativo   | `202`     |
+| `:instanceRef/pause`          | POST   | ADMIN/OPERATOR | planificada | `404`     |
 
 Un OPERATOR necesita `FULL_ACCESS` sobre la instancia para las acciones de
 energía.
 
-**Detalle:** las tres rutas operativas son `POST /api/instances/:vmid/start`,
-`POST /api/instances/:vmid/stop` y `POST /api/instances/:vmid/status/:action`;
+**Detalle:** las tres rutas operativas son `POST /api/instances/:instanceRef/start`,
+`POST /api/instances/:instanceRef/stop` y `POST /api/instances/:instanceRef/status/:action`;
 las tres responden `202` con `AccionAceptadaResponse`. La cuarta,
-`POST /api/instances/:vmid/pause`, hoy responde `404 NOT_FOUND`.
+`POST /api/instances/:instanceRef/pause`, hoy responde `404 NOT_FOUND`.
 
 El cuerpo `202` es el esquema `http.AccionAceptadaResponse`:
 
@@ -266,15 +301,15 @@ La acción es asíncrona: el `202` confirma que Proxmox aceptó la orden, **no**
 la instancia ya cambió de estado. El frontend debe esperar el evento
 `TASK_FINISHED` o releer el estado de la instancia.
 
-`POST /api/instances/:vmid/status/:action` acepta `start`, `stop`, `shutdown` y
+`POST /api/instances/:instanceRef/status/:action` acepta `start`, `stop`, `shutdown` y
 `reboot`. Cualquier otra acción responde `400 INVALID_ACTION`.
 
 ### Borrado — operativo, solo ADMIN
 
-`DELETE /api/instances/:vmid` elimina de forma permanente una VM o un
+`DELETE /api/instances/:instanceRef` elimina de forma permanente una VM o un
 contenedor. Solo lo puede invocar un `ADMIN`: un `OPERATOR` recibe
-`403 INSUFFICIENT_PERMISSIONS`. Tampoco se pueden borrar los VMIDs protegidos de
-la infraestructura (`403 INSTANCE_PROTECTED`).
+`403 INSUFFICIENT_PERMISSIONS`. Tampoco se pueden borrar las instancias
+protegidas de la infraestructura (`403 INSTANCE_PROTECTED`).
 
 La instancia tiene que estar detenida: si no está `stopped` responde
 `409 INSTANCE_INVALID_STATE` sin tocar Proxmox. Si está detenida, Proxmox crea la
@@ -293,7 +328,7 @@ El borrado es asíncrono: mientras dura, la instancia aparece en el inventario c
 ### Pause: diferencia con lo solicitado
 
 La acción `Pause` **no está implementada**. No existe la ruta
-`POST /api/instances/:vmid/pause`, no está en la lista de acciones válidas del
+`POST /api/instances/:instanceRef/pause`, no está en la lista de acciones válidas del
 endpoint genérico y el adaptador de Proxmox no expone una operación de pausa.
 Hoy esa ruta responde `404 NOT_FOUND` y `pause` en el endpoint genérico responde
 `400 INVALID_ACTION`. El contrato queda documentado en Swagger con
@@ -316,10 +351,9 @@ Estos son los pares error/status que las acciones de energía pueden devolver
 
 | HTTP | `errorCode` representativo | Causa                                     |
 |------|----------------------------|-------------------------------------------|
-| 400  | `INVALID_VMID`             | El `vmid` de la ruta no es un entero      |
 | 401  | `MISSING_TOKEN`            | Token ausente, inválido o sesión revocada |
 | 403  | `INSTANCE_ACCESS_DENIED`   | Falta de permisos o nivel insuficiente    |
-| 404  | `INSTANCE_NOT_FOUND`       | La instancia no existe en Proxmox         |
+| 404  | `RESOURCE_NOT_FOUND`       | Referencia inválida o instancia inexistente |
 | 409  | `INSTANCE_BUSY`            | La instancia ejecuta otra tarea           |
 | 409  | `INSTANCE_INVALID_STATE`   | Estado incompatible con la acción         |
 | 500  | `INTERNAL_ERROR`           | Permisos o error inesperado de Proxmox    |
@@ -495,7 +529,10 @@ El `data:` de cada evento es el esquema `http.SSEEventPayload`:
 - `severidad` admite `INFO`, `WARNING` y `CRITICAL`.
 - `recursoTipo` admite `VM`, `LXC` y `HOST` (el servidor físico; reemplaza al
   antiguo `NODE`).
-- `recursoId` es el VMID en los eventos de VM y LXC; se omite en los del `HOST`.
+- `recursoId` es la referencia pública de la instancia (`inst_...`, la misma `id`
+  del inventario) en los eventos de VM y LXC; se omite en los del `HOST`. Si
+  `detalles.error` o `detalles.exitstatus` traen un texto de Proxmox que nombra
+  el VMID ("CT 201 not running"), el número se reemplaza por la referencia.
 - Los eventos de `HOST`, como las alertas `ALERT_TRIGGERED`, solo llegan a
   usuarios `ADMIN`; un `OPERATOR` no los recibe aunque tenga permisos sobre
   instancias. Ejemplos en `contrato-eventos.md`.

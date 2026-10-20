@@ -33,7 +33,7 @@ func pedirConGuarda(excl *exclusionFalsa, ruta string) (*httptest.ResponseRecord
 	gin.SetMode(gin.TestMode)
 	llegoAlHandler := false
 	r := gin.New()
-	r.POST("/api/instances/:vmid/start", middleware.RequireInstanceIdle(excl, "vmid"), func(c *gin.Context) {
+	r.POST("/api/instances/:instanceRef/start", middleware.ResolveInstanceRef(refsPrueba, "instanceRef"), middleware.RequireInstanceIdle(excl), func(c *gin.Context) {
 		llegoAlHandler = true
 		c.Status(http.StatusAccepted)
 	})
@@ -44,7 +44,7 @@ func pedirConGuarda(excl *exclusionFalsa, ruta string) (*httptest.ResponseRecord
 
 func TestRequireInstanceIdle_OcupadaEs409SinLlegarAlHandler(t *testing.T) {
 	excl := &exclusionFalsa{err: ports.ErrInstanciaOcupada}
-	w, llego := pedirConGuarda(excl, "/api/instances/110/start")
+	w, llego := pedirConGuarda(excl, "/api/instances/"+ref(t, 110)+"/start")
 	var cuerpo map[string]string
 	_ = json.Unmarshal(w.Body.Bytes(), &cuerpo)
 	esperado := map[string]string{"errorCode": "INSTANCE_BUSY", "message": "La instancia se encuentra ejecutando otra tarea. Aguarde a que finalice."}
@@ -61,7 +61,7 @@ func TestRequireInstanceIdle_OcupadaEs409SinLlegarAlHandler(t *testing.T) {
 
 func TestRequireInstanceIdle_OciosaPasaYLibera(t *testing.T) {
 	excl := &exclusionFalsa{}
-	w, llego := pedirConGuarda(excl, "/api/instances/110/start")
+	w, llego := pedirConGuarda(excl, "/api/instances/"+ref(t, 110)+"/start")
 	if w.Code != http.StatusAccepted || !llego {
 		t.Errorf("Una instancia ociosa debe pasar al handler: %d", w.Code)
 	}
@@ -72,15 +72,15 @@ func TestRequireInstanceIdle_OciosaPasaYLibera(t *testing.T) {
 
 func TestRequireInstanceIdle_SinPoderVerificarEs503(t *testing.T) {
 	excl := &exclusionFalsa{err: errors.Join(ports.ErrExclusionNoDisponible, errors.New("conexión rechazada"))}
-	w, llego := pedirConGuarda(excl, "/api/instances/110/start")
+	w, llego := pedirConGuarda(excl, "/api/instances/"+ref(t, 110)+"/start")
 	if w.Code != http.StatusServiceUnavailable || llego {
 		t.Errorf("Sin poder verificar se esperaba 503 sin despachar: %d (handler=%v)", w.Code, llego)
 	}
 }
 
-func TestRequireInstanceIdle_VmidInvalidoEs400(t *testing.T) {
+func TestRequireInstanceIdle_ReferenciaInvalidaEs404SinReservar(t *testing.T) {
 	excl := &exclusionFalsa{}
-	if w, llego := pedirConGuarda(excl, "/api/instances/abc/start"); w.Code != http.StatusBadRequest || llego {
-		t.Errorf("vmid inválido: se esperaba 400, vino %d", w.Code)
+	if w, llego := pedirConGuarda(excl, "/api/instances/110/start"); w.Code != http.StatusNotFound || llego || excl.vmid != 0 {
+		t.Errorf("referencia inválida: se esperaba 404 sin reservar, vino %d (reservó %d)", w.Code, excl.vmid)
 	}
 }

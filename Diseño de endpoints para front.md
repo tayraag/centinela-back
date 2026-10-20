@@ -668,7 +668,7 @@ Requiere `Authorization: Bearer <accessToken>`. Devuelve un ticket temporal de u
 **GET /api/events?ticket=uuid-xyz**
 Abre un stream persistente de tipo `text/event-stream` donde el backend envía notificaciones en tiempo real (estado de VMs, tareas en curso, notificaciones del sistema) sin necesidad de polling por parte del frontend.
 
-> **OPERATIVO ETAPA-1:** `recursoTipo` es `VM`, `LXC` o `HOST` (el servidor físico; reemplaza a `NODE`). Los eventos de `HOST`, como las alertas `ALERT_TRIGGERED`, no traen `recursoId` y solo llegan a usuarios ADMIN; a un OPERATOR se le descartan aunque tenga permisos sobre instancias. Los de VM/LXC (por ejemplo `TASK_FINISHED`) llegan a ADMIN y a los OPERATOR con permiso sobre ese VMID. Ver `docs/contrato-eventos.md`.
+> **OPERATIVO ETAPA-1:** `recursoTipo` es `VM`, `LXC` o `HOST` (el servidor físico; reemplaza a `NODE`). Los eventos de `HOST`, como las alertas `ALERT_TRIGGERED`, no traen `recursoId` y solo llegan a usuarios ADMIN; a un OPERATOR se le descartan aunque tenga permisos sobre instancias. Los de VM/LXC (por ejemplo `TASK_FINISHED`) llegan a ADMIN y a los OPERATOR con permiso sobre esa instancia, y su `recursoId` es la referencia pública de la instancia (`inst_...`, la misma `id` del inventario), nunca el VMID. Ver `docs/contrato-eventos.md`.
 
 #### 7\. Inventario de instancias
 
@@ -680,7 +680,7 @@ El uso de Query Parameters en el requerimiento 7 cumple la función de delegar e
 
 **GET /api/instances?search=web\&type=VM\&status=running\&node=pve1**
 
-> **OPERATIVO ETAPA-1 (código actual): `GET /api/instances` no acepta query params (`search/type/status/node` son planificados, el backend los ignora) y devuelve un array directo `[]`, sin wrapper `{summary, instances}`. `type` es `vm|lxc` (mapea `qemu→vm`), `cpuUsage` es porcentaje 0-100 con 2 decimales (`null` si `stopped`), `ramUsage/maxRam` en bytes (`null` si `stopped`, salvo `maxRam` que va siempre que Proxmox informe `>0`), y `activeTask` es objeto `{tareaId, action: START|STOP|SHUTDOWN|REBOOT|DELETE, status: RUNNING}|null` (no string UPID). ADMIN ve todo, OPERATOR solo sus asignadas. Ver `instance_handler.go:ListarInstancias` y `docs/contrato-etapa1.md`.
+> **OPERATIVO ETAPA-1 (código actual): `GET /api/instances` no acepta query params (`search/type/status/node` son planificados, el backend los ignora) y devuelve un array directo `[]`, sin wrapper `{summary, instances}`. `type` es `vm|lxc` (mapea `qemu→vm`), `cpuUsage` es porcentaje 0-100 con 2 decimales (`null` si `stopped`), `ramUsage/maxRam` en bytes (`null` si `stopped`, salvo `maxRam` que va siempre que Proxmox informe `>0`), y `activeTask` es objeto `{tareaId, action: START|STOP|SHUTDOWN|REBOOT|DELETE, status: RUNNING}|null` (no string UPID). ADMIN ve todo, OPERATOR solo sus asignadas. **`id` es un string opaco `inst_` + 22 caracteres (ej. `inst_3Hk9aQ2mXv7LpR4sT1bN8c`), no el VMID de Proxmox:** es estable (sirve de clave en el front) y es lo que va en todas las rutas `/api/instances/{id}/...`, en el WebSocket, en los permisos de usuario y en el `recursoId` de los eventos. La API no expone el VMID en ningún lado (protección contra IDOR y enumeración). Ver `instance_handler.go:ListarInstancias` y `docs/contrato-etapa1.md`.
 
 Con respecto a los query params en la url DE EJEMPLO de arriba:
 
@@ -747,7 +747,7 @@ Este es el primer endpoint que el frontend consume al entrar al detalle. Aliment
 
 **GET /api/instances/{id}**&nbsp;
 
-> **OPERATIVO ETAPA-1 (código actual): `GET /api/instances/:vmid` (`:vmid` entero, `400 INVALID_VMID` si no lo es) devuelve la lectura en vivo `InstanciaDetalleResponse` (`{vmid, nombre, tipo: qemu|lxc, nodo, estado, cpu: porcentaje 0-100, mem, maxMem, maxCpu}`; `cpu` y `mem` son `null` si la instancia no está `running`), no el detalle rico del ejemplo siguiente (`os, qemuAgentActive, permissions, availableActions, recentTasks...`, que queda como planificado).
+> **OPERATIVO ETAPA-1 (código actual): `GET /api/instances/:instanceRef` (`:instanceRef` es la `id` del inventario, `inst_...`; una referencia inválida o un VMID numérico responden `404 RESOURCE_NOT_FOUND`, igual que una instancia inexistente) devuelve la lectura en vivo `InstanciaDetalleResponse` (`{vmid, nombre, tipo: qemu|lxc, nodo, estado, cpu: porcentaje 0-100, mem, maxMem, maxCpu}`; `cpu` y `mem` son `null` si la instancia no está `running`; `vmid` ahora es la referencia `inst_...`, no el número), no el detalle rico del ejemplo siguiente (`os, qemuAgentActive, permissions, availableActions, recentTasks...`, que queda como planificado).
 
 ```json
 {
@@ -814,7 +814,7 @@ Donde `{action}` puede ser: `start` (Iniciar), `stop` (Forzar apagado), `shutdow
 **DELETE /api/instances/{id}** (Eliminar instancia)
 Requiere rol ADMIN estrictamente, y la instancia debe estar en estado `stopped` (`409 INSTANCE_INVALID_STATE` si no, `409 INSTANCE_BUSY` si hay tarea RUNNING).
 
-> **OPERATIVO ETAPA-1:** las 4 acciones + el borrado son asíncronos y responden `202 {tareaId: string-uuid}`. `tareaId` es la referencia pública opaca administrada por Centinela; el UPID real queda almacenado únicamente en el backend. Si falla el registro local después de que Proxmox aceptó la orden, se responde `500 TASK_TRACKING_UNAVAILABLE`, nunca un `202` con el UPID como alternativa. Correlacionar por `tareaId` y `TASK_FINISHED`. Pre-chequeos sin tocar Proxmox: `409 INSTANCE_BUSY` si hay tarea RUNNING o el lock `lock:instance:{vmid}:operation` está tomado (guarda `RequireInstanceIdle`: de una ráfaga de pedidos simultáneos sobre la misma instancia pasa uno solo), `503 INSTANCE_LOCK_UNAVAILABLE` si no se pudo verificar (reintentable); matriz `start→stopped`, `stop|shutdown|reboot→running` (`409 INSTANCE_INVALID_STATE`). Errores Proxmox: `404 INSTANCE_NOT_FOUND`, `502 PROXMOX_UNAVAILABLE` (orden no llegó), `504 PROXMOX_TIMEOUT` (pudo aplicarse). Sobre de error `{errorCode, message}`.
+> **OPERATIVO ETAPA-1:** las 4 acciones + el borrado son asíncronos y responden `202 {tareaId: string-uuid}`. `tareaId` es la referencia pública opaca administrada por Centinela; el UPID real queda almacenado únicamente en el backend. Si falla el registro local después de que Proxmox aceptó la orden, se responde `500 TASK_TRACKING_UNAVAILABLE`, nunca un `202` con el UPID como alternativa. Correlacionar por `tareaId` y `TASK_FINISHED`. Pre-chequeos sin tocar Proxmox: `409 INSTANCE_BUSY` si hay tarea RUNNING o el lock `lock:instance:{vmid}:operation` está tomado (guarda `RequireInstanceIdle`: de una ráfaga de pedidos simultáneos sobre la misma instancia pasa uno solo), `503 INSTANCE_LOCK_UNAVAILABLE` si no se pudo verificar (reintentable); matriz `start→stopped`, `stop|shutdown|reboot→running` (`409 INSTANCE_INVALID_STATE`). Las rutas usan la referencia pública (`/api/instances/inst_.../start`); una referencia inválida o una instancia inexistente responden `404 RESOURCE_NOT_FOUND`, exactamente igual. Errores Proxmox: `502 PROXMOX_UNAVAILABLE` (orden no llegó), `504 PROXMOX_TIMEOUT` (pudo aplicarse). Sobre de error `{errorCode, message}`.
 
 Sí hay una respuesta para el front, pero está agrupada más abajo para no repetirla.
 
@@ -855,7 +855,7 @@ Devuelve el detalle microscópico del hardware virtual, la disponibilidad del no
 
 **GET /api/instances/{id}/resources**&nbsp;
 
-> **PLANIFICADO:** este `GET` todavía no está implementado. El cambio de CPU y RAM sí: ver `PUT /api/instances/{vmid}/config` más abajo.
+> **PLANIFICADO:** este `GET` todavía no está implementado. El cambio de CPU y RAM sí: ver `PUT /api/instances/{instanceRef}/config` más abajo.
 
 ```json
 {
@@ -903,9 +903,9 @@ Devuelve el detalle microscópico del hardware virtual, la disponibilidad del no
 
 Para modificar los cores y la memoria RAM asignados, el frontend envía solo los valores nuevos.
 
-**PUT /api/instances/{vmid}/config**
+**PUT /api/instances/{instanceRef}/config**
 
-Requiere ADMIN o `FULL_ACCESS` sobre la instancia (`READ_ONLY` no alcanza). Las instancias de infraestructura de El Centinela no se pueden reconfigurar.
+`{instanceRef}` es la `id` de la instancia en el inventario (`inst_...`). Requiere ADMIN o `FULL_ACCESS` sobre la instancia (`READ_ONLY` no alcanza). Las instancias de infraestructura de El Centinela no se pueden reconfigurar.
 
 Petición (Frontend ➡️ Backend), al menos uno de los dos campos, enteros positivos (`ramMb` mínimo 16):
 
@@ -942,7 +942,7 @@ Errores (sobre `{ "errorCode", "message" }`):
 | 400 | `INVALID_REQUEST` | Sin `cores` ni `ramMb`, valores no enteros, menores a 1, o `ramMb` menor a 16 |
 | 403 | `INSTANCE_ACCESS_DENIED` | El usuario no tiene `FULL_ACCESS` sobre la instancia |
 | 403 | `INSTANCE_PROTECTED` | Es una instancia de infraestructura de El Centinela |
-| 404 | `INSTANCE_NOT_FOUND` | La instancia no existe |
+| 404 | `RESOURCE_NOT_FOUND` | La referencia no es válida o la instancia no existe (misma respuesta) |
 | 409 | `RESOURCE_QUOTA_EXCEEDED` | El incremento no entra en el margen del nodo; no se escribió nada en Proxmox |
 | 409 | `INSTANCE_BUSY` | La instancia tiene otra operación en curso, o su configuración cambió en el medio |
 | 502 / 504 | `PROXMOX_UNAVAILABLE` / `PROXMOX_TIMEOUT` | Proxmox caído o sin respuesta |
@@ -1460,10 +1460,13 @@ Si la validación aprueba, el backend obtiene el siguiente VMID libre mediante
 
 ```json
 {
-  "vmid": 120,
+  "vmid": "inst_5Rv1Lc9hGs3NwF7kDy2Tqe",
   "tareaId": "3f2504e0-4f89-11d3-9a0c-0305e82c3301"
 }
 ```
+
+`vmid` es la referencia pública de la instancia nueva (la misma `id` que tendrá
+en el inventario), no el número asignado por Proxmox.
 
 El UPID queda reservado para el worker y la correlación interna de auditoría;
 no aparece en el contrato HTTP, en el listado administrativo ni en la
@@ -1482,7 +1485,7 @@ frontend recibe la información actualizada. No se vacía Redis completo: se
 preservan sesiones, tickets SSE y datos ajenos al inventario/capacidad.
 
 El resultado definitivo llega mediante `TASK_FINISHED`, con
-`detalles.accion: "CREATE"` y `recursoId` igual al VMID. Si Proxmox finaliza
+`detalles.accion: "CREATE"` y `recursoId` igual a esa misma referencia pública. Si Proxmox finaliza
 con `OK` o `WARNINGS`, el mismo commit que cierra la tarea registra al creador
 con `FULL_ACCESS`; el evento se publica después de ese commit.
 
@@ -1516,7 +1519,7 @@ Mediante query parameters:
 
 **GET /api/admin/audit?page=1\&limit=10\&from=2024-05-01\&to=2024-05-08\&result=SUCCESS**
 
-> **OPERATIVO ETAPA-1 (código actual): los params reales son en español: `GET /api/admin/audit?accion=INICIAR_VM&resultado=SUCCESS&usuarioId=<uuid>&instanciaId=110&desde=2024-05-01&hasta=2024-05-08&pagina=1&tamano=50&ordenarPor=fechaHora&direccion=desc`. `page/limit/from/to/result` del ejemplo no existen en código. `GET /api/admin/audit/export` acepta los mismos filtros + `?formato=csv|json` (default `csv`, cualquier valor no-`json` devuelve CSV como adjunto). Respuesta real `200 {total, pagina, items:[{id, usuarioId, nombreUsuario, fechaHora, accion, instanciaId, instanciaNombre, resultado, detalles}]}` (`detalles` string JSON), sin `{statistics, pagination, events}` del ejemplo siguiente, que queda como diseño futuro.
+> **OPERATIVO ETAPA-1 (código actual): los params reales son en español: `GET /api/admin/audit?accion=INICIAR_VM&resultado=SUCCESS&usuarioId=<uuid>&instanciaId=inst_3Hk9aQ2mXv7LpR4sT1bN8c&desde=2024-05-01&hasta=2024-05-08&pagina=1&tamano=50&ordenarPor=fechaHora&direccion=desc`. `page/limit/from/to/result` del ejemplo no existen en código. `GET /api/admin/audit/export` acepta los mismos filtros + `?formato=csv|json` (default `csv`, cualquier valor no-`json` devuelve CSV como adjunto). Respuesta real `200 {total, pagina, items:[{id, usuarioId, nombreUsuario, fechaHora, accion, instanciaId, instanciaNombre, resultado, detalles}]}` (`detalles` string JSON). `instanciaId` (y `resourceId` en VM/LXC) es la referencia pública `inst_...`, también en el filtro y en la exportación; los VMID que la auditoría guarda dentro de `detalles` (purga y asignación de permisos, textos de error de Proxmox) se devuelven reemplazados por la referencia. Un filtro `instanciaId` inválido o numérico devuelve una lista vacía. No incluye `{statistics, pagination, events}` del ejemplo siguiente, que queda como diseño futuro.
 
 - GET /api/admin/audit: Es la ruta base del endpoint encargada de consultar y devolver los registros de auditoría almacenados en la base de datos.
 - GET /api/admin/audit/export: Exporta el log de auditoría completo según los filtros (descarga CSV).
@@ -1805,8 +1808,8 @@ Petición (Frontend ➡️ Backend):
 ```json
 {
   "permisos": [
-    { "vmid": 100, "nivelAcceso": "FULL_ACCESS" },
-    { "vmid": 101, "nivelAcceso": "READ_ONLY" }
+    { "vmid": "inst_3Hk9aQ2mXv7LpR4sT1bN8c", "nivelAcceso": "FULL_ACCESS" },
+    { "vmid": "inst_0Zq4Wd8nKe2YtB6uJm1xPa", "nivelAcceso": "READ_ONLY" }
   ]
 }
 ```
@@ -1816,8 +1819,8 @@ Petición (Frontend ➡️ Backend):
 ```json
 {
   "permisos": [
-    { "vmid": 100, "nivelAcceso": "FULL_ACCESS" },
-    { "vmid": 101, "nivelAcceso": "READ_ONLY" }
+    { "vmid": "inst_3Hk9aQ2mXv7LpR4sT1bN8c", "nivelAcceso": "FULL_ACCESS" },
+    { "vmid": "inst_0Zq4Wd8nKe2YtB6uJm1xPa", "nivelAcceso": "READ_ONLY" }
   ]
 }
 ```
@@ -1827,6 +1830,13 @@ destructivas como start/stop) o `"READ_ONLY"` (solo lectura de estado y
 métricas). Si se omite en un ítem, se asume `FULL_ACCESS`. Para quitar todos
 los permisos, enviar `{"permisos": []}`. **Cambio de contrato**: ya no se
 acepta el array plano viejo `{"vmids": [...]}`.
+
+> **OPERATIVO ETAPA-1:** `vmid` conserva el nombre pero ya no es el número: es
+> un string con la referencia pública que devuelve `GET /api/instances` en
+> `id`. Un número o una referencia inválida en el `PUT` responden
+> `400 INVALID_REQUEST` y no se cambia ningún permiso. Lo mismo vale para
+> `instanciasPermitidas` y `permisos` en `GET /api/admin/users/{id}` y
+> `GET /api/account/profile`, y para `instanciaId` en la actividad del usuario.
 
 &nbsp;
 
@@ -1950,10 +1960,10 @@ Respuesta Exitosa (200 OK):
     "id": "org-uuid-5678",
     "name": "Tecnología Global S.A."
   },
-  "instanciasPermitidas": [110],
+  "instanciasPermitidas": ["inst_3Hk9aQ2mXv7LpR4sT1bN8c"],
   "permisos": [
     {
-      "vmid": 110,
+      "vmid": "inst_3Hk9aQ2mXv7LpR4sT1bN8c",
       "nivelAcceso": "FULL_ACCESS"
     }
   ]

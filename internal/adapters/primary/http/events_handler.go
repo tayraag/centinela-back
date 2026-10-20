@@ -23,14 +23,15 @@ var latidoSSE = 25 * time.Second
 // EventsHandler expone el canal de eventos en tiempo real (RF-11) por SSE.
 type EventsHandler struct {
 	service ports.EventosService
+	refs    ports.ReferenciasInstancia // recursoId sale como referencia pública
 
 	apagado chan struct{} // se cierra al apagar la API: corta todos los streams
 	una     sync.Once
 }
 
 // NewEventsHandler crea el handler del canal de eventos.
-func NewEventsHandler(service ports.EventosService) *EventsHandler {
-	return &EventsHandler{service: service, apagado: make(chan struct{})}
+func NewEventsHandler(service ports.EventosService, refs ports.ReferenciasInstancia) *EventsHandler {
+	return &EventsHandler{service: service, refs: refs, apagado: make(chan struct{})}
 }
 
 // CerrarStreams corta todos los streams abiertos. Se llama al apagar la API: si
@@ -139,7 +140,7 @@ func (h *EventsHandler) Stream(c *gin.Context) {
 				}
 				return
 			}
-			payload, _ := json.Marshal(evento)
+			payload, _ := json.Marshal(eventoPublico(h.refs, evento))
 			escribir(c, fmt.Sprintf("id: %s\ndata: %s\n\n", evento.ID, payload))
 		case motivo := <-conexion.Cierre:
 			escribirCierre(c, motivo)

@@ -297,7 +297,7 @@ func TestCrearInstancia_RegistraOrdenRealEnSeguimiento(t *testing.T) {
 	upid := "UPID:pve1:1:2:3:vzcreate:502:root@pam:"
 	px := &mockProxmoxPort{aprovRes: &ports.ResultadoAprovisionamiento{VMID: 502, UPID: upid, Accion: ports.AccionProxmoxCrearLXC, ReservaID: "reserva-502"}}
 	seguimiento := &seguimientoCaptura{id: tareaID}
-	handler := adaptersHttp.NewInstanceHandler(px, &mockUserRepository{}, seguimiento, &mockTareaRepository{}, &mockAuditService{}, inventarioNulo{})
+	handler := adaptersHttp.NewInstanceHandler(px, &mockUserRepository{}, seguimiento, &mockTareaRepository{}, &mockAuditService{}, inventarioNulo{}, adaptersHttp.RefsPrueba)
 	router := gin.New()
 	router.POST("/api/instances", func(c *gin.Context) {
 		c.Set(string(middleware.ContextKeyUserID), usuarioID.String())
@@ -331,7 +331,7 @@ func TestCrearInstancia_RegistraOrdenRealEnSeguimiento(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &respuesta); err != nil {
 		t.Fatal(err)
 	}
-	if respuesta["vmid"] != float64(502) || respuesta["tareaId"] != tareaID.String() {
+	if respuesta["vmid"] != adaptersHttp.RefInst(502) || respuesta["tareaId"] != tareaID.String() {
 		t.Fatalf("respuesta asincrónica incorrecta: %v", respuesta)
 	}
 	if _, expuesto := respuesta["upid"]; expuesto {
@@ -366,7 +366,7 @@ func TestCrearInstancia_ContratoPlanoRF07CreaVMYLXC(t *testing.T) {
 			upid := "UPID:pve1:1:2:3:" + caso.accion + ":615:root@pam:"
 			px := &mockProxmoxPort{aprovRes: &ports.ResultadoAprovisionamiento{VMID: 615, UPID: upid, Accion: caso.accion}}
 			seguimiento := &seguimientoCaptura{id: tareaID}
-			handler := adaptersHttp.NewInstanceHandlerConNodo(px, &mockUserRepository{}, seguimiento, &mockTareaRepository{}, &mockAuditService{}, inventarioNulo{}, "pve1")
+			handler := adaptersHttp.NewInstanceHandlerConNodo(px, &mockUserRepository{}, seguimiento, &mockTareaRepository{}, &mockAuditService{}, inventarioNulo{}, adaptersHttp.RefsPrueba, "pve1")
 			router := gin.New()
 			router.POST("/api/instances", func(c *gin.Context) {
 				c.Set(string(middleware.ContextKeyUserID), uuid.NewString())
@@ -388,7 +388,7 @@ func TestCrearInstancia_ContratoPlanoRF07CreaVMYLXC(t *testing.T) {
 			if err := json.Unmarshal(w.Body.Bytes(), &respuesta); err != nil {
 				t.Fatal(err)
 			}
-			if respuesta["vmid"] != float64(615) || respuesta["tareaId"] != tareaID.String() {
+			if respuesta["vmid"] != adaptersHttp.RefInst(615) || respuesta["tareaId"] != tareaID.String() {
 				t.Fatalf("respuesta 202 incompleta: %v", respuesta)
 			}
 			if _, expuesto := respuesta["upid"]; expuesto {
@@ -401,7 +401,7 @@ func TestCrearInstancia_ContratoPlanoRF07CreaVMYLXC(t *testing.T) {
 func TestCrearInstancia_OperatorRecibe403SinLlegarAlServicio(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	px := &mockProxmoxPort{}
-	handler := adaptersHttp.NewInstanceHandler(px, &mockUserRepository{}, seguimientoNulo{}, &mockTareaRepository{}, &mockAuditService{}, inventarioNulo{})
+	handler := adaptersHttp.NewInstanceHandler(px, &mockUserRepository{}, seguimientoNulo{}, &mockTareaRepository{}, &mockAuditService{}, inventarioNulo{}, adaptersHttp.RefsPrueba)
 	router := gin.New()
 	router.POST("/api/instances", func(c *gin.Context) {
 		c.Set(string(middleware.ContextKeyRol), "OPERATOR")
@@ -418,7 +418,7 @@ func TestCrearInstancia_OperatorRecibe403SinLlegarAlServicio(t *testing.T) {
 func TestCrearInstancia_NoResponde202SiNoRegistraElUPID(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	px := &mockProxmoxPort{aprovRes: &ports.ResultadoAprovisionamiento{VMID: 620, UPID: "UPID:pve1:qmcreate:620", Accion: ports.AccionProxmoxCrearVM}}
-	handler := adaptersHttp.NewInstanceHandlerConNodo(px, &mockUserRepository{}, seguimientoError{err: errors.New("base no disponible")}, &mockTareaRepository{}, &mockAuditService{}, inventarioNulo{}, "pve1")
+	handler := adaptersHttp.NewInstanceHandlerConNodo(px, &mockUserRepository{}, seguimientoError{err: errors.New("base no disponible")}, &mockTareaRepository{}, &mockAuditService{}, inventarioNulo{}, adaptersHttp.RefsPrueba, "pve1")
 	router := gin.New()
 	router.POST("/api/instances", handler.CrearInstancia)
 	body := `{"type":"VM","node":"pve1","name":"srv","cpu":{"cores":1},"ram":{"memoryMb":512},"disk":{"storageId":"local-lvm","sizeGb":4},"network":{"bridge":"vmbr0","ipv4":{"type":"dhcp"}},"os":{"templateId":"local:iso/debian.iso"}}`
@@ -435,7 +435,7 @@ func TestCrearInstancia_NoResponde202SiNoRegistraElUPID(t *testing.T) {
 func TestCrearInstancia_RecursosInsuficientesEs409(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	px := &mockProxmoxPort{errAprov: fmt.Errorf("%w: RAM", ports.ErrRecursosInsuficientes)}
-	handler := adaptersHttp.NewInstanceHandler(px, &mockUserRepository{}, seguimientoNulo{}, &mockTareaRepository{}, &mockAuditService{}, inventarioNulo{})
+	handler := adaptersHttp.NewInstanceHandler(px, &mockUserRepository{}, seguimientoNulo{}, &mockTareaRepository{}, &mockAuditService{}, inventarioNulo{}, adaptersHttp.RefsPrueba)
 	router := gin.New()
 	router.POST("/api/instances", handler.CrearInstancia)
 	body := `{"tipo":"vm","nombre":"web","cores":2,"ramMb":4096,"discoGb":50,"storageId":"local-lvm","templateOso":"debian.iso","red":{"modo":"dhcp"}}`
@@ -455,7 +455,7 @@ func TestCrearInstancia_RecursosInsuficientesEs409(t *testing.T) {
 func TestCrearInstancia_RechazaLXCSinPasswordAntesDeProxmox(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	px := &mockProxmoxPort{}
-	handler := adaptersHttp.NewInstanceHandler(px, &mockUserRepository{}, seguimientoNulo{}, &mockTareaRepository{}, &mockAuditService{}, inventarioNulo{})
+	handler := adaptersHttp.NewInstanceHandler(px, &mockUserRepository{}, seguimientoNulo{}, &mockTareaRepository{}, &mockAuditService{}, inventarioNulo{}, adaptersHttp.RefsPrueba)
 	router := gin.New()
 	router.POST("/api/instances", handler.CrearInstancia)
 	body := `{"type":"LXC","node":"pve1","name":"cache","cpu":{"cores":1},"ram":{"memoryMb":512},"disk":{"storageId":"local-lvm","sizeGb":4},"network":{"bridge":"vmbr0","ipv4":{"type":"dhcp"}},"os":{"templateId":"local:vztmpl/debian.tar.zst"}}`
@@ -481,7 +481,7 @@ func TestListarInstancias_AdminVisualizaTodas(t *testing.T) {
 		permisosVMIDs: []int{100}, // Aunque solo tenga 100 en la BD, por ser ADMIN debe ver todas
 	}
 
-	handler := adaptersHttp.NewInstanceHandler(mockPx, mockRepo, seguimientoNulo{}, &mockTareaRepository{}, &mockAuditService{}, inventarioNulo{})
+	handler := adaptersHttp.NewInstanceHandler(mockPx, mockRepo, seguimientoNulo{}, &mockTareaRepository{}, &mockAuditService{}, inventarioNulo{}, adaptersHttp.RefsPrueba)
 
 	router := gin.New()
 	router.GET("/api/instances", func(c *gin.Context) {
@@ -526,7 +526,7 @@ func TestListarInstancias_OperatorVisualizaSoloAsignadas(t *testing.T) {
 		permisosVMIDs: []int{101}, // El operador solo tiene asignada la instancia 101
 	}
 
-	handler := adaptersHttp.NewInstanceHandler(mockPx, mockRepo, seguimientoNulo{}, &mockTareaRepository{}, &mockAuditService{}, inventarioNulo{})
+	handler := adaptersHttp.NewInstanceHandler(mockPx, mockRepo, seguimientoNulo{}, &mockTareaRepository{}, &mockAuditService{}, inventarioNulo{}, adaptersHttp.RefsPrueba)
 
 	router := gin.New()
 	router.GET("/api/instances", func(c *gin.Context) {
@@ -550,8 +550,8 @@ func TestListarInstancias_OperatorVisualizaSoloAsignadas(t *testing.T) {
 	if len(res) != 1 {
 		t.Fatalf("OPERATOR debe ver exclusivamente su instancia asignada (1), pero recibió %d", len(res))
 	}
-	if res[0].ID != 101 {
-		t.Errorf("Se esperaba la instancia 101, pero se recibió id=%d", res[0].ID)
+	if res[0].ID != adaptersHttp.RefInst(101) {
+		t.Errorf("Se esperaba la referencia de la instancia 101, pero se recibió id=%q", res[0].ID)
 	}
 	if res[0].NivelAcceso != ports.NivelAccesoFullAccess {
 		t.Errorf("nivelAcceso = %q, se esperaba FULL_ACCESS", res[0].NivelAcceso)
@@ -566,7 +566,7 @@ func TestListarInstancias_ProxmoxInaccesible(t *testing.T) {
 	}
 	mockRepo := &mockUserRepository{}
 
-	handler := adaptersHttp.NewInstanceHandler(mockPx, mockRepo, seguimientoNulo{}, &mockTareaRepository{}, &mockAuditService{}, inventarioNulo{})
+	handler := adaptersHttp.NewInstanceHandler(mockPx, mockRepo, seguimientoNulo{}, &mockTareaRepository{}, &mockAuditService{}, inventarioNulo{}, adaptersHttp.RefsPrueba)
 
 	router := gin.New()
 	router.GET("/api/instances", func(c *gin.Context) {
@@ -598,7 +598,7 @@ func TestListarInstancias_ProxmoxTimeout(t *testing.T) {
 	mockPx := &mockProxmoxPort{
 		errListar: fmt.Errorf("%w: %w", ports.ErrProxmoxNoDisponible, ports.ErrProxmoxTimeout),
 	}
-	handler := adaptersHttp.NewInstanceHandler(mockPx, &mockUserRepository{}, seguimientoNulo{}, &mockTareaRepository{}, &mockAuditService{}, inventarioNulo{})
+	handler := adaptersHttp.NewInstanceHandler(mockPx, &mockUserRepository{}, seguimientoNulo{}, &mockTareaRepository{}, &mockAuditService{}, inventarioNulo{}, adaptersHttp.RefsPrueba)
 
 	router := gin.New()
 	router.GET("/api/instances", func(c *gin.Context) {
@@ -623,12 +623,12 @@ func TestListarInstancias_ProxmoxTimeout(t *testing.T) {
 // DoD: un bloqueo de Proxmox responde 409 INSTANCE_BUSY, no 502 PROXMOX_UNAVAILABLE.
 func TestAccionesDeEnergia_InstanciaOcupadaEs409(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	for _, ruta := range []string{"/api/instances/110/start", "/api/instances/110/stop"} {
+	for _, ruta := range []string{adaptersHttp.ConRef("/api/instances/110/start"), adaptersHttp.ConRef("/api/instances/110/stop")} {
 		mockPx := &mockProxmoxPort{estado: estadoParaRuta(ruta), errAccion: fmt.Errorf("%w: can't lock file '/var/lock/qemu-server/lock-110.conf' - got timeout", ports.ErrInstanciaOcupada)}
-		handler := adaptersHttp.NewInstanceHandler(mockPx, &mockUserRepository{}, seguimientoNulo{}, &mockTareaRepository{}, &mockAuditService{}, inventarioNulo{})
+		handler := adaptersHttp.NewInstanceHandler(mockPx, &mockUserRepository{}, seguimientoNulo{}, &mockTareaRepository{}, &mockAuditService{}, inventarioNulo{}, adaptersHttp.RefsPrueba)
 		router := gin.New()
-		router.POST("/api/instances/:vmid/start", handler.IniciarInstancia)
-		router.POST("/api/instances/:vmid/stop", handler.DetenerInstancia)
+		router.POST("/api/instances/:vmid/start", adaptersHttp.ResolverPrueba, handler.IniciarInstancia)
+		router.POST("/api/instances/:vmid/stop", adaptersHttp.ResolverPrueba, handler.DetenerInstancia)
 		w := httptest.NewRecorder()
 		req, _ := http.NewRequest(http.MethodPost, ruta, nil)
 		router.ServeHTTP(w, req)
@@ -665,22 +665,22 @@ func TestMapeoDeErroresProxmox_EnTodosLosEndpoints(t *testing.T) {
 		metodo, ruta string
 	}{
 		{http.MethodGet, "/api/instances"},
-		{http.MethodGet, "/api/instances/110"},
-		{http.MethodPost, "/api/instances/110/start"},
-		{http.MethodPost, "/api/instances/110/stop"},
+		{http.MethodGet, adaptersHttp.ConRef("/api/instances/110")},
+		{http.MethodPost, adaptersHttp.ConRef("/api/instances/110/start")},
+		{http.MethodPost, adaptersHttp.ConRef("/api/instances/110/stop")},
 	}
 
 	probar := func(mock *mockProxmoxPort, metodo, ruta string) (int, map[string]string) {
-		handler := adaptersHttp.NewInstanceHandler(mock, &mockUserRepository{}, seguimientoNulo{}, &mockTareaRepository{}, &mockAuditService{}, inventarioNulo{})
+		handler := adaptersHttp.NewInstanceHandler(mock, &mockUserRepository{}, seguimientoNulo{}, &mockTareaRepository{}, &mockAuditService{}, inventarioNulo{}, adaptersHttp.RefsPrueba)
 		router := gin.New()
 		router.Use(func(c *gin.Context) {
 			c.Set(string(middleware.ContextKeyRol), "ADMIN")
 			c.Set(string(middleware.ContextKeyUserID), uuid.New().String())
 		})
 		router.GET("/api/instances", handler.ListarInstancias)
-		router.GET("/api/instances/:vmid", handler.ObtenerInstancia)
-		router.POST("/api/instances/:vmid/start", handler.IniciarInstancia)
-		router.POST("/api/instances/:vmid/stop", handler.DetenerInstancia)
+		router.GET("/api/instances/:vmid", adaptersHttp.ResolverPrueba, handler.ObtenerInstancia)
+		router.POST("/api/instances/:vmid/start", adaptersHttp.ResolverPrueba, handler.IniciarInstancia)
+		router.POST("/api/instances/:vmid/stop", adaptersHttp.ResolverPrueba, handler.DetenerInstancia)
 		w := httptest.NewRecorder()
 		req, _ := http.NewRequest(metodo, ruta, nil)
 		router.ServeHTTP(w, req)
@@ -708,7 +708,7 @@ func TestMapeoDeErroresProxmox_EnTodosLosEndpoints(t *testing.T) {
 	}
 
 	// El 409 INSTANCE_BUSY de las acciones de energía no cambia.
-	for _, ruta := range []string{"/api/instances/110/start", "/api/instances/110/stop"} {
+	for _, ruta := range []string{adaptersHttp.ConRef("/api/instances/110/start"), adaptersHttp.ConRef("/api/instances/110/stop")} {
 		if status, cuerpo := probar(&mockProxmoxPort{estado: estadoParaRuta(ruta), errAccion: ocupada}, http.MethodPost, ruta); status != http.StatusConflict || cuerpo["errorCode"] != "INSTANCE_BUSY" {
 			t.Errorf("%s ocupada: se esperaba 409 INSTANCE_BUSY, vino %d %v", ruta, status, cuerpo)
 		}
@@ -725,11 +725,11 @@ func estadoParaRuta(ruta string) string {
 
 func ejecutarAccionConTareas(mock *mockProxmoxPort, tareasRepo ports.TareaRepository, ruta string) (int, map[string]string) {
 	gin.SetMode(gin.TestMode)
-	handler := adaptersHttp.NewInstanceHandler(mock, &mockUserRepository{}, seguimientoNulo{}, tareasRepo, &mockAuditService{}, inventarioNulo{})
+	handler := adaptersHttp.NewInstanceHandler(mock, &mockUserRepository{}, seguimientoNulo{}, tareasRepo, &mockAuditService{}, inventarioNulo{}, adaptersHttp.RefsPrueba)
 	router := gin.New()
-	router.POST("/api/instances/:vmid/start", handler.IniciarInstancia)
-	router.POST("/api/instances/:vmid/stop", handler.DetenerInstancia)
-	router.POST("/api/instances/:vmid/status/:action", handler.CambiarEstado)
+	router.POST("/api/instances/:vmid/start", adaptersHttp.ResolverPrueba, handler.IniciarInstancia)
+	router.POST("/api/instances/:vmid/stop", adaptersHttp.ResolverPrueba, handler.DetenerInstancia)
+	router.POST("/api/instances/:vmid/status/:action", adaptersHttp.ResolverPrueba, handler.CambiarEstado)
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest(http.MethodPost, ruta, nil)
 	router.ServeHTTP(w, req)
@@ -745,12 +745,12 @@ func ejecutarAccion(mock *mockProxmoxPort, ruta string) (int, map[string]string)
 // Tarea en curso (RUNNING) => 409 INSTANCE_BUSY inmediatamente, sin evaluar compatibilidad de estado ni llamar a Proxmox.
 func TestAccionesDeCicloDeVida_ConTareaEnCursoEs409InstanceBusySinConsultarProxmox(t *testing.T) {
 	rutas := []string{
-		"/api/instances/110/start",
-		"/api/instances/110/stop",
-		"/api/instances/110/status/start",
-		"/api/instances/110/status/stop",
-		"/api/instances/110/status/shutdown",
-		"/api/instances/110/status/reboot",
+		adaptersHttp.ConRef("/api/instances/110/start"),
+		adaptersHttp.ConRef("/api/instances/110/stop"),
+		adaptersHttp.ConRef("/api/instances/110/status/start"),
+		adaptersHttp.ConRef("/api/instances/110/status/stop"),
+		adaptersHttp.ConRef("/api/instances/110/status/shutdown"),
+		adaptersHttp.ConRef("/api/instances/110/status/reboot"),
 	}
 
 	for _, ruta := range rutas {
@@ -786,14 +786,14 @@ func TestSecuencia_StartSeguidoDeStopResponde409InstanceBusy(t *testing.T) {
 		activas: make(map[int]ports.ActiveTaskDTO),
 	}
 
-	handler := adaptersHttp.NewInstanceHandler(mock, &mockUserRepository{}, seguimientoNulo{}, tareasMock, &mockAuditService{}, inventarioNulo{})
+	handler := adaptersHttp.NewInstanceHandler(mock, &mockUserRepository{}, seguimientoNulo{}, tareasMock, &mockAuditService{}, inventarioNulo{}, adaptersHttp.RefsPrueba)
 	router := gin.New()
-	router.POST("/api/instances/:vmid/start", handler.IniciarInstancia)
-	router.POST("/api/instances/:vmid/stop", handler.DetenerInstancia)
+	router.POST("/api/instances/:vmid/start", adaptersHttp.ResolverPrueba, handler.IniciarInstancia)
+	router.POST("/api/instances/:vmid/stop", adaptersHttp.ResolverPrueba, handler.DetenerInstancia)
 
 	// 1. Start en máquina stopped -> 202 Accepted
 	w1 := httptest.NewRecorder()
-	req1, _ := http.NewRequest(http.MethodPost, "/api/instances/110/start", nil)
+	req1, _ := http.NewRequest(http.MethodPost, adaptersHttp.ConRef("/api/instances/110/start"), nil)
 	router.ServeHTTP(w1, req1)
 	if w1.Code != http.StatusAccepted {
 		t.Fatalf("start: se esperaba 202, vino %d %s", w1.Code, w1.Body.String())
@@ -808,7 +808,7 @@ func TestSecuencia_StartSeguidoDeStopResponde409InstanceBusy(t *testing.T) {
 
 	// 2. Stop inmediato -> 409 INSTANCE_BUSY
 	w2 := httptest.NewRecorder()
-	req2, _ := http.NewRequest(http.MethodPost, "/api/instances/110/stop", nil)
+	req2, _ := http.NewRequest(http.MethodPost, adaptersHttp.ConRef("/api/instances/110/stop"), nil)
 	router.ServeHTTP(w2, req2)
 	if w2.Code != http.StatusConflict {
 		t.Fatalf("stop con tarea activa: se esperaba 409, vino %d %s", w2.Code, w2.Body.String())
@@ -824,12 +824,12 @@ func TestSecuencia_StartSeguidoDeStopResponde409InstanceBusy(t *testing.T) {
 // Matriz de estados: acción incompatible => 409 y NINGUNA orden de escritura a Proxmox.
 func TestAccionesDeEnergia_EstadoIncompatibleEs409SinEscribir(t *testing.T) {
 	casos := []struct{ ruta, estado string }{
-		{"/api/instances/110/start", "running"},
-		{"/api/instances/110/stop", "stopped"},
-		{"/api/instances/110/status/start", "running"},
-		{"/api/instances/110/status/stop", "stopped"},
-		{"/api/instances/110/status/shutdown", "stopped"},
-		{"/api/instances/110/status/reboot", "stopped"},
+		{adaptersHttp.ConRef("/api/instances/110/start"), "running"},
+		{adaptersHttp.ConRef("/api/instances/110/stop"), "stopped"},
+		{adaptersHttp.ConRef("/api/instances/110/status/start"), "running"},
+		{adaptersHttp.ConRef("/api/instances/110/status/stop"), "stopped"},
+		{adaptersHttp.ConRef("/api/instances/110/status/shutdown"), "stopped"},
+		{adaptersHttp.ConRef("/api/instances/110/status/reboot"), "stopped"},
 	}
 	for _, caso := range casos {
 		mock := &mockProxmoxPort{estado: caso.estado}
@@ -847,12 +847,12 @@ func TestAccionesDeEnergia_EstadoIncompatibleEs409SinEscribir(t *testing.T) {
 // Acción compatible => 202 únicamente con tareaId público.
 func TestAccionesDeEnergia_EstadoValidEs202(t *testing.T) {
 	casos := []struct{ ruta, estado string }{
-		{"/api/instances/110/start", "stopped"},
-		{"/api/instances/110/stop", "running"},
-		{"/api/instances/110/status/start", "stopped"},
-		{"/api/instances/110/status/stop", "running"},
-		{"/api/instances/110/status/shutdown", "running"},
-		{"/api/instances/110/status/reboot", "running"},
+		{adaptersHttp.ConRef("/api/instances/110/start"), "stopped"},
+		{adaptersHttp.ConRef("/api/instances/110/stop"), "running"},
+		{adaptersHttp.ConRef("/api/instances/110/status/start"), "stopped"},
+		{adaptersHttp.ConRef("/api/instances/110/status/stop"), "running"},
+		{adaptersHttp.ConRef("/api/instances/110/status/shutdown"), "running"},
+		{adaptersHttp.ConRef("/api/instances/110/status/reboot"), "running"},
 	}
 	for _, caso := range casos {
 		mock := &mockProxmoxPort{estado: caso.estado}
@@ -866,11 +866,11 @@ func TestAccionesDeEnergia_EstadoValidEs202(t *testing.T) {
 func TestAccionAsincrona_NoExponeUPIDSiFallaElSeguimiento(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	mock := &mockProxmoxPort{estado: "stopped"}
-	handler := adaptersHttp.NewInstanceHandler(mock, &mockUserRepository{}, seguimientoError{err: errors.New("base no disponible")}, &mockTareaRepository{}, &mockAuditService{}, inventarioNulo{})
+	handler := adaptersHttp.NewInstanceHandler(mock, &mockUserRepository{}, seguimientoError{err: errors.New("base no disponible")}, &mockTareaRepository{}, &mockAuditService{}, inventarioNulo{}, adaptersHttp.RefsPrueba)
 	router := gin.New()
-	router.POST("/api/instances/:vmid/start", handler.IniciarInstancia)
+	router.POST("/api/instances/:vmid/start", adaptersHttp.ResolverPrueba, handler.IniciarInstancia)
 	w := httptest.NewRecorder()
-	router.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/instances/110/start", nil))
+	router.ServeHTTP(w, httptest.NewRequest(http.MethodPost, adaptersHttp.ConRef("/api/instances/110/start"), nil))
 
 	var respuesta map[string]any
 	_ = json.Unmarshal(w.Body.Bytes(), &respuesta)
@@ -885,7 +885,7 @@ func TestAccionAsincrona_NoExponeUPIDSiFallaElSeguimiento(t *testing.T) {
 // Verbo no contemplado en la ruta polimórfica => 400 INVALID_ACTION sin tocar Proxmox.
 func TestCambiarEstado_AccionInvalidaEs400(t *testing.T) {
 	mock := &mockProxmoxPort{estado: "running"}
-	status, cuerpo := ejecutarAccion(mock, "/api/instances/110/status/pause")
+	status, cuerpo := ejecutarAccion(mock, adaptersHttp.ConRef("/api/instances/110/status/pause"))
 	if status != http.StatusBadRequest || cuerpo["errorCode"] != "INVALID_ACTION" || mock.escrituras != 0 {
 		t.Errorf("se esperaba 400 INVALID_ACTION, vino %d %v", status, cuerpo)
 	}
@@ -920,7 +920,7 @@ func TestListarInstancias_IncluyeIPsDeLasVisibles(t *testing.T) {
 	}}
 	inventario := &inventarioFalso{}
 	mockRepo := &mockUserRepository{permisosVMIDs: []int{101, 102}}
-	handler := adaptersHttp.NewInstanceHandler(mockPx, mockRepo, seguimientoNulo{}, &mockTareaRepository{}, &mockAuditService{}, inventario)
+	handler := adaptersHttp.NewInstanceHandler(mockPx, mockRepo, seguimientoNulo{}, &mockTareaRepository{}, &mockAuditService{}, inventario, adaptersHttp.RefsPrueba)
 
 	router := gin.New()
 	router.GET("/api/instances", func(c *gin.Context) {
@@ -934,14 +934,14 @@ func TestListarInstancias_IncluyeIPsDeLasVisibles(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil || w.Code != 200 {
 		t.Fatalf("%d %v", w.Code, err)
 	}
-	ips := map[float64]any{}
+	ips := map[string]any{}
 	for _, inst := range res {
-		ips[inst["id"].(float64)] = inst["ip"]
+		ips[inst["id"].(string)] = inst["ip"]
 	}
-	if ips[101] != "192.168.1.101" {
-		t.Errorf("La 101 (encendida) debe traer su IP: %v", ips[101])
+	if ips[adaptersHttp.RefInst(101)] != "192.168.1.101" {
+		t.Errorf("La 101 (encendida) debe traer su IP: %v", ips[adaptersHttp.RefInst(101)])
 	}
-	if v, presente := ips[102]; !presente || v != nil {
+	if v, presente := ips[adaptersHttp.RefInst(102)]; !presente || v != nil {
 		t.Errorf("La 102 (apagada) debe traer ip: null: %v", v)
 	}
 	for _, vmid := range inventario.pedidas {
@@ -962,7 +962,7 @@ func TestListarInstancias_ActiveTaskEsObjetoONull(t *testing.T) {
 	tareas := &mockTareaRepository{activas: map[int]ports.ActiveTaskDTO{
 		110: {TareaID: "3f2504e0-4f89-11d3-9a0c-0305e82c3301", Action: "START", Status: "RUNNING"},
 	}}
-	handler := adaptersHttp.NewInstanceHandler(mockPx, &mockUserRepository{}, seguimientoNulo{}, tareas, &mockAuditService{}, inventarioNulo{})
+	handler := adaptersHttp.NewInstanceHandler(mockPx, &mockUserRepository{}, seguimientoNulo{}, tareas, &mockAuditService{}, inventarioNulo{}, adaptersHttp.RefsPrueba)
 	router := gin.New()
 	router.GET("/api/instances", func(c *gin.Context) {
 		c.Set(string(middleware.ContextKeyRol), "ADMIN")
@@ -975,28 +975,28 @@ func TestListarInstancias_ActiveTaskEsObjetoONull(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil || w.Code != 200 {
 		t.Fatalf("%d %v", w.Code, err)
 	}
-	porID := map[float64]map[string]any{}
+	porID := map[string]map[string]any{}
 	for _, inst := range res {
-		porID[inst["id"].(float64)] = inst
+		porID[inst["id"].(string)] = inst
 	}
-	tarea, ok := porID[110]["activeTask"].(map[string]any)
+	tarea, ok := porID[adaptersHttp.RefInst(110)]["activeTask"].(map[string]any)
 	if !ok || len(tarea) != 3 || tarea["tareaId"] != "3f2504e0-4f89-11d3-9a0c-0305e82c3301" || tarea["action"] != "START" || tarea["status"] != "RUNNING" {
-		t.Errorf("activeTask de la 110: %v", porID[110]["activeTask"])
+		t.Errorf("activeTask de la 110: %v", porID[adaptersHttp.RefInst(110)]["activeTask"])
 	}
-	if v, presente := porID[201]["activeTask"]; !presente || v != nil {
+	if v, presente := porID[adaptersHttp.RefInst(201)]["activeTask"]; !presente || v != nil {
 		t.Errorf("La 201 sin tarea debe traer activeTask: null: %v (presente=%v)", v, presente)
 	}
 }
 
 func ejecutarBorradoConTareas(mock *mockProxmoxPort, tareasRepo ports.TareaRepository) (int, map[string]string) {
 	gin.SetMode(gin.TestMode)
-	handler := adaptersHttp.NewInstanceHandler(mock, &mockUserRepository{}, seguimientoNulo{}, tareasRepo, &mockAuditService{}, inventarioNulo{})
+	handler := adaptersHttp.NewInstanceHandler(mock, &mockUserRepository{}, seguimientoNulo{}, tareasRepo, &mockAuditService{}, inventarioNulo{}, adaptersHttp.RefsPrueba)
 	router := gin.New()
-	router.DELETE("/api/instances/:vmid", func(c *gin.Context) {
+	router.DELETE("/api/instances/:vmid", adaptersHttp.ResolverPrueba, func(c *gin.Context) {
 		c.Set(string(middleware.ContextKeyUserID), uuid.New().String())
 	}, handler.EliminarInstancia)
 	w := httptest.NewRecorder()
-	router.ServeHTTP(w, httptest.NewRequest(http.MethodDelete, "/api/instances/110", nil))
+	router.ServeHTTP(w, httptest.NewRequest(http.MethodDelete, adaptersHttp.ConRef("/api/instances/110"), nil))
 	var cuerpo map[string]string
 	_ = json.Unmarshal(w.Body.Bytes(), &cuerpo)
 	return w.Code, cuerpo
@@ -1081,15 +1081,15 @@ func ejecutarCicloDeVidaConAuditoria(mock *mockProxmoxPort, metodo, ruta string)
 	audit := &mockAuditService{}
 	repo := &tareasAuditadas{audit: audit}
 	seguimiento := services.NewSeguimientoTareas(mock, repo, services.NewAuditService(nil), services.ConfigSeguimiento{})
-	handler := adaptersHttp.NewInstanceHandler(mock, &mockUserRepository{}, seguimiento, repo, audit, inventarioNulo{})
+	handler := adaptersHttp.NewInstanceHandler(mock, &mockUserRepository{}, seguimiento, repo, audit, inventarioNulo{}, adaptersHttp.RefsPrueba)
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
 		c.Set(string(middleware.ContextKeyUserID), uuid.New().String())
 	})
-	router.POST("/api/instances/:vmid/start", handler.IniciarInstancia)
-	router.POST("/api/instances/:vmid/stop", handler.DetenerInstancia)
-	router.POST("/api/instances/:vmid/status/:action", handler.CambiarEstado)
-	router.DELETE("/api/instances/:vmid", handler.EliminarInstancia)
+	router.POST("/api/instances/:vmid/start", adaptersHttp.ResolverPrueba, handler.IniciarInstancia)
+	router.POST("/api/instances/:vmid/stop", adaptersHttp.ResolverPrueba, handler.DetenerInstancia)
+	router.POST("/api/instances/:vmid/status/:action", adaptersHttp.ResolverPrueba, handler.CambiarEstado)
+	router.DELETE("/api/instances/:vmid", adaptersHttp.ResolverPrueba, handler.EliminarInstancia)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, httptest.NewRequest(metodo, ruta, nil))
 	return w.Code, audit
@@ -1107,13 +1107,13 @@ func TestAuditoriaDeCicloDeVida_UsaVocabularioCanonicoYMetadatos(t *testing.T) {
 		accion    string
 		resultado string
 	}{
-		{"alias start", http.MethodPost, "/api/instances/110/start", "stopped", "INICIAR_VM", "PENDIENTE"},
-		{"alias stop", http.MethodPost, "/api/instances/110/stop", "running", "DETENER_VM", "PENDIENTE"},
-		{"genérico start", http.MethodPost, "/api/instances/110/status/start", "stopped", "INICIAR_VM", "PENDIENTE"},
-		{"genérico stop", http.MethodPost, "/api/instances/110/status/stop", "running", "DETENER_VM", "PENDIENTE"},
-		{"genérico shutdown", http.MethodPost, "/api/instances/110/status/shutdown", "running", "APAGAR_VM", "PENDIENTE"},
-		{"genérico reboot", http.MethodPost, "/api/instances/110/status/reboot", "running", "REINICIAR_VM", "PENDIENTE"},
-		{"delete", http.MethodDelete, "/api/instances/110", "stopped", "ELIMINAR_VM", "PENDIENTE"},
+		{"alias start", http.MethodPost, adaptersHttp.ConRef("/api/instances/110/start"), "stopped", "INICIAR_VM", "PENDIENTE"},
+		{"alias stop", http.MethodPost, adaptersHttp.ConRef("/api/instances/110/stop"), "running", "DETENER_VM", "PENDIENTE"},
+		{"genérico start", http.MethodPost, adaptersHttp.ConRef("/api/instances/110/status/start"), "stopped", "INICIAR_VM", "PENDIENTE"},
+		{"genérico stop", http.MethodPost, adaptersHttp.ConRef("/api/instances/110/status/stop"), "running", "DETENER_VM", "PENDIENTE"},
+		{"genérico shutdown", http.MethodPost, adaptersHttp.ConRef("/api/instances/110/status/shutdown"), "running", "APAGAR_VM", "PENDIENTE"},
+		{"genérico reboot", http.MethodPost, adaptersHttp.ConRef("/api/instances/110/status/reboot"), "running", "REINICIAR_VM", "PENDIENTE"},
+		{"delete", http.MethodDelete, adaptersHttp.ConRef("/api/instances/110"), "stopped", "ELIMINAR_VM", "PENDIENTE"},
 	}
 	for _, caso := range casos {
 		t.Run(caso.nombre, func(t *testing.T) {
@@ -1162,8 +1162,8 @@ func TestAuditoriaDeAlias_FalloUsaAccionCanonicaYNombreReal(t *testing.T) {
 		estado string
 		accion string
 	}{
-		{"alias start", "/api/instances/110/start", "stopped", "INICIAR_VM"},
-		{"alias stop", "/api/instances/110/stop", "running", "DETENER_VM"},
+		{"alias start", adaptersHttp.ConRef("/api/instances/110/start"), "stopped", "INICIAR_VM"},
+		{"alias stop", adaptersHttp.ConRef("/api/instances/110/stop"), "running", "DETENER_VM"},
 	}
 	for _, caso := range casos {
 		t.Run(caso.nombre, func(t *testing.T) {

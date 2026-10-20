@@ -15,11 +15,12 @@ import (
 // Cualquier usuario con un access token válido puede acceder (no solo admins).
 type AccountHandler struct {
 	service ports.UserService
+	refs    ports.ReferenciasInstancia // instancias permitidas como referencias públicas
 }
 
 // NewAccountHandler crea un nuevo AccountHandler con el servicio inyectado.
-func NewAccountHandler(service ports.UserService) *AccountHandler {
-	return &AccountHandler{service: service}
+func NewAccountHandler(service ports.UserService, refs ports.ReferenciasInstancia) *AccountHandler {
+	return &AccountHandler{service: service, refs: refs}
 }
 
 // ==========================================
@@ -29,11 +30,11 @@ func NewAccountHandler(service ports.UserService) *AccountHandler {
 // ObtenerPerfil devuelve el perfil completo del usuario autenticado.
 //
 // @Summary      Obtener mi perfil
-// @Description  Devuelve el perfil completo del usuario autenticado, incluyendo sus instancias Proxmox permitidas.
+// @Description  Devuelve el perfil completo del usuario autenticado, incluyendo sus instancias Proxmox permitidas (como referencias públicas, el mismo id del inventario).
 // @Tags         Mi cuenta
 // @Produce      json
 // @Security     BearerAuth
-// @Success      200 {object} ports.UsuarioDetalleDTO
+// @Success      200 {object} UsuarioDetalleResponse
 // @Failure      401 {object} map[string]string
 // @Router       /account/profile [get]
 func (h *AccountHandler) ObtenerPerfil(c *gin.Context) {
@@ -44,7 +45,7 @@ func (h *AccountHandler) ObtenerPerfil(c *gin.Context) {
 		SendError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Error al obtener el perfil.")
 		return
 	}
-	c.JSON(http.StatusOK, perfil)
+	c.JSON(http.StatusOK, detalleUsuarioPublico(h.refs, perfil))
 }
 
 // ==========================================
