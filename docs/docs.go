@@ -1766,7 +1766,7 @@ const docTemplate = `{
                         }
                     },
                     "500": {
-                        "description": "INTERNAL_ERROR — al verificar permisos de acceso o error inesperado de Proxmox",
+                        "description": "INTERNAL_ERROR — al verificar permisos de acceso | PROXMOX_ERROR — error de Proxmox no clasificado; el mensaje es siempre el texto canónico y el detalle queda en el log",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -1840,7 +1840,7 @@ const docTemplate = `{
                         }
                     },
                     "500": {
-                        "description": "INTERNAL_ERROR — error inesperado | TASK_TRACKING_UNAVAILABLE — Proxmox aceptó el borrado pero no se pudo persistir su seguimiento",
+                        "description": "INTERNAL_ERROR — error interno | PROXMOX_ERROR — error de Proxmox no clasificado; el mensaje es siempre el texto canónico y el detalle queda en el log | TASK_TRACKING_UNAVAILABLE — Proxmox aceptó el borrado pero no se pudo persistir su seguimiento",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -1940,7 +1940,7 @@ const docTemplate = `{
                         }
                     },
                     "500": {
-                        "description": "AUDIT_PERSISTENCE_FAILED — la operación terminó, pero PostgreSQL no pudo confirmar su auditoría; verificar el estado antes de reintentar",
+                        "description": "AUDIT_PERSISTENCE_FAILED — la operación terminó, pero PostgreSQL no pudo confirmar su auditoría; verificar el estado antes de reintentar | PROXMOX_ERROR — error de Proxmox no clasificado; el mensaje es siempre el texto canónico y el detalle queda en el log",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -2099,7 +2099,7 @@ const docTemplate = `{
                         }
                     },
                     "500": {
-                        "description": "INTERNAL_ERROR — al verificar permisos o error inesperado | TASK_TRACKING_UNAVAILABLE — Proxmox aceptó la orden pero no se pudo persistir su seguimiento",
+                        "description": "INTERNAL_ERROR — al verificar permisos | PROXMOX_ERROR — error de Proxmox no clasificado; el mensaje es siempre el texto canónico y el detalle queda en el log | TASK_TRACKING_UNAVAILABLE — Proxmox aceptó la orden pero no se pudo persistir su seguimiento",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -2194,7 +2194,7 @@ const docTemplate = `{
                         }
                     },
                     "500": {
-                        "description": "INTERNAL_ERROR — al verificar permisos o error inesperado | TASK_TRACKING_UNAVAILABLE — Proxmox aceptó la orden pero no se pudo persistir su seguimiento",
+                        "description": "INTERNAL_ERROR — al verificar permisos | PROXMOX_ERROR — error de Proxmox no clasificado; el mensaje es siempre el texto canónico y el detalle queda en el log | TASK_TRACKING_UNAVAILABLE — Proxmox aceptó la orden pero no se pudo persistir su seguimiento",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -2276,7 +2276,7 @@ const docTemplate = `{
                         }
                     },
                     "500": {
-                        "description": "INTERNAL_ERROR — al verificar permisos o error inesperado | TASK_TRACKING_UNAVAILABLE — Proxmox aceptó la orden pero no se pudo persistir su seguimiento",
+                        "description": "INTERNAL_ERROR — al verificar permisos | PROXMOX_ERROR — error de Proxmox no clasificado; el mensaje es siempre el texto canónico y el detalle queda en el log | TASK_TRACKING_UNAVAILABLE — Proxmox aceptó la orden pero no se pudo persistir su seguimiento",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -2327,6 +2327,12 @@ const docTemplate = `{
                             }
                         }
                     },
+                    "500": {
+                        "description": "PROXMOX_ERROR — error de Proxmox no clasificado; el mensaje es siempre el texto canónico y el detalle queda en el log",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
                     "502": {
                         "description": "PROXMOX_UNAVAILABLE — Proxmox caído, sin red o token rechazado",
                         "schema": {
@@ -2372,6 +2378,12 @@ const docTemplate = `{
                     },
                     "403": {
                         "description": "WRONG_TOKEN_TYPE | 2FA_REQUIRED | PASSWORD_CHANGE_REQUIRED",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "PROXMOX_ERROR — error de Proxmox no clasificado; el mensaje es siempre el texto canónico y el detalle queda en el log",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -2428,6 +2440,12 @@ const docTemplate = `{
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
                     },
+                    "500": {
+                        "description": "PROXMOX_ERROR — error de Proxmox no clasificado; el mensaje es siempre el texto canónico y el detalle queda en el log",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
                     "502": {
                         "description": "PROXMOX_UNAVAILABLE — Proxmox caído, sin red o token rechazado",
                         "schema": {
@@ -2476,6 +2494,12 @@ const docTemplate = `{
                     },
                     "403": {
                         "description": "WRONG_TOKEN_TYPE | 2FA_REQUIRED | INSUFFICIENT_PERMISSIONS",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "PROXMOX_ERROR — error de Proxmox no clasificado; el mensaje es siempre el texto canónico y el detalle queda en el log",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -2593,7 +2617,7 @@ const docTemplate = `{
                         }
                     },
                     "500": {
-                        "description": "INTERNAL_ERROR — no se pudo comprobar el acceso",
+                        "description": "INTERNAL_ERROR — no se pudo comprobar el acceso | PROXMOX_ERROR — error de Proxmox no clasificado; el mensaje es siempre el texto canónico y el detalle queda en el log",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }

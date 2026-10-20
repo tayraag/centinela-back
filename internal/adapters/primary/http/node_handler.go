@@ -41,6 +41,7 @@ func NewNodeHandler(service ports.NodoService, proxmox ports.ProxmoxPort, nodo s
 // @Success      200 {object} EstadoNodeResponse
 // @Failure      401 {object} ErrorResponse "MISSING_TOKEN | INVALID_TOKEN | TOKEN_REVOKED"
 // @Failure      403 {object} ErrorResponse "WRONG_TOKEN_TYPE | 2FA_REQUIRED | PASSWORD_CHANGE_REQUIRED"
+// @Failure      500 {object} ErrorResponse "PROXMOX_ERROR — error de Proxmox no clasificado; el mensaje es siempre el texto canónico y el detalle queda en el log"
 // @Failure      502 {object} ErrorResponse "PROXMOX_UNAVAILABLE — Proxmox caído, sin red o token rechazado, y sin lectura previa"
 // @Failure      504 {object} ErrorResponse "PROXMOX_TIMEOUT — Proxmox no respondió a tiempo y no hay lectura previa"
 // @Router       /node/status [get]
@@ -90,6 +91,7 @@ func aEstadoNodeResponse(e *ports.EstadoNodo, stale bool) EstadoNodeResponse {
 // @Produce      json
 // @Security     BearerAuth
 // @Success      200 {array} ports.PuntoHistorialNodo "Muestras de más vieja a más nueva"
+// @Failure      500 {object} ErrorResponse "PROXMOX_ERROR — error de Proxmox no clasificado; el mensaje es siempre el texto canónico y el detalle queda en el log"
 // @Failure      502 {object} ErrorResponse "PROXMOX_UNAVAILABLE — Proxmox caído, sin red o token rechazado"
 // @Failure      504 {object} ErrorResponse "PROXMOX_TIMEOUT — Proxmox no respondió a tiempo"
 // @Router       /node/history [get]
@@ -120,6 +122,7 @@ func (h *NodeHandler) ObtenerHistorial(c *gin.Context) {
 // @Success      200 {array}   StorageResponse
 // @Failure      401 {object} ErrorResponse "MISSING_TOKEN | INVALID_TOKEN | TOKEN_REVOKED"
 // @Failure      403 {object} ErrorResponse "WRONG_TOKEN_TYPE | 2FA_REQUIRED | INSUFFICIENT_PERMISSIONS"
+// @Failure      500 {object} ErrorResponse "PROXMOX_ERROR — error de Proxmox no clasificado; el mensaje es siempre el texto canónico y el detalle queda en el log"
 // @Failure      502 {object} ErrorResponse "PROXMOX_UNAVAILABLE — Proxmox caído, sin red o token rechazado"
 // @Failure      504 {object} ErrorResponse "PROXMOX_TIMEOUT — Proxmox no respondió a tiempo"
 // @Router       /node/storages [get]
@@ -175,6 +178,7 @@ func (h *NodeHandler) ObtenerStorages(c *gin.Context) {
 // @Success      200 {array}   TemplateResponse
 // @Failure      401 {object} ErrorResponse "MISSING_TOKEN | INVALID_TOKEN | TOKEN_REVOKED"
 // @Failure      403 {object} ErrorResponse "WRONG_TOKEN_TYPE | 2FA_REQUIRED | INSUFFICIENT_PERMISSIONS"
+// @Failure      500 {object} ErrorResponse "PROXMOX_ERROR — error de Proxmox no clasificado; el mensaje es siempre el texto canónico y el detalle queda en el log"
 // @Failure      502 {object} ErrorResponse "PROXMOX_UNAVAILABLE — Proxmox caído, sin red o token rechazado"
 // @Failure      504 {object} ErrorResponse "PROXMOX_TIMEOUT — Proxmox no respondió a tiempo"
 // @Router       /node/templates [get]

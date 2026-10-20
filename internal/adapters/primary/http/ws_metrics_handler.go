@@ -124,7 +124,7 @@ func (h *MetricsWSHandler) CerrarConexiones() {
 // @Failure      403    {object} ErrorResponse "ORIGIN_NOT_ALLOWED — el Origin no es el del front | INSTANCE_ACCESS_DENIED | USER_INACTIVE"
 // @Failure      404    {object} ErrorResponse "RESOURCE_NOT_FOUND — referencia inválida o la instancia no existe en Proxmox (misma respuesta en ambos casos)"
 // @Failure      429    {object} ErrorResponse "TOO_MANY_CONNECTIONS — el usuario ya tiene 10 WebSockets abiertos"
-// @Failure      500    {object} ErrorResponse "INTERNAL_ERROR — no se pudo comprobar el acceso"
+// @Failure      500    {object} ErrorResponse "INTERNAL_ERROR — no se pudo comprobar el acceso | PROXMOX_ERROR — error de Proxmox no clasificado; el mensaje es siempre el texto canónico y el detalle queda en el log"
 // @Failure      502    {object} ErrorResponse "PROXMOX_UNAVAILABLE"
 // @Failure      503    {object} ErrorResponse "EVENTS_UNAVAILABLE — no se pudo abrir el canal de avisos de corte"
 // @Failure      504    {object} ErrorResponse "PROXMOX_TIMEOUT"

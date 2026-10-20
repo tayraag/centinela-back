@@ -11,10 +11,12 @@ type ErrorResponse struct {
 	Message   string `json:"message" example:"Mensaje descriptivo del error."`
 }
 
-// SendError es un helper para enviar respuestas de error consistentes.
+// SendError es un helper para enviar respuestas de error consistentes. El
+// mensaje pasa siempre por SanearTexto: aunque un llamador le pase un error
+// externo, al cliente no llegan rutas, módulos ni trazas del host.
 func SendError(c *gin.Context, statusCode int, errorCode, message string) {
 	c.JSON(statusCode, ErrorResponse{
 		ErrorCode: errorCode,
-		Message:   message,
+		Message:   SanearTexto(message),
 	})
 }

@@ -254,8 +254,10 @@ func (h *InstanceHandler) validarEstadoParaAccion(c *gin.Context, vmid int, acci
 }
 
 // mapearErrorProxmox traduce los errores de ports.ProxmoxPort al contrato HTTP.
-// El detalle del error nunca llega al cliente, pero se registra en el log para
-// poder diagnosticar la causa real (token rechazado, red, URL mal configurada).
+// El detalle del error nunca llega al cliente (texto fijo por código; lo no
+// clasificado es PROXMOX_ERROR con MensajeErrorHipervisor), pero se registra
+// en el log para diagnosticar la causa real (token rechazado, red, URL mal
+// configurada, la traza de Proxmox).
 func mapearErrorProxmox(c *gin.Context, err error) {
 	ruta := c.Request.Method + " " + c.Request.URL.Path
 	switch {
@@ -286,8 +288,9 @@ func mapearErrorProxmox(c *gin.Context, err error) {
 		log.Printf("⚠️  Proxmox no disponible [%s]: %v", ruta, err)
 		SendError(c, http.StatusBadGateway, "PROXMOX_UNAVAILABLE", "Error al consultar la infraestructura subyacente.")
 	default:
-		log.Printf("❌ Error inesperado de Proxmox [%s]: %v", ruta, err)
-		SendError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Error inesperado al comunicarse con Proxmox VE.")
+		// El detalle (puede traer la traza de Proxmox) queda solo en el log.
+		log.Printf("[ERROR] ❌ Error inesperado de Proxmox [%s]: %v", ruta, err)
+		SendError(c, http.StatusInternalServerError, "PROXMOX_ERROR", MensajeErrorHipervisor)
 	}
 }
 
@@ -653,7 +656,7 @@ func (h *InstanceHandler) ListarInstancias(c *gin.Context) {
 // @Failure      401 {object} ErrorResponse "MISSING_TOKEN | INVALID_TOKEN | TOKEN_REVOKED"
 // @Failure      403 {object} ErrorResponse "WRONG_TOKEN_TYPE | 2FA_REQUIRED | PASSWORD_CHANGE_REQUIRED | NO_ROLE | NO_USER | INVALID_USER_ID | INSTANCE_ACCESS_DENIED — el OPERATOR no tiene esta instancia asignada"
 // @Failure      404 {object} ErrorResponse "RESOURCE_NOT_FOUND — la referencia no corresponde a ninguna instancia (token alterado, inventado o VMID numérico) o la instancia no existe en Proxmox; ambos casos responden exactamente igual"
-// @Failure      500 {object} ErrorResponse "INTERNAL_ERROR — al verificar permisos de acceso o error inesperado de Proxmox"
+// @Failure      500 {object} ErrorResponse "INTERNAL_ERROR — al verificar permisos de acceso | PROXMOX_ERROR — error de Proxmox no clasificado; el mensaje es siempre el texto canónico y el detalle queda en el log"
 // @Failure      502 {object} ErrorResponse "PROXMOX_UNAVAILABLE — Proxmox caído, sin red o token rechazado"
 // @Failure      504 {object} ErrorResponse "PROXMOX_TIMEOUT — Proxmox no respondió a tiempo"
 // @Router       /instances/{instanceRef} [get]
@@ -725,7 +728,7 @@ func detalleDeInstancia(refs ports.ReferenciasInstancia, inst *ports.InstanciaPr
 // @Failure      403 {object} ErrorResponse "WRONG_TOKEN_TYPE | 2FA_REQUIRED | PASSWORD_CHANGE_REQUIRED | NO_ROLE | NO_USER | INVALID_USER_ID | INSTANCE_ACCESS_DENIED — el OPERATOR no tiene FULL_ACCESS sobre esta instancia | INSTANCE_PROTECTED — infraestructura de El Centinela"
 // @Failure      404 {object} ErrorResponse "RESOURCE_NOT_FOUND — la referencia no corresponde a ninguna instancia (token alterado, inventado o VMID numérico) o la instancia no existe en Proxmox; ambos casos responden exactamente igual"
 // @Failure      409 {object} ErrorResponse "INSTANCE_INVALID_STATE: La instancia se encuentra en un estado incompatible para la acción solicitada | INSTANCE_BUSY — la instancia está ejecutando otra tarea (tarea RUNNING o lock lock:instance:{vmid}:operation); se responde sin contactar a Proxmox; reintentar al recibir TASK_FINISHED"
-// @Failure      500 {object} ErrorResponse "INTERNAL_ERROR — al verificar permisos o error inesperado | TASK_TRACKING_UNAVAILABLE — Proxmox aceptó la orden pero no se pudo persistir su seguimiento"
+// @Failure      500 {object} ErrorResponse "INTERNAL_ERROR — al verificar permisos | PROXMOX_ERROR — error de Proxmox no clasificado; el mensaje es siempre el texto canónico y el detalle queda en el log | TASK_TRACKING_UNAVAILABLE — Proxmox aceptó la orden pero no se pudo persistir su seguimiento"
 // @Failure      502 {object} ErrorResponse "PROXMOX_UNAVAILABLE — Proxmox caído, sin red o token rechazado; la orden NO llegó a aplicarse"
 // @Failure      504 {object} ErrorResponse "PROXMOX_TIMEOUT — Proxmox no respondió a tiempo; la acción puede haberse aplicado"
 // @Failure      503 {object} ErrorResponse "INSTANCE_LOCK_UNAVAILABLE — no se pudo verificar si la instancia está ocupada; no se envió nada a Proxmox"
@@ -767,7 +770,7 @@ func (h *InstanceHandler) IniciarInstancia(c *gin.Context) {
 // @Failure      403 {object} ErrorResponse "WRONG_TOKEN_TYPE | 2FA_REQUIRED | PASSWORD_CHANGE_REQUIRED | NO_ROLE | NO_USER | INVALID_USER_ID | INSTANCE_ACCESS_DENIED | INSTANCE_PROTECTED — infraestructura de El Centinela"
 // @Failure      404 {object} ErrorResponse "RESOURCE_NOT_FOUND — la referencia no corresponde a ninguna instancia (token alterado, inventado o VMID numérico) o la instancia no existe en Proxmox; ambos casos responden exactamente igual"
 // @Failure      409 {object} ErrorResponse "INSTANCE_INVALID_STATE: La instancia se encuentra en un estado incompatible para la acción solicitada | INSTANCE_BUSY — la instancia está ejecutando otra tarea (tarea RUNNING o lock lock:instance:{vmid}:operation); se responde sin contactar a Proxmox; reintentar al recibir TASK_FINISHED"
-// @Failure      500 {object} ErrorResponse "INTERNAL_ERROR — al verificar permisos o error inesperado | TASK_TRACKING_UNAVAILABLE — Proxmox aceptó la orden pero no se pudo persistir su seguimiento"
+// @Failure      500 {object} ErrorResponse "INTERNAL_ERROR — al verificar permisos | PROXMOX_ERROR — error de Proxmox no clasificado; el mensaje es siempre el texto canónico y el detalle queda en el log | TASK_TRACKING_UNAVAILABLE — Proxmox aceptó la orden pero no se pudo persistir su seguimiento"
 // @Failure      502 {object} ErrorResponse "PROXMOX_UNAVAILABLE — Proxmox caído, sin red o token rechazado; la orden NO llegó a aplicarse"
 // @Failure      504 {object} ErrorResponse "PROXMOX_TIMEOUT — Proxmox no respondió a tiempo; la acción puede haberse aplicado"
 // @Failure      503 {object} ErrorResponse "INSTANCE_LOCK_UNAVAILABLE — no se pudo verificar si la instancia está ocupada; no se envió nada a Proxmox"
@@ -847,7 +850,7 @@ func (h *InstanceHandler) PausarInstancia(c *gin.Context) {
 // @Failure      403 {object} ErrorResponse "WRONG_TOKEN_TYPE | 2FA_REQUIRED | PASSWORD_CHANGE_REQUIRED | NO_ROLE | NO_USER | INVALID_USER_ID | INSTANCE_ACCESS_DENIED | INSTANCE_PROTECTED"
 // @Failure      404 {object} ErrorResponse "RESOURCE_NOT_FOUND — la referencia no corresponde a ninguna instancia (token alterado, inventado o VMID numérico) o la instancia no existe en Proxmox; ambos casos responden exactamente igual"
 // @Failure      409 {object} ErrorResponse "INSTANCE_INVALID_STATE: La instancia se encuentra en un estado incompatible para la acción solicitada | INSTANCE_BUSY — la instancia está ejecutando otra tarea (tarea RUNNING o lock lock:instance:{vmid}:operation); se responde sin contactar a Proxmox; reintentar al recibir TASK_FINISHED"
-// @Failure      500 {object} ErrorResponse "INTERNAL_ERROR — al verificar permisos o error inesperado | TASK_TRACKING_UNAVAILABLE — Proxmox aceptó la orden pero no se pudo persistir su seguimiento"
+// @Failure      500 {object} ErrorResponse "INTERNAL_ERROR — al verificar permisos | PROXMOX_ERROR — error de Proxmox no clasificado; el mensaje es siempre el texto canónico y el detalle queda en el log | TASK_TRACKING_UNAVAILABLE — Proxmox aceptó la orden pero no se pudo persistir su seguimiento"
 // @Failure      502 {object} ErrorResponse "PROXMOX_UNAVAILABLE — Proxmox caído, sin red o token rechazado; la orden NO llegó a aplicarse"
 // @Failure      504 {object} ErrorResponse "PROXMOX_TIMEOUT — Proxmox no respondió a tiempo; la acción puede haberse aplicado"
 // @Failure      503 {object} ErrorResponse "INSTANCE_LOCK_UNAVAILABLE — no se pudo verificar si la instancia está ocupada; no se envió nada a Proxmox"
@@ -922,7 +925,7 @@ func (h *InstanceHandler) CambiarEstado(c *gin.Context) {
 // @Failure      403 {object} ErrorResponse "WRONG_TOKEN_TYPE | 2FA_REQUIRED | PASSWORD_CHANGE_REQUIRED | NO_ROLE | INVALID_ROLE | INSUFFICIENT_PERMISSIONS | INSTANCE_PROTECTED — solo ADMIN puede eliminar instancias"
 // @Failure      404 {object} ErrorResponse "RESOURCE_NOT_FOUND — la referencia no corresponde a ninguna instancia (token alterado, inventado o VMID numérico) o la instancia no existe en Proxmox; ambos casos responden exactamente igual"
 // @Failure      409 {object} ErrorResponse "INSTANCE_INVALID_STATE — la instancia debe estar detenida | INSTANCE_BUSY — la instancia está ejecutando otra tarea (tarea RUNNING o lock lock:instance:{vmid}:operation); se responde sin contactar a Proxmox"
-// @Failure      500 {object} ErrorResponse "INTERNAL_ERROR — error inesperado | TASK_TRACKING_UNAVAILABLE — Proxmox aceptó el borrado pero no se pudo persistir su seguimiento"
+// @Failure      500 {object} ErrorResponse "INTERNAL_ERROR — error interno | PROXMOX_ERROR — error de Proxmox no clasificado; el mensaje es siempre el texto canónico y el detalle queda en el log | TASK_TRACKING_UNAVAILABLE — Proxmox aceptó el borrado pero no se pudo persistir su seguimiento"
 // @Failure      502 {object} ErrorResponse "PROXMOX_UNAVAILABLE — Proxmox caído, sin red o token rechazado; la orden NO llegó a aplicarse"
 // @Failure      504 {object} ErrorResponse "PROXMOX_TIMEOUT — Proxmox no respondió a tiempo; el borrado puede haberse aplicado"
 // @Failure      503 {object} ErrorResponse "INSTANCE_LOCK_UNAVAILABLE — no se pudo verificar si la instancia está ocupada; no se envió nada a Proxmox"

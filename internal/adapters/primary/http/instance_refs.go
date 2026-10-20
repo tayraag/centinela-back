@@ -121,11 +121,14 @@ func responderErrorRefs(c *gin.Context) {
 	SendError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "No se pudo armar la referencia de la instancia.")
 }
 
-// eventoPublico devuelve el evento listo para el front: en VM y LXC, recursoId
-// pasa a la referencia pública y el VMID se oculta en los textos de detalles
-// (el error de Proxmox lo nombra). Devuelve una copia: el evento original lo
-// comparten todos los streams.
+// eventoPublico devuelve el evento listo para el front: los textos saneados
+// (sin trazas, rutas, módulos ni UPID; ver SanearTexto) y sin campos internos,
+// y en VM y LXC recursoId pasa a la referencia pública y el VMID se oculta en
+// los textos de detalles (el error de Proxmox lo nombra). Devuelve una copia:
+// el evento original lo comparten todos los streams.
 func eventoPublico(refs ports.ReferenciasInstancia, ev ports.RealtimeEvent) ports.RealtimeEvent {
+	ev.Mensaje = SanearTexto(ev.Mensaje)
+	ev.Detalles = sanearDetalles(ev.Detalles)
 	if ev.RecursoTipo != ports.RecursoVM && ev.RecursoTipo != ports.RecursoLXC || ev.RecursoID == "" {
 		return ev
 	}

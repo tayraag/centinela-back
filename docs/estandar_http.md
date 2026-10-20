@@ -65,6 +65,7 @@ Cuando la API devuelva un error (códigos 400 a 500), el cuerpo de la respuesta 
 | 409 | `INSTANCE_BUSY` | La instancia está ejecutando otra tarea: hay una tarea `RUNNING` suya, otra operación tiene el lock `lock:instance:{vmid}:operation`, o Proxmox la tiene bloqueada. Lo responde la guarda `RequireInstanceIdle` sin contactar a Proxmox. Reintentar cuando llegue el `TASK_FINISHED` de la tarea anterior. |
 | 409 | `RESOURCE_QUOTA_EXCEEDED` | Lo pedido no entra en el margen del nodo (RAM con 15% de headroom, vCPU o storage): al crear una instancia, o al aumentar su CPU/RAM con `PUT /api/instances/:instanceRef/config` (se compara solo el incremento). No se escribió nada en Proxmox. |
 | 503 | `INSTANCE_LOCK_UNAVAILABLE` | No se pudo verificar si la instancia está ocupada (falló la consulta de tareas en curso). No se envió nada a Proxmox; se puede reintentar. |
+| 500 | `PROXMOX_ERROR` | Proxmox devolvió un error que no corresponde a ningún código tipificado. El mensaje es siempre el mismo (`"No se pudo completar la operación en el hipervisor. Contacte al administrador."`); el detalle real (la traza de Proxmox) queda solo en el log del servidor. |
 | 502 | `PROXMOX_UNAVAILABLE` | Proxmox no está disponible: red caída, token rechazado o error del propio Proxmox. La orden **no** llegó a aplicarse. |
 | 504 | `PROXMOX_TIMEOUT` | Proxmox no respondió a tiempo. **La orden pudo haberse aplicado**: en acciones de energía, verificar el estado de la instancia antes de reintentar. |
 

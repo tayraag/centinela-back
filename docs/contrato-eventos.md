@@ -36,6 +36,14 @@ enum** en inglés MAYÚSCULA con guión bajo.
   VMID (`"110"`) y el handler del stream lo traduce a la referencia pública
   antes de mandarlo, la misma `id` que devuelve `GET /api/instances`. Si un
   texto de `detalles` (el error de Proxmox) nombra el VMID, también se reemplaza.
+- Para todos los roles, los textos del evento (`mensaje` y los de `detalles`,
+  como el error de Proxmox en `exitstatus` y `error`) llegan saneados: se
+  quitan rutas del sistema, archivos y módulos Perl, números de línea, UPID y
+  las líneas de traza, y queda la frase útil (`unable to create VM ...:
+  storage '...' does not exist`). Si no queda nada útil, llega el texto
+  canónico `"No se pudo completar la operación en el hipervisor. Contacte al administrador."`. Los campos de depuración (`upid`, `rawOutput`,
+  `stack`, `socket`, ...) nunca viajan; la tarea se identifica solo con
+  `tareaId`. El texto original queda en el log y en la auditoría.
 - Para quien no es ADMIN, los nombres reales de nodos y storages que aparezcan
   en `mensaje` o en los textos de `detalles` se reemplazan por sus alias
   (`nodo-principal`, `Almacenamiento Local Rápido`, ...). Ver

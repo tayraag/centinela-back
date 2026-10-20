@@ -313,7 +313,8 @@ El cuerpo `202` es el esquema `http.AccionAceptadaResponse`:
 
 - `tareaId`: **obligatorio**. Es el identificador opaco de la tarea registrada
   por el backend y es el mismo valor que llega en el evento `TASK_FINISHED`.
-- El UPID de Proxmox permanece privado y nunca se entrega al frontend.
+- El UPID de Proxmox permanece privado y nunca se entrega al frontend (ni en
+  las respuestas ni en los eventos SSE ni en el WebSocket).
 
 ```json
 { "tareaId": "3f2504e0-4f89-11d3-9a0c-0305e82c3301" }
@@ -378,10 +379,19 @@ Estos son los pares error/status que las acciones de energía pueden devolver
 | 404  | `RESOURCE_NOT_FOUND`       | Referencia inválida o instancia inexistente |
 | 409  | `INSTANCE_BUSY`            | La instancia ejecuta otra tarea           |
 | 409  | `INSTANCE_INVALID_STATE`   | Estado incompatible con la acción         |
-| 500  | `INTERNAL_ERROR`           | Permisos o error inesperado de Proxmox    |
+| 500  | `INTERNAL_ERROR`           | Error al verificar permisos               |
+| 500  | `PROXMOX_ERROR`            | Error de Proxmox no clasificado           |
 | 502  | `PROXMOX_UNAVAILABLE`      | Proxmox caído, sin red o token rechazado  |
 | 503  | `INSTANCE_LOCK_UNAVAILABLE`| No se pudo verificar si está ocupada      |
 | 504  | `PROXMOX_TIMEOUT`          | Proxmox no respondió a tiempo             |
+
+**Saneamiento de errores.** Ningún error (4xx o 5xx) devuelve el texto que
+mandó Proxmox: cada código tiene su mensaje fijo, y un error de Proxmox que no
+encaja en ningún código tipificado responde `500 PROXMOX_ERROR` con el texto
+canónico `"No se pudo completar la operación en el hipervisor. Contacte al administrador."`. El detalle real (con la traza de Proxmox) queda
+solo en el log del servidor. Además, todo mensaje de error pasa por un filtro
+que quita rutas del sistema (`/usr/...`), archivos y módulos Perl (`.pm`,
+`PVE::...`), números de línea y UPID.
 
 **Exclusión mutua (`RequireInstanceIdle`).** Las operaciones que modifican una
 instancia (`start`, `stop`, `status/{action}` y el borrado; también la edición

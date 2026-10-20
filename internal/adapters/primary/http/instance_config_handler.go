@@ -52,7 +52,7 @@ type ConfigInstanciaResponse struct {
 // @Failure      403 {object} ErrorResponse "INSTANCE_ACCESS_DENIED — se requiere FULL_ACCESS (READ_ONLY no alcanza) | INSTANCE_PROTECTED — infraestructura de El Centinela"
 // @Failure      404 {object} ErrorResponse "RESOURCE_NOT_FOUND — referencia inválida o instancia inexistente (misma respuesta)"
 // @Failure      409 {object} ErrorResponse "RESOURCE_QUOTA_EXCEEDED — el incremento supera el margen del nodo; no se escribió en Proxmox | INSTANCE_BUSY — otra operación en curso o la config cambió en el medio"
-// @Failure      500 {object} ErrorResponse "AUDIT_PERSISTENCE_FAILED — la operación terminó, pero PostgreSQL no pudo confirmar su auditoría; verificar el estado antes de reintentar"
+// @Failure      500 {object} ErrorResponse "AUDIT_PERSISTENCE_FAILED — la operación terminó, pero PostgreSQL no pudo confirmar su auditoría; verificar el estado antes de reintentar | PROXMOX_ERROR — error de Proxmox no clasificado; el mensaje es siempre el texto canónico y el detalle queda en el log"
 // @Failure      502 {object} ErrorResponse "PROXMOX_UNAVAILABLE | CONFIG_APPLIED_VERIFICATION_FAILED — Proxmox aceptó el cambio, pero no se pudo determinar si requiere reinicio"
 // @Failure      503 {object} ErrorResponse "INSTANCE_LOCK_UNAVAILABLE | PROVISIONING_COORDINATION_UNAVAILABLE — no se pudo coordinar la validación de capacidad"
 // @Failure      504 {object} ErrorResponse "PROXMOX_TIMEOUT"

@@ -108,7 +108,8 @@ centinela-back/
 │   │   │       ├── events_handler.go     # Canal de eventos SSE (/api/events)
 │   │   │       ├── account_handler.go    # Endpoints de perfil propio (/api/account/*)
 │   │   │       ├── audit_handler.go      # Endpoints de auditoría global (/api/admin/audit)
-│   │   │       ├── responses.go          # Helpers de respuestas HTTP estándar
+│   │   │       ├── responses.go          # Helpers de respuestas HTTP estándar (SendError sanea el mensaje)
+│   │   │       ├── sanear.go             # SanearTexto: quita rutas, módulos Perl, líneas y UPID de lo que va al cliente
 │   │   │       └── middleware/
 │   │   │           ├── auth_middleware.go    # RequireAuth, RequirePreAuth, RequireRole
 │   │   │           ├── instance_ref.go       # ResolveInstanceRef (:instanceRef → VMID; inválida = 404 RESOURCE_NOT_FOUND)
