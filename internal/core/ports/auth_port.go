@@ -73,6 +73,10 @@ type AuthRepository interface {
 	// como inactivas y devuelve sus IDs (para borrarlas también del almacén efímero).
 	InvalidarSesionesDeUsuario(ctx context.Context, usuarioID uuid.UUID) ([]uuid.UUID, error)
 
+	// InvalidarOtrasSesionesDeUsuario conserva la sesión indicada, marca como
+	// inactivas todas las demás sesiones activas del usuario y devuelve sus IDs.
+	InvalidarOtrasSesionesDeUsuario(ctx context.Context, usuarioID, sesionConservadaID uuid.UUID) ([]uuid.UUID, error)
+
 	// ActualizarUltimoTotpPeriodo guarda el período del último código TOTP usado (anti-replay).
 	ActualizarUltimoTotpPeriodo(ctx context.Context, usuarioID uuid.UUID, periodo int64) error
 

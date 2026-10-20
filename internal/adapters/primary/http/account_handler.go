@@ -4,9 +4,11 @@ import (
 	"net/http"
 	"strings"
 
+	"el-centinela/internal/adapters/primary/http/middleware"
 	"el-centinela/internal/core/ports"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 // AccountHandler maneja los endpoints de perfil y seguridad del usuario autenticado.
@@ -92,7 +94,7 @@ func (h *AccountHandler) ActualizarPerfil(c *gin.Context) {
 // CambiarContrasena valida la contraseña actual y aplica la nueva.
 //
 // @Summary      Cambiar mi contraseña
-// @Description  Valida la contraseña actual y aplica la nueva. Reglas de complejidad: entre 8 y 128 caracteres, al menos una mayúscula, un número y un carácter especial (!@#$%^&*-_=+). Si la contraseña era temporal (`cambioContrasenaRequerido=true`), este cambio limpia ese flag y desbloquea el acceso al resto de la plataforma.
+// @Description  Valida la contraseña actual y aplica la nueva. Conserva la sesión solicitante y revoca inmediatamente todas las demás sesiones activas del usuario: sus access/refresh tokens reciben `401 TOKEN_REVOKED` y sus canales SSE/WebSocket se cierran con `SESSIONS_REVOKED`. Reglas de complejidad: entre 8 y 128 caracteres, al menos una mayúscula, un número y un carácter especial (!@#$%^&*-_=+). Si la contraseña era temporal (`cambioContrasenaRequerido=true`), este cambio limpia ese flag y desbloquea el acceso al resto de la plataforma.
 // @Tags         Mi cuenta
 // @Accept       json
 // @Produce      json
@@ -111,7 +113,13 @@ func (h *AccountHandler) CambiarContrasena(c *gin.Context) {
 	}
 
 	userID := extraerUserID(c)
-	if err := h.service.CambiarContrasena(c.Request.Context(), userID, input); err != nil {
+	sesionVal, existe := c.Get(middleware.ContextKeySesionID)
+	sesionID, ok := sesionVal.(uuid.UUID)
+	if !existe || !ok || sesionID == uuid.Nil {
+		SendError(c, http.StatusUnauthorized, "INVALID_TOKEN", "No se pudo identificar la sesión autenticada.")
+		return
+	}
+	if err := h.service.CambiarContrasena(c.Request.Context(), userID, sesionID, input); err != nil {
 		SendError(c, http.StatusBadRequest, "PASSWORD_CHANGE_FAILED", err.Error())
 		return
 	}

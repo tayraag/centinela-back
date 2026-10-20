@@ -18,6 +18,9 @@ import (
 const (
 	prefijoPre2FA = "auth:pre2fa:"
 	prefijoSesion = "auth:session:"
+	// Compatibilidad con despliegues que persisten el refresh separado de la
+	// réplica de sesión. Borrar una clave inexistente en Redis es idempotente.
+	prefijoRefresh = "auth:refresh:"
 )
 
 // errNoEncontrada: la clave no existe o venció.
@@ -73,9 +76,9 @@ func (a almacenSesiones) obtenerSesion(ctx context.Context, sesionID uuid.UUID) 
 
 // eliminarSesiones: DEL auth:session:<id> ...
 func (a almacenSesiones) eliminarSesiones(ctx context.Context, sesionIDs ...uuid.UUID) error {
-	claves := make([]string, len(sesionIDs))
-	for i, id := range sesionIDs {
-		claves[i] = prefijoSesion + id.String()
+	claves := make([]string, 0, len(sesionIDs)*2)
+	for _, id := range sesionIDs {
+		claves = append(claves, prefijoSesion+id.String(), prefijoRefresh+id.String())
 	}
 	return a.kv.Del(ctx, claves...)
 }

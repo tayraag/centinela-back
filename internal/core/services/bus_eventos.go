@@ -32,3 +32,13 @@ func (b busEventos) avisarSesionesRevocadas(ctx context.Context, usuarioID uuid.
 		log.Printf("[EVENTOS] no se pudo avisar la revocación de sesiones del usuario %s: %v", usuarioID, err)
 	}
 }
+
+// avisarSesionesRevocadasSelectivamente corta únicamente los canales de las
+// sesiones indicadas, dejando conectada la sesión que cambió la contraseña.
+func (b busEventos) avisarSesionesRevocadasSelectivamente(ctx context.Context, usuarioID uuid.UUID, sesiones []uuid.UUID) {
+	for _, sesionID := range sesiones {
+		if err := b.publicar(ctx, ports.MensajeBus{Tipo: ports.MensajeSesionesRevocadas, UsuarioID: &usuarioID, SesionID: &sesionID}); err != nil {
+			log.Printf("[EVENTOS] no se pudo avisar la revocación de la sesión %s: %v", sesionID, err)
+		}
+	}
+}

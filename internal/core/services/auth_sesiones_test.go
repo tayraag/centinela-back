@@ -102,6 +102,18 @@ func (r *repoSesiones) InvalidarSesionesDeUsuario(_ context.Context, usuarioID u
 	}
 	return ids, nil
 }
+func (r *repoSesiones) InvalidarOtrasSesionesDeUsuario(_ context.Context, usuarioID, sesionConservadaID uuid.UUID) ([]uuid.UUID, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var ids []uuid.UUID
+	for id, s := range r.sesiones {
+		if s.UsuarioID == usuarioID && id != sesionConservadaID && s.Activa {
+			s.Activa = false
+			ids = append(ids, id)
+		}
+	}
+	return ids, nil
+}
 func (r *repoSesiones) ActualizarTotp(_ context.Context, _ uuid.UUID, secreto string, vinculado bool) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()

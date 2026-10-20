@@ -16,8 +16,8 @@ import (
 
 // FiltrosAuditoria define los parámetros opcionales para filtrar el log de auditoría.
 type FiltrosAuditoria struct {
-	UsuarioID   *uuid.UUID // Filtrar por usuario específico
-	Accion      string     // Ej: "LOGIN", "CREAR_USUARIO", "INICIAR_VM"
+	UsuarioID *uuid.UUID // Filtrar por usuario específico
+	Accion    string     // Ej: "LOGIN", "CREAR_USUARIO", "INICIAR_VM"
 	// ExcluirAcciones deja afuera del listado las acciones indicadas. Se usa para
 	// que el feed del Dashboard no traiga el ruido del canal de eventos
 	// (EVENTOS_CONEXION / EVENTOS_CIERRE) sin quitarlo de la vista completa.
@@ -98,7 +98,7 @@ const (
 	AccionAsignarPermisos    = "ASIGNAR_PERMISOS"
 	AccionResetearContrasena = "RESETEAR_CONTRASENA"
 	AccionResetearTotp       = "RESETEAR_TOTP"
-	AccionCambiarContrasena  = "CAMBIAR_CONTRASENA"
+	AccionCambiarContrasena  = "PASSWORD_CHANGED"
 	AccionActualizarPerfil   = "ACTUALIZAR_PERFIL"
 )
 

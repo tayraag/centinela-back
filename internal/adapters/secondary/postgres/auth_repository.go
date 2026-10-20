@@ -169,6 +169,29 @@ func (r *AuthRepository) InvalidarSesionesDeUsuario(ctx context.Context, usuario
 	return ids, nil
 }
 
+// InvalidarOtrasSesionesDeUsuario revoca todas las sesiones activas del usuario
+// salvo la que originó el cambio de contraseña. La selección y el UPDATE se
+// ejecutan en una transacción para devolver exactamente los IDs afectados.
+func (r *AuthRepository) InvalidarOtrasSesionesDeUsuario(ctx context.Context, usuarioID, sesionConservadaID uuid.UUID) ([]uuid.UUID, error) {
+	var ids []uuid.UUID
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&domain.SesionActiva{}).
+			Where("usuario_id = ? AND id <> ? AND activa = true", usuarioID, sesionConservadaID).
+			Pluck("id", &ids).Error; err != nil {
+			return err
+		}
+		if len(ids) == 0 {
+			return nil
+		}
+		return tx.Model(&domain.SesionActiva{}).Where("id IN ?", ids).
+			Updates(map[string]interface{}{"activa": false, "fecha_actualizacion": time.Now()}).Error
+	})
+	if err != nil {
+		return nil, fmt.Errorf("error al invalidar otras sesiones del usuario: %w", err)
+	}
+	return ids, nil
+}
+
 // ActualizarUltimoTotpPeriodo guarda el período TOTP del último código validado exitosamente.
 // Se usa para protección anti-replay: evita que el mismo código sea aceptado dos veces en la misma ventana de 30s.
 func (r *AuthRepository) ActualizarUltimoTotpPeriodo(ctx context.Context, usuarioID uuid.UUID, periodo int64) error {

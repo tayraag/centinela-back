@@ -269,5 +269,5 @@ type UserService interface {
 	ActualizarPerfil(ctx context.Context, usuarioID uuid.UUID, input ActualizarPerfilInput) (*UsuarioResumenDTO, error)
 
 	// CambiarContrasena valida la contraseña actual y aplica la nueva.
-	CambiarContrasena(ctx context.Context, usuarioID uuid.UUID, input CambiarContrasenaInput) error
+	CambiarContrasena(ctx context.Context, usuarioID, sesionActualID uuid.UUID, input CambiarContrasenaInput) error
 }

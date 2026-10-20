@@ -24,3 +24,18 @@ func revocarSesionesDeUsuario(ctx context.Context, repo ports.AuthRepository, se
 	}
 	return nil
 }
+
+// revocarOtrasSesionesDeUsuario conserva la sesión solicitante y revoca el
+// resto tanto en PostgreSQL como en Redis. Los avisos llevan sesionId para que
+// SSE y WebSocket cierren solamente los canales desvinculados.
+func revocarOtrasSesionesDeUsuario(ctx context.Context, repo ports.AuthRepository, sesiones almacenSesiones, bus busEventos, usuarioID, sesionConservadaID uuid.UUID) ([]uuid.UUID, error) {
+	ids, err := repo.InvalidarOtrasSesionesDeUsuario(ctx, usuarioID, sesionConservadaID)
+	if err != nil {
+		return nil, err
+	}
+	if err := sesiones.eliminarSesiones(ctx, ids...); err != nil {
+		return ids, fmt.Errorf("sesiones revocadas en PostgreSQL pero no en el almacén efímero: %w", err)
+	}
+	bus.avisarSesionesRevocadasSelectivamente(ctx, usuarioID, ids)
+	return ids, nil
+}

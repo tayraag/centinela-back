@@ -439,7 +439,7 @@ func (s *userServiceImpl) ActualizarPerfil(ctx context.Context, usuarioID uuid.U
 
 // CambiarContrasena valida la contraseña actual y aplica la nueva.
 // Si la contraseña es temporal (cambioContrasena=true), limpia ese flag.
-func (s *userServiceImpl) CambiarContrasena(ctx context.Context, usuarioID uuid.UUID, input ports.CambiarContrasenaInput) error {
+func (s *userServiceImpl) CambiarContrasena(ctx context.Context, usuarioID, sesionActualID uuid.UUID, input ports.CambiarContrasenaInput) error {
 	usuario, err := s.authRepo.BuscarUsuarioPorID(ctx, usuarioID)
 	if err != nil {
 		return err
@@ -472,11 +472,20 @@ func (s *userServiceImpl) CambiarContrasena(ctx context.Context, usuarioID uuid.
 		return err
 	}
 
-	log.Printf("[USERS] contraseña cambiada | user=%s | cambio_obligatorio_resuelto=%v", usuarioID, usuario.CambioContrasena)
+	sesionesRevocadas, err := revocarOtrasSesionesDeUsuario(ctx, s.authRepo, s.sesiones, s.bus, usuarioID, sesionActualID)
+	if err != nil {
+		return fmt.Errorf("la contraseña fue actualizada, pero no se pudieron revocar todas las demás sesiones: %w", err)
+	}
+
+	log.Printf("[USERS] contraseña cambiada | user=%s | sesion_conservada=%s | sesiones_revocadas=%d | cambio_obligatorio_resuelto=%v", usuarioID, sesionActualID, len(sesionesRevocadas), usuario.CambioContrasena)
 	s.auditSvc.Registrar(ctx, ports.RegistrarAuditoriaInput{
 		UsuarioID: usuarioID,
 		Accion:    ports.AccionCambiarContrasena,
 		Resultado: ports.ResultadoExito,
+		Detalles: map[string]any{
+			"sesionesRevocadas": true,
+			"sesionConservada":  sesionActualID.String(),
+		},
 	})
 	return nil
 }
