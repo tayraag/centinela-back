@@ -344,6 +344,7 @@ func main() {
 			// Las acciones destructivas llevan además RejectProtectedInstance (VMIDs de infraestructura).
 			instancia := instances.Group("/:instanceRef", middleware.ResolveInstanceRef(refsInstancia, "instanceRef"))
 			instancia.GET("", middleware.RequireInstanceAccess(instanceRepo, ports.NivelAccesoReadOnly), instanceHandler.ObtenerInstancia)
+			instancia.GET("/metrics", middleware.RequireInstanceAccess(instanceRepo, ports.NivelAccesoReadOnly), httpHandlers.NewInstanceMetricsHandler(proxmoxClient, kvStore).ObtenerMetricas)
 			instancia.POST("/start", middleware.RequireInstanceAccess(instanceRepo, ports.NivelAccesoFullAccess), middleware.RejectProtectedInstance(vmidsProtegidos), middleware.RequireInstanceIdle(exclusion), instanceHandler.IniciarInstancia)
 			instancia.POST("/stop", middleware.RequireInstanceAccess(instanceRepo, ports.NivelAccesoFullAccess), middleware.RejectProtectedInstance(vmidsProtegidos), middleware.RequireInstanceIdle(exclusion), instanceHandler.DetenerInstancia)
 			instancia.POST("/status/:action", middleware.RequireInstanceAccess(instanceRepo, ports.NivelAccesoFullAccess), middleware.RejectProtectedInstance(vmidsProtegidos), middleware.RequireInstanceIdle(exclusion), instanceHandler.CambiarEstado)
