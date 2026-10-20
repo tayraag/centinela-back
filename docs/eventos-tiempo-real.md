@@ -41,7 +41,7 @@ data: {"motivo":"LOGOUT"}
 - **`: ping`**: un comentario cada 25 s para que ningún proxy corte la conexión. `EventSource` lo ignora.
 - **`event: cierre`**: el backend va a cortar el stream. Motivos:
   - `LOGOUT`: se cerró **esta** sesión.
-  - `SESSIONS_REVOKED`: se revocaron todas las sesiones del usuario (lo desactivaron o eliminaron, o le resetearon la contraseña o el 2FA).
+  - `SESSIONS_REVOKED`: se revocó esta sesión o todas las sesiones del usuario (por cambio/reset de contraseña, reset de 2FA, desactivación o eliminación).
   - `USER_INACTIVE`: el usuario ya no está activo.
 
 ### Ejemplo para el front
@@ -118,7 +118,7 @@ revocar ─────► revocarSesiones ─────► aviso SESSIONS_REV
 ```
 
 - **Bus**: el canal `centinela:events` de `ports.KeyValueStore` ([redis.md](redis.md)). Con varias instancias de la API, un logout en una corta el stream abierto en otra.
-- **Mensajes del bus** (`ports.MensajeBus`): `{"tipo":"EVENT","evento":{...}}`, `{"tipo":"LOGOUT","usuarioId","sesionId"}` y `{"tipo":"SESSIONS_REVOKED","usuarioId"}`.
+- **Mensajes del bus** (`ports.MensajeBus`): `{"tipo":"EVENT","evento":{...}}`, `{"tipo":"LOGOUT","usuarioId","sesionId"}` y `{"tipo":"SESSIONS_REVOKED","usuarioId","sesionId"}`. En el último, `sesionId` es opcional: presente significa revocación selectiva; ausente, revocación total del usuario.
 - **Para publicar un evento nuevo**, desde un servicio:
 
   ```go

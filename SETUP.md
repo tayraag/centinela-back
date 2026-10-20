@@ -544,7 +544,7 @@ centinela-back/
  | GET    | `/api/admin/audit/export`             | `RequireAuth` + `RequireRole("ADMIN")` | Exportación CSV de auditoría                      |
  | GET    | `/api/account/profile`                | `RequireAuth`                          | Perfil propio                                     |
  | PUT    | `/api/account/profile`                | `RequireAuth`                          | Actualizar nombre/email propios                   |
- | PUT    | `/api/account/password`               | `RequireAuth`                          | Cambiar contraseña (requiere actual)              |
+ | PUT    | `/api/account/password`               | `RequireAuth`                          | Cambiar contraseña y revocar las demás sesiones   |
  | GET    | `/api/node/status`                    | `RequireAuth`                          | Estado del nodo (caché Redis 10 s, `stale` si Proxmox cae) |
  | GET    | `/api/node/storages`                  | `RequireAuth` + `RequireRole("ADMIN")` | Catálogo de almacenamiento activo en el nodo      |
  | GET    | `/api/node/templates`                 | `RequireAuth` + `RequireRole("ADMIN")` | Catálogo de plantillas LXC e imágenes ISO (RF-07) |
@@ -784,6 +784,8 @@ curl.exe -s -X PUT http://localhost:8080/api/account/password -H "Content-Type: 
 ```
 
 > ⚠️ Si `cambioContrasenaRequerido` era `true`, después de este cambio el flag queda en `false`.
+
+La sesión que ejecutó la petición continúa activa. Todas las demás sesiones del usuario quedan revocadas inmediatamente: sus access/refresh tokens reciben `401 TOKEN_REVOKED` y sus conexiones SSE/WebSocket se cierran con `SESSIONS_REVOKED`.
 
 ---
 

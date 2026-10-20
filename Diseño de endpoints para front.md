@@ -2005,10 +2005,22 @@ Petición (Frontend ➡️ Backend):&nbsp;
 
 ```json
 {
-  "currentPassword": "PasswordActual123!",
-  "newPassword": "NuevaPasswordSegura456#"
+  "contrasenaActual": "PasswordActual123!",
+  "contrasenaNueva": "NuevaPasswordSegura456#"
 }
 ```
+
+&nbsp;
+
+**Respuesta Exitosa (200 OK):**
+
+```json
+{
+  "message": "Contraseña actualizada correctamente."
+}
+```
+
+La sesión que realizó el cambio se conserva. El backend revoca inmediatamente todas las demás sesiones del usuario; cualquier petición posterior con sus tokens recibe `401 TOKEN_REVOKED` y sus canales SSE/WebSocket se cierran con `SESSIONS_REVOKED`. El frontend debe limpiar las credenciales locales cuando reciba cualquiera de esas señales.
 
 &nbsp;
 
