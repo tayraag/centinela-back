@@ -1966,6 +1966,99 @@ const docTemplate = `{
                 }
             }
         },
+        "/instances/{instanceRef}/metrics": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "OPERATIVO. Requiere READ_ONLY o FULL_ACCESS sobre la instancia; ADMIN tiene acceso implícito. Usa referencias públicas inst_..., nunca VMID numérico. Caché de 30 segundos por instancia y timeframe: X-Cache HIT evita consultar Proxmox y MISS indica una lectura nueva. Si se omite timeframe se usa 2h; 2h se consulta como hour en Proxmox y 24h como day, conservando la ventana que devuelve Proxmox. CPU en porcentaje de 0 a 100, RAM en bytes, red y disco en bytes/s. CPU y RAM usada pueden ser null cuando no hay datos; data siempre es un arreglo, vacío si no hay muestras.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Instancias Proxmox"
+                ],
+                "summary": "Histórico de métricas de instancia",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Referencia pública de la instancia (inst_...)",
+                        "name": "instanceRef",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "enum": [
+                            "2h",
+                            "24h"
+                        ],
+                        "type": "string",
+                        "default": "2h",
+                        "description": "Ventana histórica",
+                        "name": "timeframe",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/http.InstanceMetricsResponse"
+                        },
+                        "headers": {
+                            "X-Cache": {
+                                "type": "string",
+                                "description": "HIT o MISS"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "INVALID_TIMEFRAME — el timeframe debe ser '2h' o '24h'; un valor vacío también es inválido",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "MISSING_TOKEN | INVALID_TOKEN | TOKEN_REVOKED",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "WRONG_TOKEN_TYPE | 2FA_REQUIRED | PASSWORD_CHANGE_REQUIRED | NO_ROLE | NO_USER | INVALID_USER_ID | INSTANCE_ACCESS_DENIED — el OPERATOR no tiene esta instancia asignada",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "RESOURCE_NOT_FOUND — referencia inválida o instancia inexistente en Proxmox (misma respuesta)",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "INTERNAL_ERROR — al verificar permisos de acceso | PROXMOX_ERROR — error de Proxmox no clasificado; el mensaje es siempre el texto canónico y el detalle queda en el log",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "502": {
+                        "description": "PROXMOX_UNAVAILABLE — Proxmox caído, sin red o token rechazado",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "504": {
+                        "description": "PROXMOX_TIMEOUT — Proxmox no respondió a tiempo",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/instances/{instanceRef}/pause": {
             "post": {
                 "security": [
@@ -2645,6 +2738,37 @@ const docTemplate = `{
         }
     },
     "definitions": {
+        "domain.PuntoMetricaDTO": {
+            "type": "object",
+            "properties": {
+                "cpuPercent": {
+                    "description": "0 a 100; null si no hay dato (instancia apagada)",
+                    "type": "number"
+                },
+                "diskReadBps": {
+                    "type": "integer"
+                },
+                "diskWriteBps": {
+                    "type": "integer"
+                },
+                "netInBps": {
+                    "type": "integer"
+                },
+                "netOutBps": {
+                    "type": "integer"
+                },
+                "ramTotalBytes": {
+                    "type": "integer"
+                },
+                "ramUsedBytes": {
+                    "description": "null si no hay dato (instancia apagada)",
+                    "type": "integer"
+                },
+                "timestamp": {
+                    "type": "integer"
+                }
+            }
+        },
         "http.AccionAceptadaResponse": {
             "type": "object",
             "required": [
@@ -2939,6 +3063,23 @@ const docTemplate = `{
                     "type": "integer",
                     "minimum": 0,
                     "example": 86400
+                }
+            }
+        },
+        "http.InstanceMetricsResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain.PuntoMetricaDTO"
+                    }
+                },
+                "timeframe": {
+                    "type": "string"
+                },
+                "vmid": {
+                    "type": "string"
                 }
             }
         },
