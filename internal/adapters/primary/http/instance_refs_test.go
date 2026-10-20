@@ -26,7 +26,7 @@ func TestListarInstancias_SoloReferenciasOpacas(t *testing.T) {
 		{Vmid: 101, Nombre: "api", Tipo: "qemu", Nodo: "pve1", Estado: "running"},
 		{Vmid: 201, Nombre: "ct", Tipo: "lxc", Nodo: "pve1", Estado: "stopped"},
 	}}
-	handler := adaptersHttp.NewInstanceHandler(px, &mockUserRepository{}, seguimientoNulo{}, &mockTareaRepository{}, &mockAuditService{}, inventarioNulo{}, adaptersHttp.RefsPrueba)
+	handler := adaptersHttp.NewInstanceHandler(px, &mockUserRepository{}, seguimientoNulo{}, &mockTareaRepository{}, &mockAuditService{}, inventarioNulo{}, adaptersHttp.RefsPrueba, adaptersHttp.TopologiaPrueba)
 	router := gin.New()
 	router.GET("/api/instances", func(c *gin.Context) {
 		c.Set(middleware.ContextKeyRol, "ADMIN")
@@ -63,7 +63,7 @@ func TestReferenciaInvalida_MismaRespuestaQueInstanciaInexistente(t *testing.T) 
 	}
 
 	pedir := func(mock *mockProxmoxPort, metodo, ruta string) (int, string) {
-		handler := adaptersHttp.NewInstanceHandler(mock, &mockUserRepository{}, seguimientoNulo{}, &mockTareaRepository{}, &mockAuditService{}, inventarioNulo{}, adaptersHttp.RefsPrueba)
+		handler := adaptersHttp.NewInstanceHandler(mock, &mockUserRepository{}, seguimientoNulo{}, &mockTareaRepository{}, &mockAuditService{}, inventarioNulo{}, adaptersHttp.RefsPrueba, adaptersHttp.TopologiaPrueba)
 		router := gin.New()
 		router.Use(func(c *gin.Context) {
 			c.Set(middleware.ContextKeyRol, "ADMIN")
@@ -98,6 +98,76 @@ func TestReferenciaInvalida_MismaRespuestaQueInstanciaInexistente(t *testing.T) 
 			if mock.lecturas != 0 {
 				t.Errorf("%s %q%s: una referencia inválida no debe consultar Proxmox", ep.metodo, token, ep.sufijo)
 			}
+		}
+	}
+}
+
+// DoD: un OPERATOR no recibe el hostname real del nodo (ni en el inventario ni
+// en el detalle); un ADMIN sí. Un nodo sin alias configurado recibe uno genérico.
+func TestNodo_EnmascaradoParaQuienNoEsAdmin(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	px := &mockProxmoxPort{estado: "running", instancias: []ports.InstanciaProxmoxDTO{
+		{Vmid: 110, Nombre: "vm", Tipo: "qemu", Nodo: "pve1", Estado: "running"},
+		{Vmid: 201, Nombre: "ct", Tipo: "lxc", Nodo: "pve-02", Estado: "stopped"},
+	}}
+	pedir := func(rol, ruta string) string {
+		handler := adaptersHttp.NewInstanceHandler(px, &mockUserRepository{permisosVMIDs: []int{110, 201}}, seguimientoNulo{}, &mockTareaRepository{}, &mockAuditService{}, inventarioNulo{}, adaptersHttp.RefsPrueba, adaptersHttp.TopologiaPrueba)
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set(middleware.ContextKeyRol, rol)
+			c.Set(middleware.ContextKeyUserID, uuid.New().String())
+		})
+		router.GET("/api/instances", handler.ListarInstancias)
+		router.GET("/api/instances/:vmid", adaptersHttp.ResolverPrueba, handler.ObtenerInstancia)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, ruta, nil))
+		return w.Body.String()
+	}
+	generico := adaptersHttp.TopologiaPrueba.MaskNode("pve-02")
+	if !strings.HasPrefix(generico, "nodo-") || strings.Contains(generico, "pve") {
+		t.Fatalf("alias genérico inesperado: %q", generico)
+	}
+
+	operador := pedir("OPERATOR", "/api/instances")
+	if strings.Contains(operador, "pve") || !strings.Contains(operador, `"node":"nodo-principal"`) || !strings.Contains(operador, `"node":"`+generico+`"`) {
+		t.Errorf("Inventario del OPERATOR con nombres reales o sin alias: %s", operador)
+	}
+	// El mock de detalle no informa nodo: se prueba con el del inventario.
+	px.nodoDetalle = "pve1"
+	if detalle := pedir("OPERATOR", adaptersHttp.ConRef("/api/instances/110")); strings.Contains(detalle, "pve") || !strings.Contains(detalle, `"nodo":"nodo-principal"`) {
+		t.Errorf("Detalle del OPERATOR: %s", detalle)
+	}
+	if admin := pedir("ADMIN", "/api/instances"); !strings.Contains(admin, `"node":"pve1"`) || !strings.Contains(admin, `"node":"pve-02"`) {
+		t.Errorf("El ADMIN ve los nombres reales: %s", admin)
+	}
+	if detalle := pedir("ADMIN", adaptersHttp.ConRef("/api/instances/110")); !strings.Contains(detalle, `"nodo":"pve1"`) {
+		t.Errorf("Detalle del ADMIN: %s", detalle)
+	}
+}
+
+// DoD: la creación traduce los alias al nombre real antes de llegar a Proxmox
+// (y un nombre real pasa igual).
+func TestCrearInstancia_ResuelveAliasDeTopologia(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	casos := []struct{ nodo, storage, template, esperadoTemplate string }{
+		{"nodo-principal", "Almacenamiento Local Rápido", "Almacenamiento Estándar:iso/debian-12.iso", "local:iso/debian-12.iso"},
+		{"pve1", "local-lvm", "local:iso/debian-12.iso", "local:iso/debian-12.iso"},
+		{"nodo-principal", "Almacenamiento Local Rápido", "debian-12.iso", "local-lvm:iso/debian-12.iso"},
+	}
+	for _, c := range casos {
+		px := &mockProxmoxPort{aprovRes: &ports.ResultadoAprovisionamiento{VMID: 700, UPID: "UPID:pve1:qmcreate:700", Accion: ports.AccionProxmoxCrearVM}}
+		handler := adaptersHttp.NewInstanceHandler(px, &mockUserRepository{}, seguimientoNulo{}, &mockTareaRepository{}, &mockAuditService{}, inventarioNulo{}, adaptersHttp.RefsPrueba, adaptersHttp.TopologiaPrueba)
+		router := gin.New()
+		router.POST("/api/instances", handler.CrearInstancia)
+		cuerpo, _ := json.Marshal(map[string]any{"tipo": "vm", "nodo": c.nodo, "nombre": "srv", "cores": 1, "ramMb": 512, "discoGb": 5,
+			"storageId": c.storage, "templateOso": c.template, "red": map[string]any{"modo": "dhcp"}})
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/instances", strings.NewReader(string(cuerpo))))
+		if w.Code != http.StatusAccepted {
+			t.Fatalf("%+v: %d %s", c, w.Code, w.Body.String())
+		}
+		if px.aprovInput.Nodo != "pve1" || px.aprovInput.StorageID != "local-lvm" || px.aprovInput.TemplateID != c.esperadoTemplate {
+			t.Errorf("%+v: a Proxmox llegó nodo=%q storage=%q template=%q", c, px.aprovInput.Nodo, px.aprovInput.StorageID, px.aprovInput.TemplateID)
 		}
 	}
 }

@@ -8,6 +8,7 @@ import (
 
 	apihttp "el-centinela/internal/adapters/primary/http"
 	"el-centinela/internal/adapters/secondary/memoria"
+	"el-centinela/internal/core/domain/topology"
 
 	"github.com/gin-gonic/gin"
 )
@@ -18,7 +19,11 @@ func TestVerifyP4_FallbackMemoriaDevuelve503(t *testing.T) {
 	if provider == nil {
 		t.Fatal("aprovisionadorSeguro no debe devolver nil")
 	}
-	h := apihttp.NewInstanceHandler(nil, nil, nil, nil, nil, nil, nil, provider)
+	topologia, err := topology.NuevoCatalogo(nil, nil, "secreto-de-prueba")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := apihttp.NewInstanceHandler(nil, nil, nil, nil, nil, nil, nil, topologia, provider)
 	router := gin.New()
 	router.POST("/api/instances", h.CrearInstancia)
 	body := `{"type":"VM","node":"pve1","name":"web","cpu":{"cores":1},` +

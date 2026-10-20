@@ -12,6 +12,7 @@ import (
 
 	"el-centinela/internal/adapters/primary/http/middleware"
 	"el-centinela/internal/core/domain"
+	"el-centinela/internal/core/domain/topology"
 	"el-centinela/internal/core/ports"
 
 	"github.com/gin-gonic/gin"
@@ -40,6 +41,7 @@ type InstanceHandler struct {
 	tareas            ports.TareaRepository
 	audit             ports.AuditService
 	refs              ports.ReferenciasInstancia // VMID <-> referencia pública
+	topologia         *topology.Catalogo         // nodos y storages con alias para quien no es ADMIN
 }
 
 type crearInstanciaCPUWizardRequest struct {
@@ -122,8 +124,8 @@ type crearInstanciaWizardPayload struct {
 
 // NewInstanceHandler crea un nuevo InstanceHandler.
 // Recibe el cliente de Proxmox, el repositorio de usuarios (RBAC del listado),
-// el seguimiento de tareas (publica TASK_FINISHED), el servicio de auditoría y
-// el traductor de VMID a referencia pública.
+// el seguimiento de tareas (publica TASK_FINISHED), el servicio de auditoría,
+// el traductor de VMID a referencia pública y el catálogo de alias de topología.
 func NewInstanceHandler(
 	proxmox ports.ProxmoxPort,
 	userRepo ports.UserRepository,
@@ -132,9 +134,10 @@ func NewInstanceHandler(
 	audit ports.AuditService,
 	inventario ports.InventarioService,
 	refs ports.ReferenciasInstancia,
+	topologia *topology.Catalogo,
 	aprovisionamiento ...ports.AprovisionamientoPort,
 ) *InstanceHandler {
-	return NewInstanceHandlerConNodo(proxmox, userRepo, seguimiento, tareas, audit, inventario, refs, "proxmox", aprovisionamiento...)
+	return NewInstanceHandlerConNodo(proxmox, userRepo, seguimiento, tareas, audit, inventario, refs, topologia, "proxmox", aprovisionamiento...)
 }
 
 // NewInstanceHandlerConNodo permite que el contrato RF-07 omita nodo sin
@@ -147,6 +150,7 @@ func NewInstanceHandlerConNodo(
 	audit ports.AuditService,
 	inventario ports.InventarioService,
 	refs ports.ReferenciasInstancia,
+	topologia *topology.Catalogo,
 	nodoPorDefecto string,
 	aprovisionamiento ...ports.AprovisionamientoPort,
 ) *InstanceHandler {
@@ -166,6 +170,7 @@ func NewInstanceHandlerConNodo(
 		tareas:            tareas,
 		audit:             audit,
 		refs:              refs,
+		topologia:         topologia,
 	}
 }
 
@@ -284,6 +289,18 @@ func mapearErrorProxmox(c *gin.Context, err error) {
 		log.Printf("❌ Error inesperado de Proxmox [%s]: %v", ruta, err)
 		SendError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Error inesperado al comunicarse con Proxmox VE.")
 	}
+}
+
+// resolverTopologia traduce los alias de nodo y storage que pueda traer la
+// creación (también el storage del templateId "storage:iso/archivo") al nombre
+// real que entiende Proxmox. Un nombre real pasa igual.
+func (h *InstanceHandler) resolverTopologia(input ports.CrearInstanciaProxmoxInput) ports.CrearInstanciaProxmoxInput {
+	input.Nodo = h.topologia.ResolveNode(input.Nodo)
+	input.StorageID = h.topologia.ResolveStorage(input.StorageID)
+	if storage, resto, ok := strings.Cut(input.TemplateID, ":"); ok {
+		input.TemplateID = h.topologia.ResolveStorage(storage) + ":" + resto
+	}
+	return input
 }
 
 func normalizarCreacionPlana(req CrearInstanciaRequest, nodoPorDefecto string) (ports.CrearInstanciaProxmoxInput, error) {
@@ -460,6 +477,7 @@ func (h *InstanceHandler) CrearInstancia(c *gin.Context) {
 		SendError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "El aprovisionamiento no está disponible.")
 		return
 	}
+	input = h.resolverTopologia(input)
 	resultado, err := h.aprovisionamiento.AprovisionarInstancia(c.Request.Context(), input)
 	if err != nil {
 		mapearErrorProxmox(c, err)
@@ -496,7 +514,7 @@ func (h *InstanceHandler) CrearInstancia(c *gin.Context) {
 // Un ADMIN ve todo el cluster; un OPERATOR solo sus instancias asignadas.
 //
 // @Summary      Listar instancias
-// @Description  OPERATIVO. Lee en vivo el inventario de Proxmox VE (VMs y contenedores). Un ADMIN recibe el cluster completo; un OPERATOR recibe únicamente las instancias que tiene asignadas. `id` es la referencia pública opaca de la instancia (`inst_` + 22 caracteres): es estable y es la que se usa en todas las rutas /instances/{instanceRef}; el VMID de Proxmox nunca se expone. Incluye telemetría (CPU en porcentaje 0-100, RAM en bytes y MaxRam en bytes), nivel de acceso y tarea activa. Si la instancia está apagada (stopped), cpuUsage y ramUsage serán estrictamente null. ip puede ser null; activeTask es el objeto { tareaId, action, status } de la tarea RUNNING de la instancia, o null si no tiene ninguna.
+// @Description  OPERATIVO. Lee en vivo el inventario de Proxmox VE (VMs y contenedores). Un ADMIN recibe el cluster completo; un OPERATOR recibe únicamente las instancias que tiene asignadas. `id` es la referencia pública opaca de la instancia (`inst_` + 22 caracteres): es estable y es la que se usa en todas las rutas /instances/{instanceRef}; el VMID de Proxmox nunca se expone. Para quien no es ADMIN, `node` es un alias neutro del nodo físico (por ejemplo `nodo-principal`), nunca el hostname real. Incluye telemetría (CPU en porcentaje 0-100, RAM en bytes y MaxRam en bytes), nivel de acceso y tarea activa. Si la instancia está apagada (stopped), cpuUsage y ramUsage serán estrictamente null. ip puede ser null; activeTask es el objeto { tareaId, action, status } de la tarea RUNNING de la instancia, o null si no tiene ninguna.
 // @Tags         Instancias Proxmox
 // @Produce      json
 // @Security     BearerAuth
@@ -597,11 +615,15 @@ func (h *InstanceHandler) ListarInstancias(c *gin.Context) {
 		if !ok {
 			continue
 		}
+		nodo := inst.Nodo
+		if rol != "ADMIN" {
+			nodo = h.topologia.MaskNode(nodo)
+		}
 		resultado = append(resultado, ports.InstanciaListadaDTO{
 			ID:          ref,
 			Name:        inst.Nombre,
 			Type:        tipo,
-			Node:        inst.Nodo,
+			Node:        nodo,
 			Status:      inst.Estado,
 			Ip:          ips[inst.Vmid],
 			CpuUsage:    cpuUsage,
@@ -622,7 +644,7 @@ func (h *InstanceHandler) ListarInstancias(c *gin.Context) {
 // ObtenerInstancia devuelve el estado actual de una instancia Proxmox.
 //
 // @Summary      Obtener instancia
-// @Description  Devuelve el estado actual (running/stopped, tipo, nodo, telemetría) de una VM o contenedor leído en vivo desde Proxmox VE. `cpu` es un porcentaje de 0 a 100; `cpu` y `mem` valen null si la instancia no está encendida.
+// @Description  Devuelve el estado actual (running/stopped, tipo, nodo, telemetría) de una VM o contenedor leído en vivo desde Proxmox VE. `cpu` es un porcentaje de 0 a 100; `cpu` y `mem` valen null si la instancia no está encendida. Para quien no es ADMIN, `nodo` es un alias neutro del nodo físico, nunca el hostname real.
 // @Tags         Instancias Proxmox
 // @Produce      json
 // @Security     BearerAuth
@@ -649,6 +671,9 @@ func (h *InstanceHandler) ObtenerInstancia(c *gin.Context) {
 	if !ok {
 		responderErrorRefs(c)
 		return
+	}
+	if rol, _ := c.Get(middleware.ContextKeyRol); rol != "ADMIN" {
+		detalle.Nodo = h.topologia.MaskNode(detalle.Nodo)
 	}
 	c.JSON(http.StatusOK, detalle)
 }

@@ -36,6 +36,10 @@ enum** en inglés MAYÚSCULA con guión bajo.
   VMID (`"110"`) y el handler del stream lo traduce a la referencia pública
   antes de mandarlo, la misma `id` que devuelve `GET /api/instances`. Si un
   texto de `detalles` (el error de Proxmox) nombra el VMID, también se reemplaza.
+- Para quien no es ADMIN, los nombres reales de nodos y storages que aparezcan
+  en `mensaje` o en los textos de `detalles` se reemplazan por sus alias
+  (`nodo-principal`, `Almacenamiento Local Rápido`, ...). Ver
+  `docs/contrato-etapa1.md`.
 - `recursoTipo`, `recursoId` y `detalles` se completan según el tipo de evento
   (ver `ConRecurso` y `ConDetalles` en el código). `recursoId` y `detalles` no
   viajan cuando no aplican: un evento del HOST no trae `recursoId`.

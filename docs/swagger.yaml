@@ -2121,11 +2121,13 @@ paths:
         Un ADMIN recibe el cluster completo; un OPERATOR recibe únicamente las instancias
         que tiene asignadas. `id` es la referencia pública opaca de la instancia (`inst_`
         + 22 caracteres): es estable y es la que se usa en todas las rutas /instances/{instanceRef};
-        el VMID de Proxmox nunca se expone. Incluye telemetría (CPU en porcentaje
-        0-100, RAM en bytes y MaxRam en bytes), nivel de acceso y tarea activa. Si
-        la instancia está apagada (stopped), cpuUsage y ramUsage serán estrictamente
-        null. ip puede ser null; activeTask es el objeto { tareaId, action, status
-        } de la tarea RUNNING de la instancia, o null si no tiene ninguna.'
+        el VMID de Proxmox nunca se expone. Para quien no es ADMIN, `node` es un alias
+        neutro del nodo físico (por ejemplo `nodo-principal`), nunca el hostname real.
+        Incluye telemetría (CPU en porcentaje 0-100, RAM en bytes y MaxRam en bytes),
+        nivel de acceso y tarea activa. Si la instancia está apagada (stopped), cpuUsage
+        y ramUsage serán estrictamente null. ip puede ser null; activeTask es el objeto
+        { tareaId, action, status } de la tarea RUNNING de la instancia, o null si
+        no tiene ninguna.'
       produces:
       - application/json
       responses:
@@ -2294,7 +2296,9 @@ paths:
     get:
       description: Devuelve el estado actual (running/stopped, tipo, nodo, telemetría)
         de una VM o contenedor leído en vivo desde Proxmox VE. `cpu` es un porcentaje
-        de 0 a 100; `cpu` y `mem` valen null si la instancia no está encendida.
+        de 0 a 100; `cpu` y `mem` valen null si la instancia no está encendida. Para
+        quien no es ADMIN, `nodo` es un alias neutro del nodo físico, nunca el hostname
+        real.
       parameters:
       - description: Referencia pública de la instancia (inst_...)
         in: path

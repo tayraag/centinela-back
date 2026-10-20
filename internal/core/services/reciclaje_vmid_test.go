@@ -108,7 +108,7 @@ func TestReciclajeVMID_SecuenciaEstrictaDestruccionYPurga(t *testing.T) {
 	purger.asignar(120, operadorID, ports.NivelAccesoReadOnly) // otra máquina que debe preservarse
 
 	// Recrear eventosService usando el purger como instanceRepo
-	eventosSvc := services.NewEventosService(e.kv, e.repo, purger, e.auditoria)
+	eventosSvc := services.NewEventosService(e.kv, e.repo, purger, e.auditoria, topologiaPrueba())
 
 	// Conectar operador a SSE con login y sesión válidos
 	tokens, _ := e.login(t)

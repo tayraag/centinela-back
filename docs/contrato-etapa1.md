@@ -110,12 +110,34 @@ ejemplo `inst_3Hk9aQ2mXv7LpR4sT1bN8c`.
 { "errorCode": "RESOURCE_NOT_FOUND", "message": "La instancia solicitada no existe." }
 ```
 
+## Nombres de nodos y storages: alias para quien no es ADMIN
+
+Para no revelar la infraestructura interna (hostnames de Proxmox, nombres y
+tipos de pools de almacenamiento), un usuario que **no es ADMIN** ve alias
+neutros en lugar de los nombres reales:
+
+- `node` del inventario y `nodo` del detalle: el alias del nodo, por defecto
+  `nodo-principal` para el nodo configurado (`PROXMOX_NODE`).
+- Los textos de los eventos SSE (por ejemplo el error de Proxmox en
+  `detalles.error`): los nombres reales de nodos y storages se reemplazan por
+  sus alias (`local-lvm` → `Almacenamiento Local Rápido`, `local` →
+  `Almacenamiento Estándar`).
+- Un nodo o storage que no está en el catálogo recibe un alias genérico estable
+  (`nodo-xxxxxxxx`, `almacenamiento-xxxxxxxx`) que no permite deducir el nombre.
+
+El ADMIN sigue viendo los nombres reales en todas partes (inventario, detalle,
+`GET /api/node/storages`, `GET /api/node/templates`). `POST /api/instances`
+acepta tanto el nombre real como el alias en `nodo`, `storageId` y el storage
+de `templateOso`, y los traduce antes de llamar a Proxmox. Los alias se
+configuran con `TOPOLOGY_NODE_ALIASES` y `TOPOLOGY_STORAGE_ALIASES`
+(`real=alias,real=alias`); son opcionales.
+
 ## Inventario de instancias — operativo
 
 `GET /api/instances` devuelve un array. Cada elemento contiene siempre:
 
 - `id` (la referencia pública de la instancia, string), `name`, `type`, `node`
-  y `status`.
+  (alias del nodo si el usuario no es ADMIN) y `status`.
 - `ip`: cadena o `null`. Se obtiene en vivo: en las VM, con el QEMU Guest
   Agent; en los contenedores, con sus interfaces. Se informa la primera IPv4
   (sin contar loopback) o, si no hay, la primera IPv6 global. Vale `null` si la

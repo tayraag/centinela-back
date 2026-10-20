@@ -24,6 +24,7 @@ import (
 	"el-centinela/internal/adapters/secondary/proxmox"
 	"el-centinela/internal/adapters/secondary/redis"
 	"el-centinela/internal/core/domain"
+	"el-centinela/internal/core/domain/topology"
 	"el-centinela/internal/core/ports"
 	"el-centinela/internal/core/services"
 	"el-centinela/internal/infrastructure/crypto"
@@ -144,6 +145,7 @@ func main() {
 
 	// 4. Inicializar servicios de dominio (inyección de dependencias)
 	nodoNombre := valorODefecto(os.Getenv("PROXMOX_NODE"), "proxmox")
+	topologia := cargarTopologia(nodoNombre, os.Getenv("INSTANCE_ID_SALT"))
 	auditService := services.NewAuditService(auditRepo, refsInstancia)
 	authService := services.NewAuthService(authRepo, kvStore, emailService, auditService)
 	userService := services.NewUserService(userRepo, authRepo, kvStore, auditService, emailService)
@@ -154,7 +156,7 @@ func main() {
 	userHandler := httpHandlers.NewUserHandler(userService, refsInstancia)
 	accountHandler := httpHandlers.NewAccountHandler(userService, refsInstancia)
 	auditHandler := httpHandlers.NewAuditHandler(auditService)
-	eventosService := services.NewEventosService(kvStore, authRepo, instanceRepo, auditService)
+	eventosService := services.NewEventosService(kvStore, authRepo, instanceRepo, auditService, topologia)
 	tareaRepo := postgres.NewTareaRepository(db)
 	seguimientoTareas := services.NewSeguimientoTareas(proxmoxClient, tareaRepo, auditService,
 		services.ConfigSeguimiento{
@@ -181,7 +183,7 @@ func main() {
 		})
 	seguimientoTareas.Iniciar(ctx)
 	instanceHandler := httpHandlers.NewInstanceHandlerConNodo(proxmoxClient, userRepo, seguimientoTareas, tareaRepo, auditService,
-		services.NewInventarioService(proxmoxClient), refsInstancia, nodoNombre, aprovisionadorSeguro(kvStore, cuotasService))
+		services.NewInventarioService(proxmoxClient), refsInstancia, topologia, nodoNombre, aprovisionadorSeguro(kvStore, cuotasService))
 	eventsHandler := httpHandlers.NewEventsHandler(eventosService, refsInstancia)
 	nodeHandler := httpHandlers.NewNodeHandler(services.NewNodoService(proxmoxClient, kvStore, nodoNombre), proxmoxClient, nodoNombre)
 	wsMetricsHandler := httpHandlers.NewMetricsWSHandler(proxmoxClient, services.NewMetricasVivoService(kvStore, authRepo, instanceRepo, 0),
@@ -488,6 +490,33 @@ func conectarRedis() ports.KeyValueStore {
 	}
 	log.Println("[INFO] Conexión con Redis establecida exitosamente.")
 	return store
+}
+
+// cargarTopologia arma el catálogo de alias de nodos y storages que ve quien
+// no es ADMIN. TOPOLOGY_NODE_ALIASES y TOPOLOGY_STORAGE_ALIASES ("real=alias,
+// real=alias") son opcionales: sin ellas el nodo configurado se muestra como
+// "nodo-principal" y local-lvm/local con sus etiquetas por defecto. Lo que no
+// esté en el catálogo recibe un alias genérico derivado de INSTANCE_ID_SALT.
+func cargarTopologia(nodo, secreto string) *topology.Catalogo {
+	nodos, err := topology.ParseAlias(os.Getenv("TOPOLOGY_NODE_ALIASES"))
+	if err != nil {
+		log.Fatalf("❌ TOPOLOGY_NODE_ALIASES inválida: %v", err)
+	}
+	if nodos == nil {
+		nodos = map[string]string{nodo: topology.AliasNodoPorDefecto}
+	}
+	storages, err := topology.ParseAlias(os.Getenv("TOPOLOGY_STORAGE_ALIASES"))
+	if err != nil {
+		log.Fatalf("❌ TOPOLOGY_STORAGE_ALIASES inválida: %v", err)
+	}
+	if storages == nil {
+		storages = topology.AliasStoragePorDefecto
+	}
+	catalogo, err := topology.NuevoCatalogo(nodos, storages, secreto)
+	if err != nil {
+		log.Fatalf("❌ Catálogo de topología inválido: %v", err)
+	}
+	return catalogo
 }
 
 func valorODefecto(v, defecto string) string {

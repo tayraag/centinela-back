@@ -12,6 +12,7 @@ import (
 
 	"el-centinela/internal/adapters/secondary/memoria"
 	"el-centinela/internal/core/domain"
+	"el-centinela/internal/core/domain/topology"
 	"el-centinela/internal/core/ports"
 	"el-centinela/internal/core/services"
 
@@ -93,8 +94,17 @@ func nuevoEntornoEventos(t *testing.T, rol string) *entornoEventos {
 		auditoria:   &auditoriaGrabadora{},
 		avanzar:     func(d time.Duration) { mu.Lock(); reloj = reloj.Add(d); mu.Unlock() },
 	}
-	e.eventos = services.NewEventosService(kv, base.repo, e.permisos, e.auditoria)
+	e.eventos = services.NewEventosService(kv, base.repo, e.permisos, e.auditoria, topologiaPrueba())
 	return e
+}
+
+// topologiaPrueba: nodo "pve1" como "nodo-principal" y los storages por defecto.
+func topologiaPrueba() *topology.Catalogo {
+	c, err := topology.NuevoCatalogo(map[string]string{"pve1": topology.AliasNodoPorDefecto}, topology.AliasStoragePorDefecto, "secreto-de-prueba")
+	if err != nil {
+		panic(err)
+	}
+	return c
 }
 
 // conectar hace login + 2FA, pide un ticket y abre el stream.
@@ -595,5 +605,33 @@ func TestCorte_ClienteQueCierraNoRompeNada(t *testing.T) {
 	_ = e.eventos.Publicar(context.Background(), eventoDe(t, ports.RecursoVM, "110"))
 	if e.auditoria.buscar(ports.AccionEventosCierre) != nil {
 		t.Error("Si el cliente cierra por su cuenta no es un corte del backend")
+	}
+}
+
+// Un OPERATOR no ve nombres reales de nodos ni storages en los textos del
+// evento (el error de Proxmox puede nombrarlos); un ADMIN los ve tal cual.
+func TestEventos_TopologiaEnmascaradaParaOperator(t *testing.T) {
+	const errorProxmox = "storage 'local-lvm' does not exist on node pve1"
+	for _, rol := range []string{"OPERATOR", "ADMIN"} {
+		e := nuevoEntornoEventos(t, rol)
+		e.permisos.permisos[110] = ports.NivelAccesoReadOnly
+		conexion, _ := e.conectar(t)
+		ev := eventoDe(t, ports.RecursoVM, "110").ConDetalles(map[string]any{"exitstatus": errorProxmox, "error": errorProxmox, "motivo": ports.MotivoProxmoxError, "duracion": 3})
+		_ = e.eventos.Publicar(context.Background(), ev)
+		select {
+		case llegado := <-conexion.Eventos:
+			esperado := errorProxmox
+			if rol != "ADMIN" {
+				esperado = "storage 'Almacenamiento Local Rápido' does not exist on node nodo-principal"
+			}
+			if llegado.Detalles["exitstatus"] != esperado || llegado.Detalles["error"] != esperado {
+				t.Errorf("%s: detalles = %v, se esperaba %q", rol, llegado.Detalles, esperado)
+			}
+			if llegado.Detalles["motivo"] != ports.MotivoProxmoxError || llegado.Detalles["duracion"] != float64(3) { // el bus viaja en JSON
+				t.Errorf("%s: el resto de detalles se conserva: %v", rol, llegado.Detalles)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("%s: no llegó el evento", rol)
+		}
 	}
 }

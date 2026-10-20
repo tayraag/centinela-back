@@ -45,7 +45,7 @@ func TestMetricas_PorcentajeYNullCuandoEstaApagada(t *testing.T) {
 		110: {Vmid: 110, Nombre: "web", Tipo: "qemu", Nodo: "pve", Estado: "running", Cpu: 0.2449, Mem: 1024, MaxMem: 4096, MaxCpu: 2},
 		201: {Vmid: 201, Nombre: "db", Tipo: "lxc", Nodo: "pve", Estado: "stopped", Cpu: 0, Mem: 0, MaxMem: 2048, MaxCpu: 1},
 	}}
-	h := adaptersHttp.NewInstanceHandler(px, &mockUserRepository{}, seguimientoNulo{}, &mockTareaRepository{}, &mockAuditService{}, inventarioNulo{}, adaptersHttp.RefsPrueba)
+	h := adaptersHttp.NewInstanceHandler(px, &mockUserRepository{}, seguimientoNulo{}, &mockTareaRepository{}, &mockAuditService{}, inventarioNulo{}, adaptersHttp.RefsPrueba, adaptersHttp.TopologiaPrueba)
 	r := gin.New()
 	r.Use(func(c *gin.Context) {
 		c.Set(string(middleware.ContextKeyRol), "ADMIN")

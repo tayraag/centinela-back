@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"el-centinela/internal/core/domain/topology"
 	"el-centinela/internal/core/ports"
 
 	"github.com/google/uuid"
@@ -40,11 +41,12 @@ type eventosService struct {
 	authRepo     ports.AuthRepository     // usuario (activo, rol) y sesión
 	instanceRepo ports.InstanceRepository // permisos de un OPERATOR sobre cada instancia
 	auditSvc     ports.AuditService
+	topologia    *topology.Catalogo // alias de nodos y storages en los textos para quien no es ADMIN
 }
 
 // NewEventosService crea el servicio del canal de eventos en tiempo real.
-func NewEventosService(kv ports.KeyValueStore, authRepo ports.AuthRepository, instanceRepo ports.InstanceRepository, auditSvc ports.AuditService) ports.EventosService {
-	return &eventosService{kv: kv, bus: busEventos{kv: kv}, authRepo: authRepo, instanceRepo: instanceRepo, auditSvc: auditSvc}
+func NewEventosService(kv ports.KeyValueStore, authRepo ports.AuthRepository, instanceRepo ports.InstanceRepository, auditSvc ports.AuditService, topologia *topology.Catalogo) ports.EventosService {
+	return &eventosService{kv: kv, bus: busEventos{kv: kv}, authRepo: authRepo, instanceRepo: instanceRepo, auditSvc: auditSvc, topologia: topologia}
 }
 
 // EmitirTicket: SET ws_ticket:<uuid v4> {usuario_id, sesion_id} EX 30.
@@ -110,12 +112,16 @@ func (s *eventosService) Conectar(ctx context.Context, ticket string) (*ports.Co
 			}
 			motivo := s.motivoDeCierre(msg, t)
 			if motivo == "" && msg.Tipo == ports.MensajeEvento && msg.Evento != nil {
-				visible, inactivo := s.puedeVer(context.Background(), t.UsuarioID, *msg.Evento)
+				visible, inactivo, admin := s.puedeVer(context.Background(), t.UsuarioID, *msg.Evento)
 				if inactivo {
 					motivo = MotivoUsuarioInactivo
 				} else if visible {
+					evento := *msg.Evento
+					if !admin {
+						evento = s.sinTopologia(evento)
+					}
 					select {
-					case eventos <- *msg.Evento:
+					case eventos <- evento:
 					case <-fin:
 						return
 					}
@@ -162,13 +168,13 @@ func (s *eventosService) motivoDeCierre(msg ports.MensajeBus, t ticketEventos) s
 // ejemplo, un ALERT_TRIGGERED del HOST) son solo para ADMIN. Como se consulta en vivo,
 // si un admin le quita un permiso deja de recibir esos eventos al instante.
 // Si el usuario ya no está activo devuelve inactivo = true.
-func (s *eventosService) puedeVer(ctx context.Context, usuarioID uuid.UUID, ev ports.RealtimeEvent) (visible, inactivo bool) {
+func (s *eventosService) puedeVer(ctx context.Context, usuarioID uuid.UUID, ev ports.RealtimeEvent) (visible, inactivo, admin bool) {
 	usuario, err := s.authRepo.BuscarUsuarioPorID(ctx, usuarioID)
 	if err != nil || !usuario.Activo {
-		return false, true
+		return false, true, false
 	}
 	if usuario.Rol == "ADMIN" {
-		return true, false
+		return true, false, true
 	}
 	switch ev.RecursoTipo {
 	case ports.RecursoVM, ports.RecursoLXC:
@@ -176,18 +182,37 @@ func (s *eventosService) puedeVer(ctx context.Context, usuarioID uuid.UUID, ev p
 	default:
 		// HOST (alertas del servidor físico) y cualquier evento que no sea de
 		// una instancia: solo ADMIN. Al OPERATOR se le descarta en silencio.
-		return false, false
+		return false, false, false
 	}
 	vmid, err := strconv.Atoi(ev.RecursoID)
 	if err != nil {
-		return false, false
+		return false, false, false
 	}
 	permitido, err := s.instanceRepo.VerificarAcceso(ctx, usuarioID, vmid, ports.NivelAccesoReadOnly)
 	if err != nil {
 		log.Printf("[EVENTOS] no se pudo verificar el permiso de %s sobre %d: %v", usuarioID, vmid, err)
-		return false, false
+		return false, false, false
 	}
-	return permitido, false
+	return permitido, false, false
+}
+
+// sinTopologia devuelve una copia del evento con los nombres reales de nodos y
+// storages reemplazados por sus alias en el mensaje y en los textos de
+// detalles (el error de Proxmox puede nombrarlos). El original no se toca:
+// lo comparten todas las conexiones.
+func (s *eventosService) sinTopologia(ev ports.RealtimeEvent) ports.RealtimeEvent {
+	ev.Mensaje = s.topologia.MaskTexto(ev.Mensaje, nil, nil)
+	if ev.Detalles != nil {
+		detalles := make(map[string]any, len(ev.Detalles))
+		for k, v := range ev.Detalles {
+			if texto, ok := v.(string); ok {
+				v = s.topologia.MaskTexto(texto, nil, nil)
+			}
+			detalles[k] = v
+		}
+		ev.Detalles = detalles
+	}
+	return ev
 }
 
 func (s *eventosService) registrarCierre(t ticketEventos, motivo string) {

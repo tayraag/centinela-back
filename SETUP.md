@@ -77,6 +77,8 @@ Configuración oficial pasada por la PM. El backend se autentica **solo** con el
 | `PROXMOX_TOKEN_SECRET`         | Secreto del API Token. **Pedírselo a la PM / infra, nunca commitearlo**     | `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`   |
 | `PROXMOX_INSECURE_SKIP_VERIFY` | Saltea la verificación TLS (certificado autofirmado)                        | `true`                                   |
 | `PROXMOX_PROTECTED_VMIDS`      | Opcional. VMIDs que no se pueden apagar desde la API. Vacío = `100`–`105`   | *(vacío)*                                |
+| `TOPOLOGY_NODE_ALIASES`        | Opcional. Alias del nodo que ve quien no es ADMIN (`real=alias,...`). Vacío = `PROXMOX_NODE` como `nodo-principal` | *(vacío)*              |
+| `TOPOLOGY_STORAGE_ALIASES`     | Opcional. Alias de storages (`real=alias,...`). Vacío = `local-lvm=Almacenamiento Local Rápido,local=Almacenamiento Estándar` | *(vacío)* |
 | `PROXMOX_SIM_*`                | Opcionales. Configuración del simulador (solo desarrollo local)             | ver `docs/simulador-proxmox.md`          |
 
 Cada request a Proxmox lleva la cabecera:

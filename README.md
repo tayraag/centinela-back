@@ -67,7 +67,8 @@ centinela-back/
 │   ├── core/                    # ★ NÚCLEO DE DOMINIO (sin dependencias externas)
 │   │   ├── domain/
 │   │   │   ├── models.go        # Entidades: Usuario, SesionActiva, PermisoInstancia, etc.
-│   │   │   └── metricas.go      # DTOs de telemetría y métricas (PuntoMetricaDTO, MetricasEnVivoDTO)
+│   │   │   ├── metricas.go      # DTOs de telemetría y métricas (PuntoMetricaDTO, MetricasEnVivoDTO)
+│   │   │   └── topology/        # Alias de nodos y storages para quien no es ADMIN (MaskNode/ResolveNode, MaskStorage/ResolveStorage)
 │   │   ├── ports/
 │   │   │   ├── auth_port.go     # Interfaces AuthRepository + AuthService + DTOs de auth
 │   │   │   ├── user_port.go     # Interfaces UserRepository + UserService + DTOs de usuarios

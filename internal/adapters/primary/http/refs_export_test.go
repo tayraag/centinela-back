@@ -5,6 +5,7 @@ import (
 	"strconv"
 
 	"el-centinela/internal/adapters/primary/http/middleware"
+	"el-centinela/internal/core/domain/topology"
 	"el-centinela/internal/infrastructure/crypto"
 )
 
@@ -22,6 +23,16 @@ var RefsPrueba = func() *crypto.OfuscadorVMID {
 
 // ResolverPrueba es ResolveInstanceRef sobre el parámetro :vmid de las rutas de prueba.
 var ResolverPrueba = middleware.ResolveInstanceRef(RefsPrueba, "vmid")
+
+// TopologiaPrueba es el catálogo de alias por defecto con el nodo "pve1" (el
+// de los mocks) como "nodo-principal".
+var TopologiaPrueba = func() *topology.Catalogo {
+	c, err := topology.NuevoCatalogo(map[string]string{"pve1": topology.AliasNodoPorDefecto}, topology.AliasStoragePorDefecto, "secreto-de-prueba")
+	if err != nil {
+		panic(err)
+	}
+	return c
+}()
 
 // RefInst devuelve la referencia pública de un VMID.
 func RefInst(vmid int) string {
