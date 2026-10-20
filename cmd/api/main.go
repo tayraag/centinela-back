@@ -183,6 +183,17 @@ func main() {
 	// Usamos gin.New() para tener control total sobre los middlewares.
 	gin.SetMode(gin.ReleaseMode) // Silencia el banner y logs de debug de Gin
 	router := gin.New()
+	// No confiar X-Forwarded-For de cualquier cliente: permitirlo haría trivial
+	// evadir los límites por IP. Los proxies reales se declaran explícitamente.
+	var proxiesConfiables []string
+	for _, proxy := range strings.Split(os.Getenv("TRUSTED_PROXIES"), ",") {
+		if proxy = strings.TrimSpace(proxy); proxy != "" {
+			proxiesConfiables = append(proxiesConfiables, proxy)
+		}
+	}
+	if err := router.SetTrustedProxies(proxiesConfiables); err != nil {
+		log.Fatalf("[FATAL] TRUSTED_PROXIES inválida: %v", err)
+	}
 	router.Use(gin.Recovery())             // Recupera de panics sin caer el servidor
 	router.Use(middleware.RequestLogger()) // Logger conciso personalizado
 	router.Use(middleware.CORS())          // Política CORS: lista blanca de orígenes (ver ALLOWED_ORIGINS en .env)
@@ -217,7 +228,7 @@ func main() {
 		auth := api.Group("/auth")
 		{
 			// Rutas públicas (sin autenticación)
-			auth.POST("/login", authHandler.Login)
+			auth.POST("/login", middleware.LimitarLogin(kvStore), authHandler.Login)
 			auth.POST("/refresh", authHandler.RefrescarToken)
 
 			// Rutas protegidas (requieren JWT access)
@@ -225,14 +236,14 @@ func main() {
 			auth.POST("/ws-ticket", middleware.RequireAuth(authService), authHandler.EmitirWsTicket)
 
 			// Recuperación de contraseña (públicas)
-			auth.POST("/password/forgot", authHandler.SolicitarRecuperacion)
+			auth.POST("/password/forgot", middleware.LimitarSolicitudRecuperacion(kvStore), authHandler.SolicitarRecuperacion)
 			auth.POST("/password/reset", authHandler.ConfirmarRecuperacion)
 
 			// Rutas del flujo 2FA (requieren JWT temporal pre-auth)
 			twoFA := auth.Group("/2fa", middleware.RequirePreAuth(authService))
 			{
 				twoFA.GET("/qr", authHandler.ObtenerQR)
-				twoFA.POST("/verify", authHandler.VerificarTotp)
+				twoFA.POST("/verify", middleware.LimitarVerificacion2FA(kvStore), authHandler.VerificarTotp)
 			}
 		}
 

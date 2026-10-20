@@ -23,6 +23,14 @@ type Mensaje struct {
 	Contenido string // payload tal como se publicó (ver SerializarValor)
 }
 
+// RegistroVentana es el resultado atómico de intentar registrar un evento en
+// una ventana deslizante. Permitido=false significa que la ventana ya alcanzó
+// el límite y el evento no fue agregado.
+type RegistroVentana struct {
+	Permitido bool
+	Cantidad  int64
+}
+
 // KeyValueStore es el almacén efímero compartido por todo el backend: claves
 // con TTL automático y mensajería Pub/Sub. Se crea una sola vez al arrancar la
 // API (cmd/api/main.go) y se inyecta donde haga falta.
@@ -32,6 +40,10 @@ type Mensaje struct {
 //   - internal/adapters/secondary/memoria: respaldo en la memoria del proceso
 //     (modo degradado cuando Redis no está disponible; ver docs/redis.md).
 type KeyValueStore interface {
+	// EsDistribuido indica si las operaciones coordinan todas las réplicas de la
+	// API. Los límites de autenticación fallan en modo seguro cuando es false.
+	EsDistribuido() bool
+
 	// Set guarda value en key. ttl = 0 significa sin vencimiento.
 	// value se guarda como texto según SerializarValor.
 	Set(ctx context.Context, key string, value interface{}, ttl time.Duration) error
@@ -46,6 +58,14 @@ type KeyValueStore interface {
 
 	// Del borra las claves indicadas (las inexistentes se ignoran).
 	Del(ctx context.Context, keys ...string) error
+
+	// RegistrarEnVentana elimina eventos anteriores a ahora-ventana, cuenta los
+	// restantes y agrega member solo si todavía no se alcanzó limite. La operación
+	// completa debe ser atómica entre procesos.
+	RegistrarEnVentana(ctx context.Context, key, member string, ahora time.Time, ventana time.Duration, limite int64) (RegistroVentana, error)
+
+	// EliminarDeVentana revierte una reserva concreta de RegistrarEnVentana.
+	EliminarDeVentana(ctx context.Context, key, member string) error
 
 	// AcquireLock toma un lock distribuido identificado por key. Espera hasta
 	// adquirirlo, vencer el contexto o producirse un error del almacén. El TTL

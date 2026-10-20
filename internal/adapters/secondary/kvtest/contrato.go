@@ -6,6 +6,7 @@ package kvtest
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -164,6 +165,56 @@ func ProbarContrato(t *testing.T, nuevo Fabrica) {
 		}
 		if err := store.Del(ctx); err != nil {
 			t.Errorf("Del sin claves no debe fallar: %v", err)
+		}
+	})
+
+	t.Run("Sliding window limita, permite revertir y descarta eventos viejos", func(t *testing.T) {
+		store, _ := nuevo(t)
+		base := time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC)
+		for i := 1; i <= 3; i++ {
+			registro, err := store.RegistrarEnVentana(ctx, "ratelimit:test", fmt.Sprintf("intento-%d", i), base.Add(time.Duration(i)*time.Second), time.Minute, 3)
+			if err != nil || !registro.Permitido || registro.Cantidad != int64(i) {
+				t.Fatalf("registro %d inesperado: %+v, %v", i, registro, err)
+			}
+		}
+		bloqueado, err := store.RegistrarEnVentana(ctx, "ratelimit:test", "intento-4", base.Add(4*time.Second), time.Minute, 3)
+		if err != nil || bloqueado.Permitido || bloqueado.Cantidad != 3 {
+			t.Fatalf("el cuarto evento debía bloquearse: %+v, %v", bloqueado, err)
+		}
+		if err := store.EliminarDeVentana(ctx, "ratelimit:test", "intento-2"); err != nil {
+			t.Fatal(err)
+		}
+		permitido, err := store.RegistrarEnVentana(ctx, "ratelimit:test", "intento-5", base.Add(5*time.Second), time.Minute, 3)
+		if err != nil || !permitido.Permitido || permitido.Cantidad != 3 {
+			t.Fatalf("después de revertir debía permitir: %+v, %v", permitido, err)
+		}
+		trasVentana, err := store.RegistrarEnVentana(ctx, "ratelimit:test", "intento-6", base.Add(2*time.Minute), time.Minute, 3)
+		if err != nil || !trasVentana.Permitido || trasVentana.Cantidad != 1 {
+			t.Fatalf("los eventos viejos debían descartarse: %+v, %v", trasVentana, err)
+		}
+	})
+
+	t.Run("Sliding window es atómica bajo concurrencia", func(t *testing.T) {
+		store, _ := nuevo(t)
+		base := time.Now()
+		var wg sync.WaitGroup
+		var mu sync.Mutex
+		permitidos := 0
+		for i := 0; i < 20; i++ {
+			wg.Add(1)
+			go func(i int) {
+				defer wg.Done()
+				registro, err := store.RegistrarEnVentana(ctx, "ratelimit:concurrente", fmt.Sprintf("m-%d", i), base, time.Minute, 5)
+				if err == nil && registro.Permitido {
+					mu.Lock()
+					permitidos++
+					mu.Unlock()
+				}
+			}(i)
+		}
+		wg.Wait()
+		if permitidos != 5 {
+			t.Fatalf("debían permitirse exactamente 5 registros, se permitieron %d", permitidos)
 		}
 	})
 

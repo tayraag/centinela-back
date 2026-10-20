@@ -58,6 +58,8 @@ type KVStore struct {
 
 var _ ports.KeyValueStore = (*KVStore)(nil)
 
+func (s *KVStore) EsDistribuido() bool { return true }
+
 // Nuevo crea el cliente sin conectarse todavía (go-redis conecta al primer comando).
 func Nuevo(cfg Config) *KVStore {
 	return &KVStore{client: goredis.NewClient(&goredis.Options{
@@ -150,6 +152,42 @@ func (s *KVStore) Del(ctx context.Context, keys ...string) error {
 	}
 	if err := s.client.Del(ctx, keys...).Err(); err != nil {
 		return fmt.Errorf("redis DEL: %w", err)
+	}
+	return nil
+}
+
+// RegistrarEnVentana implementa un sliding window exacto con un script Lua para
+// que ZREMRANGEBYSCORE, ZCARD, ZADD y EXPIRE sean una sola operación atómica.
+func (s *KVStore) RegistrarEnVentana(ctx context.Context, key, member string, ahora time.Time, ventana time.Duration, limite int64) (ports.RegistroVentana, error) {
+	if ventana <= 0 || limite <= 0 || member == "" {
+		return ports.RegistroVentana{}, errors.New("parámetros inválidos para la ventana de tasa")
+	}
+	const script = `
+redis.call("ZREMRANGEBYSCORE", KEYS[1], "-inf", ARGV[1])
+local cantidad = redis.call("ZCARD", KEYS[1])
+if cantidad >= tonumber(ARGV[3]) then
+  redis.call("EXPIRE", KEYS[1], ARGV[4])
+  return {0, cantidad}
+end
+redis.call("ZADD", KEYS[1], ARGV[2], ARGV[5])
+redis.call("EXPIRE", KEYS[1], ARGV[4])
+return {1, cantidad + 1}
+`
+	desde := ahora.Add(-ventana).UnixMilli()
+	ttlSegundos := int64((ventana + time.Second - 1) / time.Second)
+	resultado, err := s.client.Eval(ctx, script, []string{key}, desde, ahora.UnixMilli(), limite, ttlSegundos, member).Int64Slice()
+	if err != nil {
+		return ports.RegistroVentana{}, fmt.Errorf("redis sliding window %s: %w", key, err)
+	}
+	if len(resultado) != 2 {
+		return ports.RegistroVentana{}, fmt.Errorf("redis sliding window %s devolvió un resultado inválido", key)
+	}
+	return ports.RegistroVentana{Permitido: resultado[0] == 1, Cantidad: resultado[1]}, nil
+}
+
+func (s *KVStore) EliminarDeVentana(ctx context.Context, key, member string) error {
+	if err := s.client.ZRem(ctx, key, member).Err(); err != nil {
+		return fmt.Errorf("redis ZREM %s: %w", key, err)
 	}
 	return nil
 }

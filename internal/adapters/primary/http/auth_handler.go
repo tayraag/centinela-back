@@ -62,6 +62,8 @@ type LoginRequest struct {
 // @Failure      400 {object} ErrorResponse "Formato de petición inválido"
 // @Failure      401 {object} ErrorResponse "AUTH_FAILED — credenciales incorrectas o cuenta eliminada"
 // @Failure      403 {object} ErrorResponse "USER_INACTIVE — credenciales correctas pero la cuenta está suspendida"
+// @Failure      429 {object} ErrorResponse "TOO_MANY_ATTEMPTS — máximo 5 intentos fallidos por IP y correo cada 15 minutos"
+// @Failure      503 {object} ErrorResponse "RATE_LIMIT_UNAVAILABLE — Redis no permite aplicar el límite distribuido"
 // @Router       /auth/login [post]
 func (h *AuthHandler) Login(c *gin.Context) {
 	var req LoginRequest
@@ -172,8 +174,9 @@ type verificarTotpRequest struct {
 // @Param        body body verificarTotpRequest true "Código TOTP de 6 dígitos"
 // @Success      200 {object} ports.TokenResult
 // @Failure      400 {object} ErrorResponse "Código inválido (no tiene 6 dígitos)"
-// @Failure      401 {object} ErrorResponse "TOTP_FAILED — código incorrecto o ya utilizado (anti-replay), o la cuenta fue eliminada durante el login"
+// @Failure      401 {object} ErrorResponse "TOTP_FAILED — código incorrecto o ya utilizado; TOKEN_REVOKED — sesión temporal revocada tras 3 fallos"
 // @Failure      403 {object} ErrorResponse "USER_INACTIVE — la cuenta fue suspendida durante el login"
+// @Failure      503 {object} ErrorResponse "RATE_LIMIT_UNAVAILABLE — Redis no permite aplicar el límite distribuido"
 // @Router       /auth/2fa/verify [post]
 func (h *AuthHandler) VerificarTotp(c *gin.Context) {
 	var req verificarTotpRequest
@@ -191,6 +194,10 @@ func (h *AuthHandler) VerificarTotp(c *gin.Context) {
 
 	result, err := h.service.VerificarTotp(c.Request.Context(), jtiStr, req.Codigo)
 	if err != nil {
+		if middleware.UltimoIntento2FA(c) {
+			SendError(c, http.StatusUnauthorized, "TOKEN_REVOKED", "La sesión temporal fue revocada por demasiados intentos fallidos.")
+			return
+		}
 		responderErrorAutenticacion(c, err, "TOTP_FAILED")
 		return
 	}
@@ -253,6 +260,8 @@ type solicitarRecuperacionRequest struct {
 // @Param        body body solicitarRecuperacionRequest true "Email del usuario"
 // @Success      200 {object} map[string]string
 // @Failure      400 {object} ErrorResponse "Email inválido"
+// @Failure      429 {object} ErrorResponse "TOO_MANY_ATTEMPTS — máximo 3 solicitudes por IP o correo cada 60 minutos"
+// @Failure      503 {object} ErrorResponse "RATE_LIMIT_UNAVAILABLE — Redis no permite aplicar el límite distribuido"
 // @Router       /auth/password/forgot [post]
 func (h *AuthHandler) SolicitarRecuperacion(c *gin.Context) {
 	var req solicitarRecuperacionRequest

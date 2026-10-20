@@ -43,6 +43,7 @@ type suscripcion struct {
 type KVStore struct {
 	mu             sync.Mutex
 	datos          map[string]entrada
+	ventanas       map[string]map[string]time.Time
 	ultimaLimpieza time.Time
 	ahora          func() time.Time
 
@@ -52,12 +53,14 @@ type KVStore struct {
 
 var _ ports.KeyValueStore = (*KVStore)(nil)
 
+func (s *KVStore) EsDistribuido() bool { return false }
+
 // Nuevo crea el almacén vacío.
 func Nuevo() *KVStore { return NuevoConReloj(time.Now) }
 
 // NuevoConReloj permite inyectar el reloj (para probar los TTL en tests).
 func NuevoConReloj(ahora func() time.Time) *KVStore {
-	return &KVStore{datos: map[string]entrada{}, subs: map[string]map[*suscripcion]struct{}{}, ahora: ahora}
+	return &KVStore{datos: map[string]entrada{}, ventanas: map[string]map[string]time.Time{}, subs: map[string]map[*suscripcion]struct{}{}, ahora: ahora}
 }
 
 func (s *KVStore) Ping(context.Context) error { return nil }
@@ -104,6 +107,43 @@ func (s *KVStore) Del(_ context.Context, keys ...string) error {
 	defer s.mu.Unlock()
 	for _, k := range keys {
 		delete(s.datos, k)
+		delete(s.ventanas, k)
+	}
+	return nil
+}
+
+func (s *KVStore) RegistrarEnVentana(_ context.Context, key, member string, ahora time.Time, ventana time.Duration, limite int64) (ports.RegistroVentana, error) {
+	if ventana <= 0 || limite <= 0 || member == "" {
+		return ports.RegistroVentana{}, errors.New("parámetros inválidos para la ventana de tasa")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	eventos := s.ventanas[key]
+	if eventos == nil {
+		eventos = map[string]time.Time{}
+		s.ventanas[key] = eventos
+	}
+	desde := ahora.Add(-ventana)
+	for id, instante := range eventos {
+		if !instante.After(desde) {
+			delete(eventos, id)
+		}
+	}
+	if int64(len(eventos)) >= limite {
+		return ports.RegistroVentana{Permitido: false, Cantidad: int64(len(eventos))}, nil
+	}
+	eventos[member] = ahora
+	return ports.RegistroVentana{Permitido: true, Cantidad: int64(len(eventos))}, nil
+}
+
+func (s *KVStore) EliminarDeVentana(_ context.Context, key, member string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if eventos := s.ventanas[key]; eventos != nil {
+		delete(eventos, member)
+		if len(eventos) == 0 {
+			delete(s.ventanas, key)
+		}
 	}
 	return nil
 }
