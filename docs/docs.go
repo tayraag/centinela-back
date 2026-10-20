@@ -1215,13 +1215,19 @@ const docTemplate = `{
                         }
                     },
                     "401": {
-                        "description": "TOTP_FAILED — código incorrecto o ya utilizado (anti-replay), o la cuenta fue eliminada durante el login",
+                        "description": "TOTP_FAILED — código incorrecto o ya utilizado; TOKEN_REVOKED — sesión temporal revocada tras 3 fallos",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
                     },
                     "403": {
                         "description": "USER_INACTIVE — la cuenta fue suspendida durante el login",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "RATE_LIMIT_UNAVAILABLE — Redis no permite aplicar el límite distribuido",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -1274,6 +1280,18 @@ const docTemplate = `{
                     },
                     "403": {
                         "description": "USER_INACTIVE — credenciales correctas pero la cuenta está suspendida",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "TOO_MANY_ATTEMPTS — máximo 5 intentos fallidos por IP y correo cada 15 minutos",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "RATE_LIMIT_UNAVAILABLE — Redis no permite aplicar el límite distribuido",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -1340,6 +1358,18 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Email inválido",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "TOO_MANY_ATTEMPTS — máximo 3 solicitudes por IP o correo cada 60 minutos",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "RATE_LIMIT_UNAVAILABLE — Redis no permite aplicar el límite distribuido",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }

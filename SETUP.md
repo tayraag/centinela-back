@@ -138,7 +138,7 @@ TTL auth:pre2fa:<jti>            # segundos que le quedan
 GET auth:session:<session_id>    # payload de la sesión
 ```
 
-> Si Redis no está levantado, la API arranca igual en **modo degradado** (almacén en memoria) y lo avisa con `[WARN] MODO DEGRADADO` en el log. Funciona igual, pero las sesiones se pierden al reiniciar la API. Detalle en [docs/redis.md](docs/redis.md).
+> Si Redis no está levantado, la API arranca en **modo degradado** (almacén en memoria) y lo avisa con `[WARN] MODO DEGRADADO`. Las rutas críticas de autenticación con rate limiting responden `503` hasta recuperar Redis; el resto de los datos efímeros se pierde al reiniciar. Detalle en [docs/redis.md](docs/redis.md).
 
 El script `scripts/init.sql` se ejecuta automáticamente al crear el container y habilita la extensión `pgcrypto` + la función `uuid_generate_v7()`.
 
@@ -434,6 +434,9 @@ curl -i -X POST http://localhost:8080/api/auth/login -H "Content-Type: applicati
 
 - **Código esperado**: `HTTP/1.1 401 Unauthorized`
 - **Log servidor**: `[AUTH] login failed | email=juan@empresa.com | reason=wrong_password`
+- Tras 5 fallos para la misma IP y correo, el sexto responde `429 TOO_MANY_ATTEMPTS` con `Retry-After: 900`.
+- Si hay un proxy inverso, agregá su IP o CIDR a `TRUSTED_PROXIES`; de lo contrario el backend ignora `X-Forwarded-For` para impedir que se falsee la IP del rate limit.
+- Si Redis no está disponible, las rutas con límites distribuidos responden `503 RATE_LIMIT_UNAVAILABLE`; no degradan a contadores locales que puedan divergir entre réplicas.
 
 ### Código TOTP incorrecto → 401
 
@@ -443,6 +446,7 @@ curl -i -X POST http://localhost:8080/api/auth/2fa/verify -H "Authorization: Bea
 
 - **Código esperado**: `HTTP/1.1 401 Unauthorized`
 - **Log servidor**: `[2FA] totp invalid | user=juan@empresa.com`
+- El tercer fallo elimina la sesión temporal y responde `401 TOKEN_REVOKED`; es necesario reiniciar el login.
 
 ---
 
@@ -521,14 +525,14 @@ centinela-back/
  
  | Método | Ruta                                  | Middleware                             | Descripción                                       |
  | ------ | ------------------------------------- | -------------------------------------- | ------------------------------------------------- |
- | POST   | `/api/auth/login`                     | —                                      | Login email+contraseña → JWT temporal (5 min)     |
+ | POST   | `/api/auth/login`                     | `LimitarLogin`                         | Login; máximo 5 fallos por IP/correo cada 15 min  |
  | POST   | `/api/auth/refresh`                   | —                                      | Rota la cookie `centinela_refresh` → nuevo access token |
  | POST   | `/api/auth/logout`                    | `RequireAuth`                          | Invalida la sesión activa y elimina la cookie     |
  | POST   | `/api/auth/ws-ticket`                 | `RequireAuth`                          | Ticket efímero (30 s) para canal WebSocket de telemetría |
- | POST   | `/api/auth/password/forgot`           | —                                      | Solicitar código de recuperación de contraseña    |
+ | POST   | `/api/auth/password/forgot`           | `LimitarSolicitudRecuperacion`         | Solicitar código; máximo 3 por IP y correo cada hora |
  | POST   | `/api/auth/password/reset`            | —                                      | Confirmar código y resetear contraseña            |
  | GET    | `/api/auth/2fa/qr`                    | `RequirePreAuth`                       | Generar QR para vincular TOTP                     |
- | POST   | `/api/auth/2fa/verify`                | `RequirePreAuth`                       | Validar código TOTP → access token + cookie refresh |
+ | POST   | `/api/auth/2fa/verify`                | `RequirePreAuth` + `LimitarVerificacion2FA` | Validar TOTP; el tercer fallo revoca el pre-auth |
  | GET    | `/api/roles`                          | `RequireAuth` + `RequireRole("ADMIN")` | Lista roles disponibles (ADMIN, OPERATOR)         |
  | GET    | `/api/admin/users`                    | `RequireAuth` + `RequireRole("ADMIN")` | Lista usuarios + summary (?rol, ?activo, ?buscar) |
  | POST   | `/api/admin/users`                    | `RequireAuth` + `RequireRole("ADMIN")` | Crear usuario → devuelve contrasenaTemp           |

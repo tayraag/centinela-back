@@ -17,6 +17,8 @@ Definido en `internal/core/ports/key_value_store.go`.
 | `Get(ctx, key)` | Devuelve el valor, o `ports.ErrClaveNoEncontrada` si no existe o venció. |
 | `GetDel(ctx, key)` | Lee y borra **en una sola operación atómica**. Si dos llamadas compiten, solo una obtiene el valor. Sirve para tokens de un solo uso. |
 | `Del(ctx, keys...)` | Borra claves; las inexistentes se ignoran. |
+| `RegistrarEnVentana(ctx, key, member, ahora, ventana, limite)` | Registra atómicamente un evento en una ventana deslizante y avisa si ya alcanzó el límite. En Redis usa `ZREMRANGEBYSCORE`, `ZCARD`, `ZADD` y `EXPIRE` dentro de Lua. |
+| `EliminarDeVentana(ctx, key, member)` | Revierte una reserva de la ventana; se usa cuando un login no resultó fallido. |
 | `Publish(ctx, channel, message)` | Envía `message` a todos los suscriptores de `channel`. |
 | `Subscribe(ctx, channel)` | Devuelve `(<-chan *ports.Mensaje, cancelar, error)`. Cuando vuelve, la suscripción ya está activa; `cancelar()` cierra el canal. |
 | `Ping(ctx)` | Comprueba que el almacén responda. |
@@ -62,6 +64,10 @@ miServicio := services.NewMiServicio(kvStore)
 | ----- | ----- | --- | ------------ |
 | `auth:pre2fa:<jti>` | `usuario_id` | 5 min | Login → 2FA. Se consume con `GetDel` al verificar el código. |
 | `auth:session:<session_id>` | JSON: `sesion_id`, `usuario_id`, `jti_access`, `jti_refresh`, `fecha_expiracion` | vida del refresh (30 días) | Réplica de `sesiones_activas` para validar cada request. PostgreSQL sigue siendo la fuente de verdad. |
+| `ratelimit:login:<sha256(IP,email)>` | Sorted set de intentos fallidos | 15 min | Máximo 5 fallos por tupla IP/correo; el sexto responde `429` con `Retry-After: 900`. |
+| `ratelimit:2fa:<jti>` | Sorted set de verificaciones fallidas | 5 min | Al tercer fallo se elimina también `auth:pre2fa:<jti>` y el token responde `TOKEN_REVOKED`. |
+| `ratelimit:forgot:ip:<sha256(IP)>` | Sorted set de solicitudes | 60 min | Máximo 3 solicitudes de recuperación por IP. |
+| `ratelimit:forgot:email:<sha256(email)>` | Sorted set de solicitudes | 60 min | Máximo 3 solicitudes por correo destino. |
 | `node:status:current` | JSON del estado normalizado del nodo | 10 s | Caché de `GET /api/node/status`: mientras existe no se consulta Proxmox. |
 | `node:status:last_known` | el mismo JSON | **sin TTL** | Última lectura buena del nodo: se devuelve con `stale: true` si Proxmox no responde. Ver `docs/contrato-etapa1.md`. |
 | `lock:instance:{vmid}:operation` | UUID del request dueño del lock | 60 s | `RequireInstanceIdle` (`ExclusionInstancias`): una sola operación mutante a la vez por instancia. Se toma con `SET NX` antes de despachar y se libera (Lua, comparando el UUID) cuando la tarea ya quedó `RUNNING` en `tareas_asincronas`. Si está tomado, `409 INSTANCE_BUSY`. Otro proceso largo (snapshot, migración) puede tomarlo para bloquear la instancia. |
@@ -98,15 +104,16 @@ Al levantar la API se ejecuta `Ping`:
 **Decisión:** ante una caída, la API no aborta. Si abortara, un entorno sin Redis, como el servidor de prueba mientras infra no lo instale, se quedaría sin login.
 
 **Qué implica el modo degradado:**
-- ✅ Login, 2FA, renovación, logout y revocación de sesiones **funcionan igual**, con los mismos TTL y la misma atomicidad de `GetDel`.
+- ✅ Renovación, logout y revocación de sesiones siguen funcionando dentro del proceso, con los mismos TTL y operaciones atómicas.
+- 🛑 Las rutas protegidas por rate limiting (`login`, verificación 2FA y solicitud de recuperación) responden `503 RATE_LIMIT_UNAVAILABLE`. No se usa el contador local como sustituto porque, con varias réplicas, permitiría superar los límites distribuidos.
 - ✅ Pub/Sub funciona **dentro del mismo proceso**: los suscriptores de esta instancia reciben lo que esta instancia publica.
 - ⚠️ **Al reiniciar la API se pierde todo**: los usuarios tienen que volver a loguearse. Las sesiones siguen en PostgreSQL, pero el token temporal pre-2FA se pierde.
-- ⚠️ **No se comparte entre instancias.** Con más de una instancia de la API, los mensajes Pub/Sub y los tokens pre-2FA de una no los ve la otra. Para producción con varias instancias, Redis es obligatorio.
+- ⚠️ **No se comparte entre instancias.** Con más de una instancia de la API, los mensajes Pub/Sub y tokens pre-2FA de una no los ve la otra. Para producción con varias instancias y para habilitar las rutas críticas de autenticación, Redis es obligatorio.
 - ⚠️ Si Redis **vuelve** después, la API no se reconecta sola: hay que reiniciarla.
 
 **Si Redis se cae con la API ya andando** (arrancó conectada):
 - Las sesiones ya abiertas **siguen funcionando**: la validación cae a PostgreSQL.
-- Los **logins nuevos fallan** con "no se pudo iniciar la sesión, intentá nuevamente", porque el pre-2FA vive solo en Redis.
+- Login, verificación 2FA y solicitud de recuperación responden `503 RATE_LIMIT_UNAVAILABLE` mientras no se pueda aplicar el límite distribuido.
 - Cuando Redis vuelve, todo se normaliza solo, gracias a los reintentos del cliente.
 
 ## Laboratorio local
@@ -129,5 +136,5 @@ El puerto se publica solo en `127.0.0.1`: no queda expuesto en la red ni en el W
 go test ./internal/adapters/secondary/redis/ ./internal/adapters/secondary/memoria/ -v
 ```
 
-- `internal/adapters/secondary/kvtest/contrato.go`: la **misma batería** para los dos adaptadores. Cubre `Set`, `Get`, `GetDel` (incluida la atomicidad con llamadas concurrentes), `Del`, TTL, serialización de valores, `Publish` y `Subscribe` (varios suscriptores y cancelación) y `Ping`.
+- `internal/adapters/secondary/kvtest/contrato.go`: la **misma batería** para los dos adaptadores. Cubre `Set`, `Get`, `GetDel`, ventanas deslizantes (incluida su atomicidad concurrente), `Del`, TTL, serialización, `Publish`, `Subscribe` y `Ping`.
 - El adaptador de Redis se prueba con **miniredis** (un Redis en memoria que habla el mismo protocolo), así que no necesita Docker. Además hay tests de conexión: contraseña, base, reintentos y recuperación.
