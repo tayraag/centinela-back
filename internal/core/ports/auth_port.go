@@ -38,6 +38,11 @@ type TokenResult struct {
 // Puerto: Repositorio de Autenticación
 // ==========================================
 
+// PrepararNuevaContrasena se ejecuta después de validar el código de recuperación
+// y mientras la fila del usuario permanece bloqueada. Recibe el hash vigente y
+// devuelve el nuevo hash que debe persistirse.
+type PrepararNuevaContrasena func(hashActual string) (nuevoHash string, err error)
+
 // AuthRepository define el contrato de persistencia para el dominio de autenticación.
 // Las implementaciones concretas viven en los adaptadores secundarios (ej: postgres).
 type AuthRepository interface {
@@ -88,6 +93,11 @@ type AuthRepository interface {
 
 	// ActualizarContrasenaYLimpiarCodigo cambia la contraseña y elimina el código temporal usado.
 	ActualizarContrasenaYLimpiarCodigo(ctx context.Context, usuarioID uuid.UUID, hash string) error
+
+	// ConfirmarRecuperacionConBloqueo valida el código y actualiza la contraseña
+	// dentro de una transacción que bloquea la fila del usuario. Esto impide que
+	// solicitudes concurrentes eludan el máximo de intentos fallidos.
+	ConfirmarRecuperacionConBloqueo(ctx context.Context, email, codigo string, ahora time.Time, prepararHash PrepararNuevaContrasena) (uuid.UUID, error)
 }
 
 // ErrSesionRevocada indica que la sesión no existe, fue cerrada o revocada, o venció.
@@ -97,6 +107,12 @@ var ErrSesionRevocada = errors.New("sesión revocada o expirada")
 // (activo = false y no eliminada). Se informa solo después de validar la
 // contraseña, para no revelar el estado de cuentas ajenas.
 var ErrCuentaSuspendida = errors.New("la cuenta está suspendida, contacte al administrador")
+
+var (
+	ErrCodigoRecuperacionInvalido   = errors.New("código de recuperación inválido")
+	ErrCodigoRecuperacionExpirado   = errors.New("código de recuperación expirado")
+	ErrIntentosRecuperacionAgotados = errors.New("demasiados intentos de recuperación")
+)
 
 // VerificadorSesion es lo que necesitan los middlewares de autenticación para
 // saber si un token sigue perteneciendo a una sesión viva.

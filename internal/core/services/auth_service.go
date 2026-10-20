@@ -626,54 +626,39 @@ func (s *authServiceImpl) SolicitarRecuperacionContrasena(ctx context.Context, e
 // ConfirmarRecuperacionContrasena valida que el código temporal sea correcto y no esté expirado,
 // actualiza la contraseña y limpia el código. Invalida también todas las sesiones previas.
 func (s *authServiceImpl) ConfirmarRecuperacionContrasena(ctx context.Context, email, codigo, nuevaContrasena string) error {
-	usuario, err := s.repo.BuscarUsuarioPorEmail(ctx, email)
-	if err != nil {
-		return fmt.Errorf("código inválido o expirado")
-	}
-
-	if usuario.CodigoRecuperacion == nil {
-		return fmt.Errorf("código inválido o expirado")
-	}
-
-	if *usuario.CodigoRecuperacion != codigo {
-		intentos := usuario.IntentosRecuperacion + 1
-		if intentos >= 3 {
-			// Invalidar el código por demasiados intentos (fuerza bruta)
-			_ = s.repo.ActualizarCodigoRecuperacion(ctx, usuario.ID, nil, nil)
-			return fmt.Errorf("demasiados intentos fallidos, el código ha sido invalidado")
-		}
-		// Sumar el intento fallido
-		_ = s.repo.ActualizarIntentosRecuperacion(ctx, usuario.ID, intentos)
-		return fmt.Errorf("código inválido")
-	}
-
-	if usuario.ExpiracionCodigo == nil || time.Now().After(*usuario.ExpiracionCodigo) {
-		return fmt.Errorf("el código ha expirado")
-	}
-
 	// Validar complejidad de la nueva contraseña
 	if err := crypto.ValidarComplejidadContrasena(nuevaContrasena); err != nil {
 		return err
 	}
 
-	// Validar que la nueva contraseña difiera de la anterior
-	if crypto.VerificarContrasena(usuario.ContrasenaHash, nuevaContrasena) {
-		return fmt.Errorf("la nueva contraseña no puede ser igual a la actual")
-	}
-
-	hash, err := crypto.HashContrasena(nuevaContrasena)
+	errContrasenaSinCambios := errors.New("la nueva contraseña no puede ser igual a la actual")
+	usuarioID, err := s.repo.ConfirmarRecuperacionConBloqueo(ctx, email, codigo, time.Now(), func(hashActual string) (string, error) {
+		if crypto.VerificarContrasena(hashActual, nuevaContrasena) {
+			return "", errContrasenaSinCambios
+		}
+		hash, hashErr := crypto.HashContrasena(nuevaContrasena)
+		if hashErr != nil {
+			return "", fmt.Errorf("error al procesar la nueva contraseña: %w", hashErr)
+		}
+		return hash, nil
+	})
 	if err != nil {
-		return fmt.Errorf("error al procesar la nueva contraseña: %w", err)
-	}
-
-	// Actualizar contraseña y limpiar el código
-	if err := s.repo.ActualizarContrasenaYLimpiarCodigo(ctx, usuario.ID, hash); err != nil {
+		switch {
+		case errors.Is(err, errContrasenaSinCambios):
+			return errContrasenaSinCambios
+		case errors.Is(err, ports.ErrIntentosRecuperacionAgotados):
+			return fmt.Errorf("demasiados intentos fallidos, el código ha sido invalidado")
+		case errors.Is(err, ports.ErrCodigoRecuperacionExpirado):
+			return fmt.Errorf("el código ha expirado")
+		case errors.Is(err, ports.ErrCodigoRecuperacionInvalido):
+			return fmt.Errorf("código inválido")
+		}
 		return fmt.Errorf("error al guardar la nueva contraseña: %w", err)
 	}
 
 	// Invalidar sesiones para forzar re-login con la nueva clave
-	if err := revocarSesionesDeUsuario(ctx, s.repo, s.sesiones, s.bus, usuario.ID); err != nil {
-		log.Printf("[AUTH] advertencia: error al invalidar sesiones tras recuperar contraseña %s: %v", usuario.ID, err)
+	if err := revocarSesionesDeUsuario(ctx, s.repo, s.sesiones, s.bus, usuarioID); err != nil {
+		log.Printf("[AUTH] advertencia: error al invalidar sesiones tras recuperar contraseña %s: %v", usuarioID, err)
 	}
 
 	log.Printf("[AUTH] contraseña recuperada exitosamente para %s", email)

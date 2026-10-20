@@ -136,6 +136,33 @@ func (r *repoSesiones) ActualizarIntentosRecuperacion(context.Context, uuid.UUID
 func (r *repoSesiones) ActualizarContrasenaYLimpiarCodigo(context.Context, uuid.UUID, string) error {
 	return nil
 }
+func (r *repoSesiones) ConfirmarRecuperacionConBloqueo(_ context.Context, email, codigo string, ahora time.Time, prepararHash ports.PrepararNuevaContrasena) (uuid.UUID, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.usuario == nil || email != r.usuario.EmailUsuario || r.usuario.CodigoRecuperacion == nil {
+		return uuid.Nil, ports.ErrCodigoRecuperacionInvalido
+	}
+	if *r.usuario.CodigoRecuperacion != codigo {
+		r.usuario.IntentosRecuperacion++
+		if r.usuario.IntentosRecuperacion >= 3 {
+			r.usuario.CodigoRecuperacion = nil
+			return uuid.Nil, ports.ErrIntentosRecuperacionAgotados
+		}
+		return uuid.Nil, ports.ErrCodigoRecuperacionInvalido
+	}
+	if r.usuario.ExpiracionCodigo == nil || ahora.After(*r.usuario.ExpiracionCodigo) {
+		return uuid.Nil, ports.ErrCodigoRecuperacionExpirado
+	}
+	hash, err := prepararHash(r.usuario.ContrasenaHash)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	r.usuario.ContrasenaHash = hash
+	r.usuario.CodigoRecuperacion = nil
+	r.usuario.ExpiracionCodigo = nil
+	r.usuario.IntentosRecuperacion = 0
+	return r.usuario.ID, nil
+}
 
 type auditoriaNula struct{ ports.AuditService }
 

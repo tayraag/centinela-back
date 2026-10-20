@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // AuthRepository implementa ports.AuthRepository usando GORM sobre PostgreSQL.
@@ -252,4 +253,81 @@ func (r *AuthRepository) ActualizarIntentosRecuperacion(ctx context.Context, usu
 		return fmt.Errorf("error al actualizar intentos de recuperación: %w", result.Error)
 	}
 	return nil
+}
+
+// ConfirmarRecuperacionConBloqueo serializa los intentos sobre una misma
+// cuenta mediante SELECT ... FOR UPDATE. Los errores de negocio se devuelven
+// después del commit para conservar el incremento o la invalidación del código.
+func (r *AuthRepository) ConfirmarRecuperacionConBloqueo(ctx context.Context, email, codigo string, ahora time.Time, prepararHash ports.PrepararNuevaContrasena) (uuid.UUID, error) {
+	var usuarioID uuid.UUID
+	var resultadoErr error
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var usuario domain.Usuario
+		result := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("lower(btrim(email_usuario)) = lower(btrim(?)) AND eliminado_en IS NULL", email).
+			First(&usuario)
+		if result.Error != nil {
+			if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+				resultadoErr = ports.ErrCodigoRecuperacionInvalido
+				return nil
+			}
+			return fmt.Errorf("error al bloquear usuario para recuperación: %w", result.Error)
+		}
+		usuarioID = usuario.ID
+
+		if usuario.CodigoRecuperacion == nil {
+			if usuario.IntentosRecuperacion >= 3 {
+				resultadoErr = ports.ErrIntentosRecuperacionAgotados
+			} else {
+				resultadoErr = ports.ErrCodigoRecuperacionInvalido
+			}
+			return nil
+		}
+		if usuario.IntentosRecuperacion >= 3 {
+			resultadoErr = ports.ErrIntentosRecuperacionAgotados
+			return tx.Model(&domain.Usuario{}).Where("id = ?", usuario.ID).Updates(map[string]interface{}{
+				"codigo_recuperacion": nil,
+				"expiracion_codigo":   nil,
+			}).Error
+		}
+
+		if *usuario.CodigoRecuperacion != codigo {
+			intentos := usuario.IntentosRecuperacion + 1
+			updates := map[string]interface{}{"intentos_recuperacion": intentos}
+			if intentos >= 3 {
+				updates["codigo_recuperacion"] = nil
+				updates["expiracion_codigo"] = nil
+				resultadoErr = ports.ErrIntentosRecuperacionAgotados
+			} else {
+				resultadoErr = ports.ErrCodigoRecuperacionInvalido
+			}
+			return tx.Model(&domain.Usuario{}).Where("id = ?", usuario.ID).Updates(updates).Error
+		}
+
+		if usuario.ExpiracionCodigo == nil || ahora.After(*usuario.ExpiracionCodigo) {
+			resultadoErr = ports.ErrCodigoRecuperacionExpirado
+			return tx.Model(&domain.Usuario{}).Where("id = ?", usuario.ID).Updates(map[string]interface{}{
+				"codigo_recuperacion": nil,
+				"expiracion_codigo":   nil,
+			}).Error
+		}
+
+		nuevoHash, err := prepararHash(usuario.ContrasenaHash)
+		if err != nil {
+			resultadoErr = err
+			return nil
+		}
+
+		return tx.Model(&domain.Usuario{}).Where("id = ?", usuario.ID).Updates(map[string]interface{}{
+			"codigo_recuperacion":   nil,
+			"expiracion_codigo":     nil,
+			"contrasena_hash":       nuevoHash,
+			"cambio_contrasena":     false,
+			"intentos_recuperacion": 0,
+		}).Error
+	})
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("error al confirmar recuperación de contraseña: %w", err)
+	}
+	return usuarioID, resultadoErr
 }
