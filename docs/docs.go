@@ -24,7 +24,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Valida la contraseña actual y aplica la nueva. Reglas de complejidad: entre 8 y 12 caracteres, al menos una mayúscula, un número y un carácter especial (!@#$%^\u0026*-_=+). Si la contraseña era temporal (` + "`" + `cambioContrasenaRequerido=true` + "`" + `), este cambio limpia ese flag y desbloquea el acceso al resto de la plataforma.",
+                "description": "Valida la contraseña actual y aplica la nueva. Reglas de complejidad: entre 8 y 128 caracteres, al menos una mayúscula, un número y un carácter especial (!@#$%^\u0026*-_=+). Si la contraseña era temporal (` + "`" + `cambioContrasenaRequerido=true` + "`" + `), este cambio limpia ese flag y desbloquea el acceso al resto de la plataforma.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1349,7 +1349,7 @@ const docTemplate = `{
         },
         "/auth/password/reset": {
             "post": {
-                "description": "Valida el código de 6 dígitos enviado por email y establece la nueva contraseña (8-12 chars, mayúscula, número, especial). Invalida el código tras el uso o tras 3 intentos fallidos. La nueva contraseña no puede coincidir con la anterior.",
+                "description": "Valida el código de 6 dígitos enviado por email y establece la nueva contraseña (8–128 caracteres, mayúscula, número, especial). Invalida el código tras el uso o tras 3 intentos fallidos. La nueva contraseña no puede coincidir con la anterior.",
                 "consumes": [
                     "application/json"
                 ],
@@ -3069,7 +3069,9 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "password": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 128,
+                    "minLength": 8
                 }
             }
         },
@@ -3538,7 +3540,7 @@ const docTemplate = `{
                 },
                 "nuevaContrasena": {
                     "type": "string",
-                    "maxLength": 12,
+                    "maxLength": 128,
                     "minLength": 8
                 }
             }
@@ -3700,7 +3702,7 @@ const docTemplate = `{
                 },
                 "contrasenaNueva": {
                     "type": "string",
-                    "maxLength": 12,
+                    "maxLength": 128,
                     "minLength": 8
                 }
             }

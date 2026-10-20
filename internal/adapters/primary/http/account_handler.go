@@ -92,7 +92,7 @@ func (h *AccountHandler) ActualizarPerfil(c *gin.Context) {
 // CambiarContrasena valida la contraseña actual y aplica la nueva.
 //
 // @Summary      Cambiar mi contraseña
-// @Description  Valida la contraseña actual y aplica la nueva. Reglas de complejidad: entre 8 y 12 caracteres, al menos una mayúscula, un número y un carácter especial (!@#$%^&*-_=+). Si la contraseña era temporal (`cambioContrasenaRequerido=true`), este cambio limpia ese flag y desbloquea el acceso al resto de la plataforma.
+// @Description  Valida la contraseña actual y aplica la nueva. Reglas de complejidad: entre 8 y 128 caracteres, al menos una mayúscula, un número y un carácter especial (!@#$%^&*-_=+). Si la contraseña era temporal (`cambioContrasenaRequerido=true`), este cambio limpia ese flag y desbloquea el acceso al resto de la plataforma.
 // @Tags         Mi cuenta
 // @Accept       json
 // @Produce      json
@@ -106,7 +106,7 @@ func (h *AccountHandler) ActualizarPerfil(c *gin.Context) {
 func (h *AccountHandler) CambiarContrasena(c *gin.Context) {
 	var input ports.CambiarContrasenaInput
 	if err := c.ShouldBindJSON(&input); err != nil {
-		SendError(c, http.StatusBadRequest, "INVALID_REQUEST", "Se requieren contrasenaActual y contrasenaNueva (entre 8 y 12 caracteres, con mayúscula, número y carácter especial).")
+		SendError(c, http.StatusBadRequest, "INVALID_REQUEST", "Se requieren contrasenaActual y contrasenaNueva (entre 8 y 128 caracteres, con mayúscula, número y carácter especial).")
 		return
 	}
 

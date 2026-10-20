@@ -32,10 +32,10 @@ func setRefreshCookie(c *gin.Context, token string, maxAge int) {
 	if os.Getenv("COOKIE_SECURE") == "false" {
 		secure = false
 	}
-	
+
 	// Previene envíos cross-site (protección CSRF combinada con XSS protection del HttpOnly)
 	c.SetSameSite(http.SameSiteStrictMode)
-	
+
 	// c.SetCookie(name, value, maxAge, path, domain, secure, httpOnly)
 	c.SetCookie("centinela_refresh", token, maxAge, "/api/auth", "", secure, true)
 }
@@ -47,7 +47,7 @@ func setRefreshCookie(c *gin.Context, token string, maxAge int) {
 // loginRequest define el body esperado para el endpoint de login.
 type LoginRequest struct {
 	Email      string `json:"email" binding:"required,email"`
-	Contrasena string `json:"password" binding:"required"`
+	Contrasena string `json:"password" binding:"required,min=8,max=128"`
 }
 
 // Login valida credenciales de email+contraseña y retorna un JWT temporal pre-2FA.
@@ -277,13 +277,13 @@ func (h *AuthHandler) SolicitarRecuperacion(c *gin.Context) {
 type confirmarRecuperacionRequest struct {
 	Email           string `json:"email" binding:"required,email"`
 	Codigo          string `json:"codigo" binding:"required,len=6"`
-	NuevaContrasena string `json:"nuevaContrasena" binding:"required,min=8,max=12"`
+	NuevaContrasena string `json:"nuevaContrasena" binding:"required,min=8,max=128"`
 }
 
 // ConfirmarRecuperacion valida el código de recuperación y establece la nueva contraseña.
 //
 // @Summary      Confirmar recuperación de contraseña
-// @Description  Valida el código de 6 dígitos enviado por email y establece la nueva contraseña (8-12 chars, mayúscula, número, especial). Invalida el código tras el uso o tras 3 intentos fallidos. La nueva contraseña no puede coincidir con la anterior.
+// @Description  Valida el código de 6 dígitos enviado por email y establece la nueva contraseña (8–128 caracteres, mayúscula, número, especial). Invalida el código tras el uso o tras 3 intentos fallidos. La nueva contraseña no puede coincidir con la anterior.
 // @Tags         Autenticación
 // @Accept       json
 // @Produce      json
@@ -372,4 +372,3 @@ func (h *AuthHandler) EmitirWsTicket(c *gin.Context) {
 		ExpiresIn: 30,
 	})
 }
-

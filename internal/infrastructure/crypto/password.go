@@ -2,29 +2,60 @@ package crypto
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"fmt"
 	"math/big"
+	"strings"
+	"unicode/utf8"
 
 	"golang.org/x/crypto/bcrypt"
 )
 
 const bcryptCost = 12
 
-// HashContrasena genera un hash bcrypt de la contraseña en texto plano.
-// Usa un cost de 12 para un balance adecuado entre seguridad y rendimiento.
+// Las contraseñas largas usan un formato explícito para evitar el límite de
+// 72 bytes de bcrypt sin truncar ni alterar los hashes existentes.
+const prefijoBcryptSHA256 = "$centinela-bcrypt-sha256$v1$"
+
+func entradaContrasenaLarga(raw string) []byte {
+	// Separación de dominio: este digest no coincide con un SHA-256 genérico.
+	digest := sha256.Sum256([]byte("centinela:password:v1:" + raw))
+	return []byte(base64.StdEncoding.EncodeToString(digest[:]))
+}
+
+// HashContrasena usa bcrypt con cost 12 y admite hasta 128 caracteres.
 func HashContrasena(raw string) (string, error) {
-	hash, err := bcrypt.GenerateFromPassword([]byte(raw), bcryptCost)
+	if utf8.RuneCountInString(raw) > 128 {
+		return "", fmt.Errorf("la contraseña no puede superar los 128 caracteres")
+	}
+	entrada := []byte(raw)
+	prefijo := ""
+	if len(entrada) > 72 {
+		entrada = entradaContrasenaLarga(raw)
+		prefijo = prefijoBcryptSHA256
+	}
+	hash, err := bcrypt.GenerateFromPassword(entrada, bcryptCost)
 	if err != nil {
 		return "", fmt.Errorf("error al hashear contraseña: %w", err)
 	}
-	return string(hash), nil
+	return prefijo + string(hash), nil
 }
 
-// VerificarContrasena compara una contraseña en texto plano con su hash bcrypt.
-// Retorna true si coinciden, false en caso contrario.
+// VerificarContrasena admite hashes existentes y el formato de claves largas.
 func VerificarContrasena(hash, raw string) bool {
-	err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(raw))
-	return err == nil
+	if utf8.RuneCountInString(raw) > 128 {
+		return false
+	}
+	entrada := []byte(raw)
+	if strings.HasPrefix(hash, prefijoBcryptSHA256) {
+		hash = strings.TrimPrefix(hash, prefijoBcryptSHA256)
+		entrada = entradaContrasenaLarga(raw)
+	} else if len(entrada) > 72 {
+		// Impide que bcrypt acepte una clave por coincidir solo en sus primeros bytes.
+		return false
+	}
+	return bcrypt.CompareHashAndPassword([]byte(hash), entrada) == nil
 }
 
 // GenerarContrasenaTemp genera una contraseña aleatoria segura de 12 caracteres.
@@ -81,17 +112,17 @@ func GenerarContrasenaTemp() (string, error) {
 }
 
 // ValidarComplejidadContrasena verifica que la contraseña cumpla las reglas de seguridad:
-// - Entre 8 y 12 caracteres
+// - Entre 8 y 128 caracteres
 // - Al menos una letra mayúscula
 // - Al menos un dígito numérico
 // - Al menos un carácter especial (!@#$%^&*-_=+)
 // Retorna un error descriptivo si alguna regla no se cumple.
 func ValidarComplejidadContrasena(contrasena string) error {
-	if len(contrasena) < 8 {
+	if utf8.RuneCountInString(contrasena) < 8 {
 		return fmt.Errorf("la contraseña debe tener al menos 8 caracteres")
 	}
-	if len(contrasena) > 12 {
-		return fmt.Errorf("la contraseña no puede superar los 12 caracteres")
+	if utf8.RuneCountInString(contrasena) > 128 {
+		return fmt.Errorf("la contraseña no puede superar los 128 caracteres")
 	}
 
 	tieneMayuscula := false
