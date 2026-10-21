@@ -53,6 +53,11 @@ var ErrCoordinacionAprovisionamiento = errors.New("no se pudo coordinar la reser
 // con una respuesta perdida después de que Proxmox pudo aceptar la operación.
 var ErrCreacionNoDespachada = errors.New("la creación no fue despachada a Proxmox")
 
+// ErrParametroInvalido indica que un valor que se arma dentro de una directiva
+// de Proxmox (net0, scsi0, rootfs, ide2: "clave=valor,clave=valor") trae un
+// carácter que permitiría inyectar directivas propias, como la coma.
+var ErrParametroInvalido = errors.New("parámetro con caracteres no permitidos")
+
 // InstanciaProxmoxDTO proyecta el estado de una instancia (VM o contenedor)
 // leído desde la API de Proxmox. Los campos de telemetría (Cpu, Mem, MaxMem)
 // provienen directamente de cluster/resources y solo tienen valor cuando la

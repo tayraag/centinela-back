@@ -177,6 +177,11 @@ func detalle(body []byte) string {
 // proceso no intenten crear el mismo VMID. Proxmox conserva la última defensa
 // ante carreras con otros procesos mediante la unicidad global del VMID.
 func (c *Client) AprovisionarInstancia(ctx context.Context, input ports.CrearInstanciaProxmoxInput) (*ports.ResultadoAprovisionamiento, error) {
+	// Antes de cualquier llamada (ni siquiera nextid): nada que permita
+	// inyectar directivas llega a Proxmox.
+	if err := validarDirectivas(input); err != nil {
+		return nil, fmt.Errorf("%w: %w", ports.ErrCreacionNoDespachada, err)
+	}
 	c.aprovisionMu.Lock()
 	defer c.aprovisionMu.Unlock()
 
@@ -214,6 +219,29 @@ func (c *Client) AprovisionarInstancia(ctx context.Context, input ports.CrearIns
 		accion = ports.AccionProxmoxCrearLXC
 	}
 	return &ports.ResultadoAprovisionamiento{VMID: vmid, UPID: creada.Data, Accion: accion}, nil
+}
+
+// caracteresDeDirectiva son los que cambian el sentido de una directiva de
+// Proxmox: la coma separa opciones ("bridge=vmbr0,tag=20" agregaría una VLAN),
+// el = arma claves, el ; separa el orden de booteo y los saltos de línea y el
+// NUL cortan la configuración.
+const caracteresDeDirectiva = ",=;\n\r\x00"
+
+// validarDirectivas es la última barrera del adaptador: ningún valor que se
+// concatena en net0, ipconfig0, scsi0, rootfs, ide2 u ostemplate puede traer
+// caracteres de directiva, aunque el handler ya lo haya validado.
+func validarDirectivas(input ports.CrearInstanciaProxmoxInput) error {
+	campos := []struct{ nombre, valor string }{
+		{"bridge", input.Bridge}, {"storageId", input.StorageID}, {"template", input.TemplateID},
+		{"nombre", input.Nombre}, {"nodo", input.Nodo},
+		{"ip", input.IPv4Address}, {"mascara", input.IPv4Mask}, {"gateway", input.IPv4Gateway},
+	}
+	for _, c := range campos {
+		if strings.ContainsAny(c.valor, caracteresDeDirectiva) {
+			return fmt.Errorf("%w: el parámetro %s contiene caracteres inválidos", ports.ErrParametroInvalido, c.nombre)
+		}
+	}
+	return nil
 }
 
 func parametrosCreacion(vmid int, input ports.CrearInstanciaProxmoxInput) url.Values {

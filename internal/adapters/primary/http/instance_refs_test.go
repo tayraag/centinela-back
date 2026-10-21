@@ -2,6 +2,7 @@ package http_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"regexp"
@@ -169,5 +170,83 @@ func TestCrearInstancia_ResuelveAliasDeTopologia(t *testing.T) {
 		if px.aprovInput.Nodo != "pve1" || px.aprovInput.StorageID != "local-lvm" || px.aprovInput.TemplateID != c.esperadoTemplate {
 			t.Errorf("%+v: a Proxmox llegó nodo=%q storage=%q template=%q", c, px.aprovInput.Nodo, px.aprovInput.StorageID, px.aprovInput.TemplateID)
 		}
+	}
+}
+
+// DoD: un payload con comas (u otro carácter de directiva) en bridge, storage,
+// nombre, template o nodo se rechaza con 400 sin contactar a Proxmox.
+func TestCrearInstancia_RechazaInyeccionDeDirectivas(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	base := func() map[string]any {
+		return map[string]any{"tipo": "vm", "nombre": "srv-prod-01", "cores": 1, "ramMb": 512, "discoGb": 5,
+			"storageId": "local-lvm", "templateOso": "local:iso/debian-12.iso", "red": map[string]any{"modo": "dhcp", "bridge": "vmbr0"}}
+	}
+	casos := map[string]func(m map[string]any){
+		"bridge con coma (VLAN y rate)": func(m map[string]any) { m["red"].(map[string]any)["bridge"] = "vmbr0,rate=100,tag=20,queues=4" },
+		"bridge con espacio":            func(m map[string]any) { m["red"].(map[string]any)["bridge"] = "vmbr0 tag=20" },
+		"bridge con salto de línea":     func(m map[string]any) { m["red"].(map[string]any)["bridge"] = "vmbr0\nnet1: virtio" },
+		"bridge con barra":              func(m map[string]any) { m["red"].(map[string]any)["bridge"] = "vmbr0/x" },
+		"storage con coma":              func(m map[string]any) { m["storageId"] = "local-lvm,iothread=1" },
+		"storage con dos puntos":        func(m map[string]any) { m["storageId"] = "local-lvm:99" },
+		"nombre con coma":               func(m map[string]any) { m["nombre"] = "srv,cores=64" },
+		"nombre con espacio":            func(m map[string]any) { m["nombre"] = "srv prod" },
+		"nombre con guion bajo":         func(m map[string]any) { m["nombre"] = "srv_prod" },
+		"nombre que empieza con guion":  func(m map[string]any) { m["nombre"] = "-srv" },
+		"nombre de 64 caracteres":       func(m map[string]any) { m["nombre"] = strings.Repeat("a", 64) },
+		"template con media inyectada":  func(m map[string]any) { m["templateOso"] = "local:iso/debian-12.iso,media=disk" },
+		"template con ruta":             func(m map[string]any) { m["templateOso"] = "local:iso/../../etc/passwd" },
+		"template con otro tipo":        func(m map[string]any) { m["templateOso"] = "local:images/vm-100-disk-0" },
+		"template sin storage con coma": func(m map[string]any) { m["templateOso"] = "debian-12.iso,media=disk" },
+		"nodo con barra":                func(m map[string]any) { m["nodo"] = "pve1/../otro" },
+		"nodo con coma":                 func(m map[string]any) { m["nodo"] = "pve1,x" },
+	}
+	for nombre, alterar := range casos {
+		px := &mockProxmoxPort{aprovRes: &ports.ResultadoAprovisionamiento{VMID: 700, UPID: "UPID:x", Accion: ports.AccionProxmoxCrearVM}}
+		handler := adaptersHttp.NewInstanceHandler(px, &mockUserRepository{}, seguimientoNulo{}, &mockTareaRepository{}, &mockAuditService{}, inventarioNulo{}, adaptersHttp.RefsPrueba, adaptersHttp.TopologiaPrueba)
+		router := gin.New()
+		router.POST("/api/instances", handler.CrearInstancia)
+		cuerpo := base()
+		alterar(cuerpo)
+		crudo, _ := json.Marshal(cuerpo)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/instances", strings.NewReader(string(crudo))))
+		if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), `"errorCode":"INVALID_REQUEST"`) {
+			t.Errorf("%s: se esperaba 400 INVALID_REQUEST, vino %d %s", nombre, w.Code, w.Body.String())
+		}
+		if px.escrituras != 0 {
+			t.Errorf("%s: no debe llegar a Proxmox", nombre)
+		}
+	}
+}
+
+// El formato anterior del asistente pasa por las mismas reglas.
+func TestCrearInstancia_FormatoAnteriorTambienSeValida(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	px := &mockProxmoxPort{aprovRes: &ports.ResultadoAprovisionamiento{VMID: 700, UPID: "UPID:x", Accion: ports.AccionProxmoxCrearVM}}
+	handler := adaptersHttp.NewInstanceHandler(px, &mockUserRepository{}, seguimientoNulo{}, &mockTareaRepository{}, &mockAuditService{}, inventarioNulo{}, adaptersHttp.RefsPrueba, adaptersHttp.TopologiaPrueba)
+	router := gin.New()
+	router.POST("/api/instances", handler.CrearInstancia)
+	cuerpo := `{"type":"VM","node":"pve1","name":"web","cpu":{"cores":1},"ram":{"memoryMb":512},` +
+		`"disk":{"storageId":"local-lvm","sizeGb":1},"network":{"bridge":"vmbr0,tag=20","firewall":true,"ipv4":{"type":"dhcp"}},` +
+		`"os":{"templateId":"local:iso/debian-12.iso"}}`
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/instances", strings.NewReader(cuerpo)))
+	if w.Code != http.StatusBadRequest || px.escrituras != 0 {
+		t.Errorf("Se esperaba 400 sin llegar a Proxmox, vino %d (escrituras=%d) %s", w.Code, px.escrituras, w.Body.String())
+	}
+}
+
+// Si el adaptador frena un parámetro (última barrera), la respuesta es 400 y no 500.
+func TestCrearInstancia_RechazoDelAdaptadorEs400(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	px := &mockProxmoxPort{errAprov: fmt.Errorf("%w: %w: el parámetro bridge contiene caracteres inválidos", ports.ErrCreacionNoDespachada, ports.ErrParametroInvalido)}
+	handler := adaptersHttp.NewInstanceHandler(px, &mockUserRepository{}, seguimientoNulo{}, &mockTareaRepository{}, &mockAuditService{}, inventarioNulo{}, adaptersHttp.RefsPrueba, adaptersHttp.TopologiaPrueba)
+	router := gin.New()
+	router.POST("/api/instances", handler.CrearInstancia)
+	cuerpo := `{"tipo":"vm","nombre":"srv","cores":1,"ramMb":512,"discoGb":5,"storageId":"local-lvm","templateOso":"local:iso/debian-12.iso","red":{"modo":"dhcp"}}`
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/instances", strings.NewReader(cuerpo)))
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), `"errorCode":"INVALID_REQUEST"`) {
+		t.Errorf("Se esperaba 400 INVALID_REQUEST, vino %d %s", w.Code, w.Body.String())
 	}
 }

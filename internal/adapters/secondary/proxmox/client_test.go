@@ -961,3 +961,40 @@ func TestActualizarConfig_ParametrosYDigestRechazado(t *testing.T) {
 		t.Errorf("Digest rechazado: se esperaba ErrInstanciaOcupada, vino %v", err)
 	}
 }
+
+// Última barrera: aunque un valor con caracteres de directiva llegue al
+// adaptador, se rechaza antes de cualquier llamada a Proxmox (ni nextid).
+func TestClient_AprovisionarInstancia_RechazaInyeccionSinLlamarAProxmox(t *testing.T) {
+	llamadas := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		llamadas++
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+	client := proxmox.NewClient(server.URL, "pve1", tokenIDValido, tokenSecretValido, nil)
+
+	valido := ports.CrearInstanciaProxmoxInput{Tipo: ports.TipoInstanciaQemu, Nodo: "pve1", Nombre: "srv", Cores: 1, MemoriaMB: 512,
+		StorageID: "local-lvm", DiscoGB: 5, TemplateID: "local:iso/debian-12.iso", Bridge: "vmbr0", IPv4Tipo: "static",
+		IPv4Address: "192.168.1.50", IPv4Mask: "24", IPv4Gateway: "192.168.1.1"}
+	casos := map[string]func(i *ports.CrearInstanciaProxmoxInput){
+		"bridge":   func(i *ports.CrearInstanciaProxmoxInput) { i.Bridge = "vmbr0,tag=20" },
+		"storage":  func(i *ports.CrearInstanciaProxmoxInput) { i.StorageID = "local-lvm,iothread=1" },
+		"template": func(i *ports.CrearInstanciaProxmoxInput) { i.TemplateID = "local:iso/x.iso,media=disk" },
+		"nombre":   func(i *ports.CrearInstanciaProxmoxInput) { i.Nombre = "srv\nnet1: virtio" },
+		"nodo":     func(i *ports.CrearInstanciaProxmoxInput) { i.Nodo = "pve1;x" },
+		"ip":       func(i *ports.CrearInstanciaProxmoxInput) { i.IPv4Address = "192.168.1.50,gw=10.0.0.1" },
+		"mascara":  func(i *ports.CrearInstanciaProxmoxInput) { i.IPv4Mask = "24=" },
+		"gateway":  func(i *ports.CrearInstanciaProxmoxInput) { i.IPv4Gateway = "192.168.1.1\x00" },
+	}
+	for campo, alterar := range casos {
+		input := valido
+		alterar(&input)
+		_, err := client.AprovisionarInstancia(context.Background(), input)
+		if !errors.Is(err, ports.ErrParametroInvalido) || !errors.Is(err, ports.ErrCreacionNoDespachada) {
+			t.Errorf("%s: se esperaba ErrParametroInvalido (y no despachada, para liberar la reserva), vino %v", campo, err)
+		}
+	}
+	if llamadas != 0 {
+		t.Errorf("No debe haber ninguna llamada a Proxmox: hubo %d", llamadas)
+	}
+}

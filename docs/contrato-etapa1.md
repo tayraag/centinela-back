@@ -244,6 +244,27 @@ payload anidado anterior del wizard: `type`, `node`, `name`, `cpu.cores`,
 `network.bridge/vlan/firewall/ipv4` y `os.templateId`. En ese formato, LXC
 requiere `password`. Las integraciones nuevas deben usar el contrato plano.
 
+**Formatos obligatorios.** Lo que se arma dentro de las directivas de Proxmox
+(`net0`, `scsi0`, `rootfs`, `ide2`) no puede traer caracteres que cambien su
+sentido: en Proxmox la coma separa directivas, y un `bridge` como
+`vmbr0,rate=100,tag=20` asignaría una VLAN sin pasar por Centinela. Si un valor
+no cumple su formato, la respuesta es `400 INVALID_REQUEST` y no se contacta a
+Proxmox:
+
+- `nombre`: hostname según RFC 1123 (letras, números y guiones, sin guion al
+  principio ni al final, hasta 63 caracteres). `srv_prod` o `srv prod` se
+  rechazan.
+- `red.bridge`: letras, números, punto, guion y guion bajo (`vmbr0`).
+- `storageId`: letras, números, guion y guion bajo (`local-lvm`). Se valida
+  después de traducir el alias, así que un alias con espacios sigue sirviendo.
+- `templateOso`: `storage:iso/archivo` o `storage:vztmpl/archivo` (o solo el
+  archivo, al que se le antepone el storage), sin espacios ni comas.
+- `nodo` (si se envía): un nombre de nodo válido.
+
+El adaptador de Proxmox repite el control como última barrera: rechaza
+cualquier `,`, `=`, `;` o salto de línea en esos valores y en la IP, la
+máscara y el gateway antes de hacer cualquier llamada.
+
 ```json
 {
   "tipo": "vm",

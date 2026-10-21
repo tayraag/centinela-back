@@ -1318,6 +1318,8 @@ Cuando el usuario hace clic en "Crear", el frontend recolecta todo lo selecciona
 
 El front no debe mandarnos el `vmid` en el json. El backend tiene que ir a buscar el siguiente ID libre a Proxmox en el milisegundo exacto en que procesa la orden.
 
+> **OPERATIVO ETAPA-1:** formatos obligatorios, si no se cumplen la respuesta es `400 INVALID_REQUEST` y no se contacta a Proxmox: `nombre`: hostname RFC 1123 (letras, números y guiones, sin guion al principio ni al final, hasta 63 caracteres); `red.bridge`: letras, números, punto, guion y guion bajo; `storageId`: letras, números, guion y guion bajo; `templateOso`: `storage:iso/archivo` o `storage:vztmpl/archivo` (o solo el archivo); `nodo`: nombre de nodo válido. Nada de comas, espacios, `=`, `;` ni saltos de línea: en Proxmox la coma separa directivas, y `vmbr0,tag=20` asignaría una VLAN sin pasar por Centinela. Ver `docs/contrato-etapa1.md`.
+
 El contrato canónico RF-07 es plano. `nodo` es opcional; el backend usa
 `PROXMOX_NODE` cuando no se envía. Para una IP estática, `red.ip` puede incluir
 el CIDR o se puede agregar `red.mascara` (por defecto `/24`). Si

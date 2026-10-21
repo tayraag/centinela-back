@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -261,6 +262,10 @@ func (h *InstanceHandler) validarEstadoParaAccion(c *gin.Context, vmid int, acci
 func mapearErrorProxmox(c *gin.Context, err error) {
 	ruta := c.Request.Method + " " + c.Request.URL.Path
 	switch {
+	case errors.Is(err, ports.ErrParametroInvalido):
+		// Lo frena el adaptador antes de contactar a Proxmox (última barrera).
+		log.Printf("🛑 Parámetro rechazado antes de llamar a Proxmox [%s]: %v", ruta, err)
+		SendError(c, http.StatusBadRequest, "INVALID_REQUEST", "Algún parámetro de la instancia contiene caracteres no permitidos.")
 	case errors.Is(err, ports.ErrVerificacionPostConfig):
 		log.Printf("⚠️  Configuración aplicada sin verificación posterior [%s]: %v", ruta, err)
 		SendError(c, http.StatusBadGateway, "CONFIG_APPLIED_VERIFICATION_FAILED", "Proxmox aceptó la configuración, pero no pudo verificarse si requiere reinicio. Verifique el estado antes de reintentar.")
@@ -304,6 +309,40 @@ func (h *InstanceHandler) resolverTopologia(input ports.CrearInstanciaProxmoxInp
 		input.TemplateID = h.topologia.ResolveStorage(storage) + ":" + resto
 	}
 	return input
+}
+
+// Formatos permitidos para lo que se concatena en las directivas de Proxmox
+// ("virtio,bridge=vmbr0,firewall=1", "local-lvm:20", "local:iso/x.iso,media=cdrom").
+// Ninguno admite la coma, que en Proxmox separa directivas: "vmbr0,tag=20"
+// asignaría una VLAN sin pasar por las validaciones de Centinela.
+var (
+	// Nombre de interfaz de Linux.
+	formatoBridge = regexp.MustCompile(`^[a-zA-Z0-9_.-]+$`)
+	// Hostname según RFC 1123 (nombre de la instancia y nodo).
+	formatoHostname = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$`)
+	// Identificador de storage.
+	formatoStorage = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+	// Volumen de una ISO o plantilla LXC: storage:iso/archivo o storage:vztmpl/archivo.
+	formatoTemplate = regexp.MustCompile(`^[a-zA-Z0-9_-]+:(iso|vztmpl)/[a-zA-Z0-9._-]+$`)
+)
+
+// validarIdentificadoresProxmox rechaza (400 INVALID_REQUEST, sin contactar a
+// Proxmox) los valores que no cumplen su formato. Se aplica después de
+// resolver los alias de topología.
+func validarIdentificadoresProxmox(input ports.CrearInstanciaProxmoxInput) error {
+	switch {
+	case !formatoHostname.MatchString(input.Nombre):
+		return fmt.Errorf("nombre debe ser un hostname válido (RFC 1123): letras, números y guiones, sin empezar ni terminar con guion, hasta 63 caracteres")
+	case !formatoHostname.MatchString(input.Nodo):
+		return fmt.Errorf("nodo no es un nombre de nodo válido")
+	case !formatoBridge.MatchString(input.Bridge):
+		return fmt.Errorf("bridge solo admite letras, números, punto, guion y guion bajo")
+	case !formatoStorage.MatchString(input.StorageID):
+		return fmt.Errorf("storageId solo admite letras, números, guion y guion bajo")
+	case !formatoTemplate.MatchString(input.TemplateID):
+		return fmt.Errorf("el template debe tener la forma storage:iso/archivo o storage:vztmpl/archivo, sin espacios ni comas")
+	}
+	return nil
 }
 
 func normalizarCreacionPlana(req CrearInstanciaRequest, nodoPorDefecto string) (ports.CrearInstanciaProxmoxInput, error) {
@@ -431,14 +470,14 @@ func esContratoPlanoCreacion(campos map[string]json.RawMessage) bool {
 // vzcreate y registra inmediatamente el UPID con el usuario autenticado.
 //
 // @Summary      Crear una VM o contenedor
-// @Description  ADMIN ONLY. El contrato plano RF-07 descrito en el body es el formato canónico. Durante la migración del frontend también se acepta el payload anidado anterior con `type`, `node`, `name`, `cpu.cores`, `ram.memoryMb`, `disk.storageId/sizeGb`, `network.bridge/vlan/firewall/ipv4` y `os.templateId`; para LXC ese formato requiere `password`. CuotasService usa el lock Redis `lock:instance:provisioning` con TTL de 30 s y hasta 2 s de espera. Consulta la capacidad cacheada (o Proxmox si falta), valida CPU lógica, RAM con 15% de headroom y disco contra `avail` del storage, y registra una reserva temporal. Luego obtiene el VMID mediante `/cluster/nextid`, despacha la creación QEMU o LXC y solo responde 202 con vmid (la referencia pública de la instancia, nunca el número) y tareaId después de persistir la tarea RUNNING y su auditoría inicial. El UPID permanece privado en el backend. El resultado llega por TASK_FINISHED con accion CREATE; cuando Proxmox finaliza con exitstatus OK, el creador recibe FULL_ACCESS y se vuelve a invalidar la capacidad.
+// @Description  ADMIN ONLY. El contrato plano RF-07 descrito en el body es el formato canónico. Durante la migración del frontend también se acepta el payload anidado anterior con `type`, `node`, `name`, `cpu.cores`, `ram.memoryMb`, `disk.storageId/sizeGb`, `network.bridge/vlan/firewall/ipv4` y `os.templateId`; para LXC ese formato requiere `password`. Formatos obligatorios (400 INVALID_REQUEST sin contactar a Proxmox si no se cumplen; se validan después de traducir los alias de topología): `nombre`: hostname RFC 1123 (letras, números y guiones, sin guion al principio ni al final, hasta 63 caracteres); `red.bridge`: letras, números, punto, guion y guion bajo; `storageId`: letras, números, guion y guion bajo; `templateOso`: `storage:iso/archivo` o `storage:vztmpl/archivo` (o solo el archivo); `nodo`: nombre de nodo válido. Nada de comas, espacios, `=`, `;` ni saltos de línea: en Proxmox la coma separa directivas, y `vmbr0,tag=20` asignaría una VLAN sin pasar por Centinela. CuotasService usa el lock Redis `lock:instance:provisioning` con TTL de 30 s y hasta 2 s de espera. Consulta la capacidad cacheada (o Proxmox si falta), valida CPU lógica, RAM con 15% de headroom y disco contra `avail` del storage, y registra una reserva temporal. Luego obtiene el VMID mediante `/cluster/nextid`, despacha la creación QEMU o LXC y solo responde 202 con vmid (la referencia pública de la instancia, nunca el número) y tareaId después de persistir la tarea RUNNING y su auditoría inicial. El UPID permanece privado en el backend. El resultado llega por TASK_FINISHED con accion CREATE; cuando Proxmox finaliza con exitstatus OK, el creador recibe FULL_ACCESS y se vuelve a invalidar la capacidad.
 // @Tags         Instancias Proxmox
 // @Accept       json
 // @Produce      json
 // @Security     BearerAuth
 // @Param        body body CrearInstanciaRequest true "Configuración de la instancia"
 // @Success      202 {object} CreacionAceptadaResponse
-// @Failure      400 {object} ErrorResponse "INVALID_REQUEST"
+// @Failure      400 {object} ErrorResponse "INVALID_REQUEST — cuerpo inválido, o algún valor no cumple su formato (ver la descripción); no se contacta a Proxmox"
 // @Failure      401 {object} ErrorResponse "MISSING_TOKEN | INVALID_TOKEN | TOKEN_REVOKED"
 // @Failure      403 {object} ErrorResponse "WRONG_TOKEN_TYPE | 2FA_REQUIRED | INSUFFICIENT_PERMISSIONS"
 // @Failure      409 {object} ErrorResponse "RESOURCE_QUOTA_EXCEEDED"
@@ -481,6 +520,11 @@ func (h *InstanceHandler) CrearInstancia(c *gin.Context) {
 		return
 	}
 	input = h.resolverTopologia(input)
+	// Después de traducir los alias: se valida lo que de verdad viaja a Proxmox.
+	if err := validarIdentificadoresProxmox(input); err != nil {
+		SendError(c, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+		return
+	}
 	resultado, err := h.aprovisionamiento.AprovisionarInstancia(c.Request.Context(), input)
 	if err != nil {
 		mapearErrorProxmox(c, err)
