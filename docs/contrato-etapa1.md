@@ -11,17 +11,37 @@ salud física del hipervisor y la cachea en Redis.
 
 Ambas operaciones usan `Authorization: Bearer <accessToken>`. Un `ADMIN` puede
 consultar todo el inventario; un `OPERATOR` recibe solo las instancias que tiene
-asignadas. El estado consolidado del nodo no agrega un filtro por instancia y
-está disponible para ambos roles autenticados.
+asignadas. El estado consolidado del nodo está disponible para ambos roles
+autenticados, con la respuesta segregada por rol (ver abajo).
 
 ## Estado consolidado del nodo — operativo
 
-**Control de acceso (D1):** Endpoint accesible para cualquier usuario autenticado (`Authorization: Bearer <accessToken>`), habilitado tanto para el rol ADMIN como para el rol OPERATOR. No requiere permisos específicos sobre instancias.
+**Control de acceso (D1):** Endpoint accesible para cualquier usuario autenticado (`Authorization: Bearer <accessToken>`), habilitado tanto para el rol ADMIN como para el rol OPERATOR. La respuesta se segrega por rol.
 
-Lo puede leer cualquier usuario autenticado, ADMIN u OPERATOR. No pasa por el
-chequeo de permisos por instancia porque describe el hipervisor y no una VM
-concreta. Un OPERATOR ve los totales de `instancesSummary` de todo el nodo, no
-solo los de sus instancias asignadas.
+Lo puede leer cualquier usuario autenticado, ADMIN u OPERATOR. El ADMIN recibe
+la telemetría completa del host y el `instancesSummary` de todo el nodo. Para
+no exponer la infraestructura global a quien solo tiene algunas instancias,
+el OPERATOR recibe `storage: null` y `allocatable.freeStorageGb: null` (no ve
+la capacidad física de almacenamiento del servidor), e `instancesSummary`
+cuenta solo las instancias que tiene asignadas en `permisos_instancia`. CPU,
+RAM, `uptimeSeconds`, `stale` y `fetchedAt` del host se mantienen igual.
+
+```json
+{
+  "storage": null,
+  "allocatable": { "maxCpuCores": 16, "freeRamMb": 68147, "freeStorageGb": null, "headroomPercent": 15 },
+  "instancesSummary": {
+    "vms": { "running": 1, "stopped": 0, "paused": 0, "total": 1 },
+    "lxc": { "running": 0, "stopped": 1, "paused": 0, "total": 1 }
+  }
+}
+```
+
+(Extracto de una respuesta para un OPERATOR con una VM y un LXC asignados; el
+resto de los campos es igual que para el ADMIN.) El conteo sale de la misma
+lectura cacheada del nodo, así que con `stale: true` también refleja el momento
+de `fetchedAt`. `GET /api/node/history` omite `storagePercent` en todos los
+puntos para el OPERATOR.
 
 `GET /api/node/status` responde `200 application/json` con:
 
@@ -42,7 +62,8 @@ solo los de sus instancias asignadas.
   renovarse; `false` cuando la lectura está vigente.
 - `fetchedAt`: instante de obtención de la lectura en formato RFC3339.
 
-Todos los campos son obligatorios y no admiten `null`. RAM y almacenamiento se
+Todos los campos son obligatorios y no admiten `null`, salvo `storage` y
+`allocatable.freeStorageGb`, que valen `null` para el OPERATOR. RAM y almacenamiento se
 expresan en GB de 1024³ bytes con 2 decimales; `storage` es el disco raíz del
 nodo. `cores` son los hilos lógicos del nodo, sobre los que Proxmox calcula
 `cpu.usagePercent`.

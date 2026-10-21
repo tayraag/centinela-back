@@ -181,9 +181,11 @@ definitions:
         minimum: 0
         type: integer
       freeStorageGb:
+        description: null para quien no es ADMIN
         example: 280
         minimum: 0
         type: integer
+        x-nullable: true
       headroomPercent:
         enum:
         - 15
@@ -226,7 +228,10 @@ definitions:
         example: false
         type: boolean
       storage:
-        $ref: '#/definitions/http.MetricaCapacidadNode'
+        allOf:
+        - $ref: '#/definitions/http.MetricaCapacidadNode'
+        description: null para quien no es ADMIN
+        x-nullable: true
       uptimeSeconds:
         example: 86400
         minimum: 0
@@ -2815,10 +2820,11 @@ paths:
   /node/history:
     get:
       description: Devuelve la serie histórica del host (CPU, memoria y rootfs) normalizada
-        a porcentajes. Es lo que hace que el gráfico del Dashboard ya esté formado
-        al entrar, en vez de arrancar de cero y esperar minutos a que se llene. La
-        fuente es el RRD de Proxmox, cacheado en Redis para no golpear la infraestructura
-        en cada visita.
+        a porcentajes. Para quien no es ADMIN se omite `storagePercent` en todos los
+        puntos (no ve la capacidad física de almacenamiento). Es lo que hace que el
+        gráfico del Dashboard ya esté formado al entrar, en vez de arrancar de cero
+        y esperar minutos a que se llene. La fuente es el RRD de Proxmox, cacheado
+        en Redis para no golpear la infraestructura en cada visita.
       produces:
       - application/json
       responses:
@@ -2848,17 +2854,21 @@ paths:
       - Nodo
   /node/status:
     get:
-      description: 'OPERATIVO. Disponible para ADMIN y OPERATOR autenticados (no se
-        filtra por permisos de instancia). La lectura se cachea en Redis 10 s (node:status:current):
-        mientras está vigente se responde sin consultar Proxmox. Incluye `allocatable`,
-        con núcleos físicos totales, almacenamiento disponible y RAM libre segura
-        luego de reservar estrictamente 15% para Proxmox. Incluye también instancesSummary,
-        que agrupa el recuento de VMs y contenedores LXC según su estado (running,
-        stopped, paused). Si Proxmox no responde se devuelve la última lectura conocida
-        (node:status:last_known) con `stale: true`; `fetchedAt` indica cuándo se obtuvo.
-        Solo si no hay ninguna lectura previa responde 502 o 504. RAM y almacenamiento
-        en GB (1024³ bytes) con 2 decimales; `storage` es el disco raíz del nodo;
-        `cores` son los hilos lógicos sobre los que se calcula `usagePercent`.'
+      description: 'OPERATIVO. Disponible para ADMIN y OPERATOR autenticados, con
+        la respuesta segregada por rol. ADMIN recibe la telemetría completa del host.
+        OPERATOR recibe `storage: null` y `allocatable.freeStorageGb: null` (no ve
+        la capacidad física de almacenamiento), e `instancesSummary` cuenta solo las
+        instancias que tiene asignadas; CPU, RAM y uptime del host se mantienen. La
+        lectura se cachea en Redis 10 s (node:status:current): mientras está vigente
+        se responde sin consultar Proxmox. Incluye `allocatable`, con núcleos físicos
+        totales, almacenamiento disponible y RAM libre segura luego de reservar estrictamente
+        15% para Proxmox. Incluye también instancesSummary, que agrupa el recuento
+        de VMs y contenedores LXC según su estado (running, stopped, paused). Si Proxmox
+        no responde se devuelve la última lectura conocida (node:status:last_known)
+        con `stale: true`; `fetchedAt` indica cuándo se obtuvo. Solo si no hay ninguna
+        lectura previa responde 502 o 504. RAM y almacenamiento en GB (1024³ bytes)
+        con 2 decimales; `storage` es el disco raíz del nodo; `cores` son los hilos
+        lógicos sobre los que se calcula `usagePercent`.'
       produces:
       - application/json
       responses:

@@ -168,7 +168,8 @@ func (s *nodoService) fallaReciente() error {
 
 // normalizarEstadoNodo convierte la lectura cruda: CPU a porcentaje, bytes a GB
 // (1024³) con 2 decimales y porcentajes de uso. El resumen cuenta las instancias
-// de todo el cluster (el estado del nodo no se filtra por permisos).
+// de todo el cluster; la foto del inventario queda en Instancias para que el
+// handler cuente solo las de un OPERATOR.
 func normalizarEstadoNodo(crudo *ports.NodeStatusDTO, instancias []ports.InstanciaProxmoxDTO, ahora time.Time) *ports.EstadoNodo {
 	estado := &ports.EstadoNodo{
 		CPU:           ports.MetricaCPU{UsagePercent: redondear(crudo.CPU * 100), Cores: crudo.CPUs},
@@ -178,21 +179,11 @@ func normalizarEstadoNodo(crudo *ports.NodeStatusDTO, instancias []ports.Instanc
 		UptimeSeconds: crudo.UptimeSegs,
 		FetchedAt:     ahora.UTC().Truncate(time.Second),
 	}
+	estado.Instancias = make([]ports.InstanciaDelNodo, 0, len(instancias))
 	for _, inst := range instancias {
-		resumen := &estado.InstancesSummary.VMs
-		if inst.Tipo == ports.TipoInstanciaLXC {
-			resumen = &estado.InstancesSummary.LXC
-		}
-		switch inst.Estado {
-		case "running":
-			resumen.Running++
-		case "stopped":
-			resumen.Stopped++
-		case "paused":
-			resumen.Paused++
-		}
-		resumen.Total++
+		estado.Instancias = append(estado.Instancias, ports.InstanciaDelNodo{Vmid: inst.Vmid, Tipo: inst.Tipo, Estado: inst.Estado})
 	}
+	estado.InstancesSummary = ports.ResumirInstancias(estado.Instancias, nil)
 	return estado
 }
 

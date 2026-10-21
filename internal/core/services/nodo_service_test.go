@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -99,8 +100,13 @@ func TestNodo_NormalizaComoPideElContrato(t *testing.T) {
 			LXC: ports.ResumenEstado{Running: 1, Stopped: 1, Paused: 0, Total: 2},
 		},
 		FetchedAt: time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC),
+		Instancias: []ports.InstanciaDelNodo{
+			{Vmid: 100, Tipo: "qemu", Estado: "running"}, {Vmid: 110, Tipo: "qemu", Estado: "stopped"},
+			{Vmid: 9003, Tipo: "qemu", Estado: "paused"}, {Vmid: 101, Tipo: "lxc", Estado: "running"},
+			{Vmid: 201, Tipo: "lxc", Estado: "stopped"},
+		},
 	}
-	if *estado != esperado {
+	if !reflect.DeepEqual(*estado, esperado) {
 		t.Errorf("Normalización:\n got  %+v\n want %+v", *estado, esperado)
 	}
 }

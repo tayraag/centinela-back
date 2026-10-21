@@ -55,6 +55,42 @@ type EstadoNodo struct {
 	UptimeSeconds    int64             `json:"uptimeSeconds"`
 	InstancesSummary ResumenInstancias `json:"instancesSummary"`
 	FetchedAt        time.Time         `json:"fetchedAt"` // cuándo se leyó de Proxmox
+	// Instancias es la foto del inventario con la que se armó InstancesSummary.
+	// Queda en la caché para contar solo las instancias de un OPERATOR sin
+	// volver a consultar Proxmox; nunca se publica tal cual.
+	Instancias []InstanciaDelNodo `json:"instancias,omitempty"`
+}
+
+// InstanciaDelNodo es lo mínimo de cada instancia para armar un resumen.
+type InstanciaDelNodo struct {
+	Vmid   int    `json:"vmid"`
+	Tipo   string `json:"tipo"`   // qemu | lxc
+	Estado string `json:"estado"` // running | stopped | paused
+}
+
+// ResumirInstancias cuenta las instancias por tipo y estado. Con incluir nil
+// cuenta todas; si no, solo las que devuelven true (las de un OPERATOR).
+func ResumirInstancias(instancias []InstanciaDelNodo, incluir func(vmid int) bool) ResumenInstancias {
+	var resumen ResumenInstancias
+	for _, inst := range instancias {
+		if incluir != nil && !incluir(inst.Vmid) {
+			continue
+		}
+		grupo := &resumen.VMs
+		if inst.Tipo == TipoInstanciaLXC {
+			grupo = &resumen.LXC
+		}
+		switch inst.Estado {
+		case "running":
+			grupo.Running++
+		case "stopped":
+			grupo.Stopped++
+		case "paused":
+			grupo.Paused++
+		}
+		grupo.Total++
+	}
+	return resumen
 }
 
 // NodoService obtiene el estado del nodo con caché en dos niveles.

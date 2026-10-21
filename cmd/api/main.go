@@ -185,7 +185,7 @@ func main() {
 	instanceHandler := httpHandlers.NewInstanceHandlerConNodo(proxmoxClient, userRepo, seguimientoTareas, tareaRepo, auditService,
 		services.NewInventarioService(proxmoxClient), refsInstancia, topologia, nodoNombre, aprovisionadorSeguro(kvStore, cuotasService))
 	eventsHandler := httpHandlers.NewEventsHandler(eventosService, refsInstancia)
-	nodeHandler := httpHandlers.NewNodeHandler(services.NewNodoService(proxmoxClient, kvStore, nodoNombre), proxmoxClient, nodoNombre)
+	nodeHandler := httpHandlers.NewNodeHandler(services.NewNodoService(proxmoxClient, kvStore, nodoNombre), proxmoxClient, nodoNombre, userRepo)
 	wsMetricsHandler := httpHandlers.NewMetricsWSHandler(proxmoxClient, services.NewMetricasVivoService(kvStore, authRepo, instanceRepo, 0),
 		refsInstancia, nodoNombre, middleware.OrigenesPermitidos(), httpHandlers.LimitesWSPorDefecto)
 

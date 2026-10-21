@@ -2399,7 +2399,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Devuelve la serie histórica del host (CPU, memoria y rootfs) normalizada a porcentajes. Es lo que hace que el gráfico del Dashboard ya esté formado al entrar, en vez de arrancar de cero y esperar minutos a que se llene. La fuente es el RRD de Proxmox, cacheado en Redis para no golpear la infraestructura en cada visita.",
+                "description": "Devuelve la serie histórica del host (CPU, memoria y rootfs) normalizada a porcentajes. Para quien no es ADMIN se omite ` + "`" + `storagePercent` + "`" + ` en todos los puntos (no ve la capacidad física de almacenamiento). Es lo que hace que el gráfico del Dashboard ya esté formado al entrar, en vez de arrancar de cero y esperar minutos a que se llene. La fuente es el RRD de Proxmox, cacheado en Redis para no golpear la infraestructura en cada visita.",
                 "produces": [
                     "application/json"
                 ],
@@ -2445,7 +2445,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "OPERATIVO. Disponible para ADMIN y OPERATOR autenticados (no se filtra por permisos de instancia). La lectura se cachea en Redis 10 s (node:status:current): mientras está vigente se responde sin consultar Proxmox. Incluye ` + "`" + `allocatable` + "`" + `, con núcleos físicos totales, almacenamiento disponible y RAM libre segura luego de reservar estrictamente 15% para Proxmox. Incluye también instancesSummary, que agrupa el recuento de VMs y contenedores LXC según su estado (running, stopped, paused). Si Proxmox no responde se devuelve la última lectura conocida (node:status:last_known) con ` + "`" + `stale: true` + "`" + `; ` + "`" + `fetchedAt` + "`" + ` indica cuándo se obtuvo. Solo si no hay ninguna lectura previa responde 502 o 504. RAM y almacenamiento en GB (1024³ bytes) con 2 decimales; ` + "`" + `storage` + "`" + ` es el disco raíz del nodo; ` + "`" + `cores` + "`" + ` son los hilos lógicos sobre los que se calcula ` + "`" + `usagePercent` + "`" + `.",
+                "description": "OPERATIVO. Disponible para ADMIN y OPERATOR autenticados, con la respuesta segregada por rol. ADMIN recibe la telemetría completa del host. OPERATOR recibe ` + "`" + `storage: null` + "`" + ` y ` + "`" + `allocatable.freeStorageGb: null` + "`" + ` (no ve la capacidad física de almacenamiento), e ` + "`" + `instancesSummary` + "`" + ` cuenta solo las instancias que tiene asignadas; CPU, RAM y uptime del host se mantienen. La lectura se cachea en Redis 10 s (node:status:current): mientras está vigente se responde sin consultar Proxmox. Incluye ` + "`" + `allocatable` + "`" + `, con núcleos físicos totales, almacenamiento disponible y RAM libre segura luego de reservar estrictamente 15% para Proxmox. Incluye también instancesSummary, que agrupa el recuento de VMs y contenedores LXC según su estado (running, stopped, paused). Si Proxmox no responde se devuelve la última lectura conocida (node:status:last_known) con ` + "`" + `stale: true` + "`" + `; ` + "`" + `fetchedAt` + "`" + ` indica cuándo se obtuvo. Solo si no hay ninguna lectura previa responde 502 o 504. RAM y almacenamiento en GB (1024³ bytes) con 2 decimales; ` + "`" + `storage` + "`" + ` es el disco raíz del nodo; ` + "`" + `cores` + "`" + ` son los hilos lógicos sobre los que se calcula ` + "`" + `usagePercent` + "`" + `.",
                 "produces": [
                     "application/json"
                 ],
@@ -2988,8 +2988,10 @@ const docTemplate = `{
                     "example": 14336
                 },
                 "freeStorageGb": {
+                    "description": "null para quien no es ADMIN",
                     "type": "integer",
                     "minimum": 0,
+                    "x-nullable": true,
                     "example": 280
                 },
                 "headroomPercent": {
@@ -3054,7 +3056,13 @@ const docTemplate = `{
                     "example": false
                 },
                 "storage": {
-                    "$ref": "#/definitions/http.MetricaCapacidadNode"
+                    "description": "null para quien no es ADMIN",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/http.MetricaCapacidadNode"
+                        }
+                    ],
+                    "x-nullable": true
                 },
                 "uptimeSeconds": {
                     "type": "integer",

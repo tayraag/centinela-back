@@ -657,6 +657,8 @@ Endpoint que alimenta las tarjetas principales del dashboard. Devuelve la salud 
 }
 ```
 
+> **OPERATIVO ETAPA-1:** la respuesta se segrega por rol. El ADMIN recibe todo lo anterior. Para un OPERATOR, el OPERATOR recibe `storage: null` y `allocatable.freeStorageGb: null` (no ve la capacidad física de almacenamiento del servidor), e `instancesSummary` cuenta solo las instancias que tiene asignadas en `permisos_instancia`. CPU, RAM, `uptimeSeconds`, `stale` y `fetchedAt` del host se mantienen igual. `GET /api/node/history` omite `storagePercent` para el OPERATOR. Ver `docs/contrato-etapa1.md`.
+
 #### 6.x Eventos en Tiempo Real (SSE)
 
 **POST /api/events/ticket**

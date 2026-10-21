@@ -6,12 +6,15 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
+	"el-centinela/internal/adapters/primary/http/middleware"
 	"el-centinela/internal/core/ports"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 type nodoServiceFalso struct {
@@ -31,16 +34,43 @@ func (f nodoServiceFalso) ObtenerHistorial(context.Context) ([]ports.PuntoHistor
 	return f.historial, f.errHistorial
 }
 
+// pedirEstadoNodo pide el estado como ADMIN (la vista completa del host).
 func pedirEstadoNodo(t *testing.T, svc ports.NodoService) (int, map[string]any) {
 	t.Helper()
-	gin.SetMode(gin.TestMode)
-	r := gin.New()
-	r.GET("/api/node/status", NewNodeHandler(svc, nil, "proxmox").ObtenerEstado)
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/node/status", nil))
+	status, crudo := pedirNodoComo(t, svc, "ADMIN", nil, "/api/node/status")
 	var cuerpo map[string]any
-	_ = json.Unmarshal(w.Body.Bytes(), &cuerpo)
-	return w.Code, cuerpo
+	_ = json.Unmarshal(crudo, &cuerpo)
+	return status, cuerpo
+}
+
+// permisosFalsos devuelve los VMID asignados al usuario.
+type permisosFalsos struct {
+	vmids []int
+	err   error
+}
+
+func (p permisosFalsos) ListarPermisosConNivel(context.Context, uuid.UUID) ([]ports.PermisoInstanciaInput, error) {
+	permisos := make([]ports.PermisoInstanciaInput, len(p.vmids))
+	for i, v := range p.vmids {
+		permisos[i] = ports.PermisoInstanciaInput{Vmid: v, NivelAcceso: ports.NivelAccesoReadOnly}
+	}
+	return permisos, p.err
+}
+
+func pedirNodoComo(t *testing.T, svc ports.NodoService, rol string, permisos permisosDeUsuario, ruta string) (int, []byte) {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	h := NewNodeHandler(svc, nil, "proxmox", permisos)
+	r := gin.New()
+	r.Use(func(c *gin.Context) {
+		c.Set(middleware.ContextKeyRol, rol)
+		c.Set(middleware.ContextKeyUserID, uuid.New().String())
+	})
+	r.GET("/api/node/status", h.ObtenerEstado)
+	r.GET("/api/node/history", h.ObtenerHistorial)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, ruta, nil))
+	return w.Code, w.Body.Bytes()
 }
 
 func TestEstadoNodo_RespetaElContrato(t *testing.T) {
@@ -163,7 +193,7 @@ func TestNodeHandler_ObtenerStorages(t *testing.T) {
 		},
 	}
 
-	handler := NewNodeHandler(nil, mockPVE, "proxmox")
+	handler := NewNodeHandler(nil, mockPVE, "proxmox", nil)
 	r := gin.New()
 	r.GET("/api/node/storages", handler.ObtenerStorages)
 
@@ -229,7 +259,7 @@ func TestNodeHandler_ObtenerTemplates(t *testing.T) {
 		},
 	}
 
-	handler := NewNodeHandler(nil, mockPVE, "proxmox")
+	handler := NewNodeHandler(nil, mockPVE, "proxmox", nil)
 	r := gin.New()
 	r.GET("/api/node/templates", handler.ObtenerTemplates)
 
@@ -267,7 +297,7 @@ func TestNodeHandler_ProxmoxUnavailable(t *testing.T) {
 		storagesErr: ports.ErrProxmoxNoDisponible,
 	}
 
-	handler := NewNodeHandler(nil, mockPVE, "proxmox")
+	handler := NewNodeHandler(nil, mockPVE, "proxmox", nil)
 	r := gin.New()
 	r.GET("/api/node/storages", handler.ObtenerStorages)
 	r.GET("/api/node/templates", handler.ObtenerTemplates)
@@ -294,7 +324,7 @@ func TestNodeHandler_RBAC(t *testing.T) {
 			{Storage: "local", Active: 1, Content: "iso"},
 		},
 	}
-	handler := NewNodeHandler(nil, mockPVE, "proxmox")
+	handler := NewNodeHandler(nil, mockPVE, "proxmox", nil)
 
 	setupRouterConRol := func(rol string) *gin.Engine {
 		r := gin.New()
@@ -338,5 +368,103 @@ func TestNodeHandler_RBAC(t *testing.T) {
 		if w.Code != http.StatusOK {
 			t.Errorf("ADMIN en %s esperaba 200 OK, vino %d", ruta, w.Code)
 		}
+	}
+}
+
+// estadoConInventario: dos VM y dos LXC en el nodo; el OPERATOR de los tests
+// tiene asignadas solo la 110 (VM, running) y la 201 (LXC, stopped).
+func estadoConInventario() *ports.EstadoNodo {
+	instancias := []ports.InstanciaDelNodo{
+		{Vmid: 100, Tipo: "qemu", Estado: "running"}, {Vmid: 110, Tipo: "qemu", Estado: "running"},
+		{Vmid: 101, Tipo: "lxc", Estado: "running"}, {Vmid: 201, Tipo: "lxc", Estado: "stopped"},
+	}
+	return &ports.EstadoNodo{
+		CPU:              ports.MetricaCPU{UsagePercent: 3.77, Cores: 12},
+		RAM:              ports.MetricaCapacidad{UsedGb: 2.53, TotalGb: 15.3, UsagePercent: 16.57},
+		Storage:          ports.MetricaCapacidad{UsedGb: 5.1, TotalGb: 67.73, UsagePercent: 7.53},
+		Allocatable:      ports.CuotaAsignable{MaxCPUCores: 6, FreeRamMB: 10717, FreeStorageGB: 59, HeadroomPercent: 15},
+		InstancesSummary: ports.ResumirInstancias(instancias, nil),
+		FetchedAt:        time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC),
+		Instancias:       instancias,
+	}
+}
+
+// DoD: el OPERATOR no recibe el disco físico ni los contadores de instancias
+// ajenas; el ADMIN conserva la vista global.
+func TestEstadoNodo_SegregadoPorRol(t *testing.T) {
+	svc := nodoServiceFalso{estado: estadoConInventario()}
+
+	status, crudo := pedirNodoComo(t, svc, "OPERATOR", permisosFalsos{vmids: []int{110, 201}}, "/api/node/status")
+	var op map[string]any
+	_ = json.Unmarshal(crudo, &op)
+	if status != 200 {
+		t.Fatalf("OPERATOR: %d %s", status, crudo)
+	}
+	if v, presente := op["storage"]; !presente || v != nil {
+		t.Errorf("OPERATOR: storage debe venir en null: %v", op["storage"])
+	}
+	if v, presente := op["allocatable"].(map[string]any)["freeStorageGb"]; !presente || v != nil {
+		t.Errorf("OPERATOR: allocatable.freeStorageGb debe venir en null: %v", op["allocatable"])
+	}
+	resumen, _ := json.Marshal(op["instancesSummary"])
+	if string(resumen) != `{"lxc":{"paused":0,"running":0,"stopped":1,"total":1},"vms":{"paused":0,"running":1,"stopped":0,"total":1}}` {
+		t.Errorf("OPERATOR: instancesSummary debe contar solo sus instancias: %s", resumen)
+	}
+	if op["cpu"] == nil || op["ram"] == nil || op["uptimeSeconds"] == nil {
+		t.Errorf("OPERATOR: CPU, RAM y uptime del host se mantienen: %v", op)
+	}
+	if strings.Contains(string(crudo), "instancias") || strings.Contains(string(crudo), "67.73") {
+		t.Errorf("OPERATOR: no debe filtrar el inventario ni el disco: %s", crudo)
+	}
+
+	_, admin := pedirEstadoNodo(t, svc)
+	if admin["storage"].(map[string]any)["totalGb"] != 67.73 || admin["allocatable"].(map[string]any)["freeStorageGb"] != float64(59) {
+		t.Errorf("ADMIN: conserva el disco: %v", admin)
+	}
+	if admin["instancesSummary"].(map[string]any)["vms"].(map[string]any)["total"] != float64(2) || admin["instancesSummary"].(map[string]any)["lxc"].(map[string]any)["total"] != float64(2) {
+		t.Errorf("ADMIN: instancesSummary global: %v", admin["instancesSummary"])
+	}
+	if _, filtra := admin["instancias"]; filtra {
+		t.Error("ADMIN: la foto interna del inventario tampoco se publica")
+	}
+}
+
+func TestEstadoNodo_OperatorSinAsignacionesCuentaCero(t *testing.T) {
+	_, crudo := pedirNodoComo(t, nodoServiceFalso{estado: estadoConInventario()}, "OPERATOR", permisosFalsos{}, "/api/node/status")
+	var op map[string]any
+	_ = json.Unmarshal(crudo, &op)
+	resumen, _ := json.Marshal(op["instancesSummary"])
+	if string(resumen) != `{"lxc":{"paused":0,"running":0,"stopped":0,"total":0},"vms":{"paused":0,"running":0,"stopped":0,"total":0}}` {
+		t.Errorf("Sin asignaciones no cuenta nada: %s", resumen)
+	}
+}
+
+// Sin rol en el contexto (no debería pasar detrás de RequireAuth) se trata
+// como restringido, y si no se pueden leer los permisos no se responde nada.
+func TestEstadoNodo_FailClosed(t *testing.T) {
+	svc := nodoServiceFalso{estado: estadoConInventario()}
+	_, crudo := pedirNodoComo(t, svc, "", permisosFalsos{}, "/api/node/status")
+	if strings.Contains(string(crudo), "67.73") {
+		t.Errorf("Sin rol no debe ver el disco: %s", crudo)
+	}
+	status, crudo := pedirNodoComo(t, svc, "OPERATOR", permisosFalsos{err: errors.New("base caída")}, "/api/node/status")
+	if status != http.StatusInternalServerError || strings.Contains(string(crudo), "cpu") {
+		t.Errorf("Sin permisos legibles: se esperaba 500 sin datos, vino %d %s", status, crudo)
+	}
+}
+
+func TestHistorialNodo_SinDiscoParaOperator(t *testing.T) {
+	cincuenta := 50.0
+	svc := nodoServiceFalso{historial: []ports.PuntoHistorialNodo{{Timestamp: 1, CPUPercent: 10, RAMPercent: &cincuenta, StoragePercent: &cincuenta}}}
+	_, op := pedirNodoComo(t, svc, "OPERATOR", permisosFalsos{}, "/api/node/history")
+	if strings.Contains(string(op), "storagePercent") || !strings.Contains(string(op), "ramPercent") {
+		t.Errorf("OPERATOR: sin storagePercent, con CPU y RAM: %s", op)
+	}
+	_, admin := pedirNodoComo(t, svc, "ADMIN", nil, "/api/node/history")
+	if !strings.Contains(string(admin), `"storagePercent":50`) {
+		t.Errorf("ADMIN: conserva storagePercent: %s", admin)
+	}
+	if svc.historial[0].StoragePercent == nil {
+		t.Error("No debe modificarse la serie original (puede venir de la caché)")
 	}
 }

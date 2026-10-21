@@ -1,29 +1,47 @@
 package http
 
 import (
+	"context"
+	"log"
 	"net/http"
 	"strings"
 	"time"
 
+	"el-centinela/internal/adapters/primary/http/middleware"
 	"el-centinela/internal/core/ports"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 // NodeHandler expone el estado consolidado del nodo de Proxmox y sus recursos (storages, templates).
 type NodeHandler struct {
-	service ports.NodoService
-	proxmox ports.ProxmoxPort
-	nodo    string
+	service  ports.NodoService
+	proxmox  ports.ProxmoxPort
+	nodo     string
+	permisos permisosDeUsuario // instancias asignadas a un OPERATOR
+}
+
+// permisosDeUsuario es lo que usa el handler de ports.UserRepository.
+type permisosDeUsuario interface {
+	ListarPermisosConNivel(ctx context.Context, usuarioID uuid.UUID) ([]ports.PermisoInstanciaInput, error)
 }
 
 // NewNodeHandler crea el handler del estado del nodo y recursos de almacenamiento.
-func NewNodeHandler(service ports.NodoService, proxmox ports.ProxmoxPort, nodo string) *NodeHandler {
+func NewNodeHandler(service ports.NodoService, proxmox ports.ProxmoxPort, nodo string, permisos permisosDeUsuario) *NodeHandler {
 	return &NodeHandler{
-		service: service,
-		proxmox: proxmox,
-		nodo:    nodo,
+		service:  service,
+		proxmox:  proxmox,
+		nodo:     nodo,
+		permisos: permisos,
 	}
+}
+
+// esAdmin: la telemetría completa del host es solo para ADMIN (fail-closed:
+// sin rol en el contexto se trata como restringido).
+func esAdmin(c *gin.Context) bool {
+	rol, _ := c.Get(middleware.ContextKeyRol)
+	return rol == "ADMIN"
 }
 
 // ==========================================
@@ -34,7 +52,7 @@ func NewNodeHandler(service ports.NodoService, proxmox ports.ProxmoxPort, nodo s
 // y el resumen de instancias.
 //
 // @Summary      Consultar estado consolidado del nodo
-// @Description  OPERATIVO. Disponible para ADMIN y OPERATOR autenticados (no se filtra por permisos de instancia). La lectura se cachea en Redis 10 s (node:status:current): mientras está vigente se responde sin consultar Proxmox. Incluye `allocatable`, con núcleos físicos totales, almacenamiento disponible y RAM libre segura luego de reservar estrictamente 15% para Proxmox. Incluye también instancesSummary, que agrupa el recuento de VMs y contenedores LXC según su estado (running, stopped, paused). Si Proxmox no responde se devuelve la última lectura conocida (node:status:last_known) con `stale: true`; `fetchedAt` indica cuándo se obtuvo. Solo si no hay ninguna lectura previa responde 502 o 504. RAM y almacenamiento en GB (1024³ bytes) con 2 decimales; `storage` es el disco raíz del nodo; `cores` son los hilos lógicos sobre los que se calcula `usagePercent`.
+// @Description  OPERATIVO. Disponible para ADMIN y OPERATOR autenticados, con la respuesta segregada por rol. ADMIN recibe la telemetría completa del host. OPERATOR recibe `storage: null` y `allocatable.freeStorageGb: null` (no ve la capacidad física de almacenamiento), e `instancesSummary` cuenta solo las instancias que tiene asignadas; CPU, RAM y uptime del host se mantienen. La lectura se cachea en Redis 10 s (node:status:current): mientras está vigente se responde sin consultar Proxmox. Incluye `allocatable`, con núcleos físicos totales, almacenamiento disponible y RAM libre segura luego de reservar estrictamente 15% para Proxmox. Incluye también instancesSummary, que agrupa el recuento de VMs y contenedores LXC según su estado (running, stopped, paused). Si Proxmox no responde se devuelve la última lectura conocida (node:status:last_known) con `stale: true`; `fetchedAt` indica cuándo se obtuvo. Solo si no hay ninguna lectura previa responde 502 o 504. RAM y almacenamiento en GB (1024³ bytes) con 2 decimales; `storage` es el disco raíz del nodo; `cores` son los hilos lógicos sobre los que se calcula `usagePercent`.
 // @Tags         Estado del nodo
 // @Produce      json
 // @Security     BearerAuth
@@ -51,31 +69,59 @@ func (h *NodeHandler) ObtenerEstado(c *gin.Context) {
 		mapearErrorProxmox(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, aEstadoNodeResponse(estado, stale))
+	respuesta := aEstadoNodeResponse(estado, stale)
+	if !esAdmin(c) {
+		// Sin capacidad física de almacenamiento y sin contar instancias ajenas.
+		permitidas, err := h.instanciasAsignadas(c)
+		if err != nil {
+			log.Printf("[NODO] no se pudieron leer los permisos de %s: %v", extraerUserID(c), err)
+			SendError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Error al consultar los permisos del usuario.")
+			return
+		}
+		respuesta.Storage = nil
+		respuesta.Allocatable.FreeStorageGB = nil
+		respuesta.InstancesSummary = aResumenInstanciasNode(ports.ResumirInstancias(estado.Instancias, func(vmid int) bool { return permitidas[vmid] }))
+	}
+	c.JSON(http.StatusOK, respuesta)
+}
+
+// instanciasAsignadas devuelve los VMID sobre los que el usuario tiene permiso.
+func (h *NodeHandler) instanciasAsignadas(c *gin.Context) (map[int]bool, error) {
+	permisos, err := h.permisos.ListarPermisosConNivel(c.Request.Context(), extraerUserID(c))
+	if err != nil {
+		return nil, err
+	}
+	permitidas := make(map[int]bool, len(permisos))
+	for _, p := range permisos {
+		permitidas[p.Vmid] = true
+	}
+	return permitidas, nil
+}
+
+func aResumenInstanciasNode(r ports.ResumenInstancias) ResumenInstanciasNode {
+	resumen := func(r ports.ResumenEstado) ResumenEstadoInstancias {
+		return ResumenEstadoInstancias{Running: r.Running, Stopped: r.Stopped, Paused: r.Paused, Total: r.Total}
+	}
+	return ResumenInstanciasNode{VMs: resumen(r.VMs), LXC: resumen(r.LXC)}
 }
 
 func aEstadoNodeResponse(e *ports.EstadoNodo, stale bool) EstadoNodeResponse {
 	capacidad := func(m ports.MetricaCapacidad) MetricaCapacidadNode {
 		return MetricaCapacidadNode{UsedGb: m.UsedGb, TotalGb: m.TotalGb, UsagePercent: m.UsagePercent}
 	}
-	resumen := func(r ports.ResumenEstado) ResumenEstadoInstancias {
-		return ResumenEstadoInstancias{Running: r.Running, Stopped: r.Stopped, Paused: r.Paused, Total: r.Total}
-	}
+	storage, libreStorage := capacidad(e.Storage), e.Allocatable.FreeStorageGB
 	return EstadoNodeResponse{
 		CPU:     MetricaCPUNode{UsagePercent: e.CPU.UsagePercent, Cores: e.CPU.Cores},
 		RAM:     capacidad(e.RAM),
-		Storage: capacidad(e.Storage),
+		Storage: &storage,
 		Allocatable: CuotaAsignableNode{
 			MaxCPUCores: e.Allocatable.MaxCPUCores, FreeRamMB: e.Allocatable.FreeRamMB,
-			FreeStorageGB: e.Allocatable.FreeStorageGB, HeadroomPercent: e.Allocatable.HeadroomPercent,
+			FreeStorageGB: &libreStorage, HeadroomPercent: e.Allocatable.HeadroomPercent,
 		},
-		UptimeSeconds: e.UptimeSeconds,
-		InstancesSummary: ResumenInstanciasNode{
-			VMs: resumen(e.InstancesSummary.VMs),
-			LXC: resumen(e.InstancesSummary.LXC),
-		},
-		Stale:     stale,
-		FetchedAt: e.FetchedAt.UTC().Format(time.RFC3339),
+		UptimeSeconds:    e.UptimeSeconds,
+		InstancesSummary: aResumenInstanciasNode(e.InstancesSummary),
+		Stale:            stale,
+		FetchedAt:        e.FetchedAt.UTC().Format(time.RFC3339),
 	}
 }
 
@@ -86,7 +132,7 @@ func aEstadoNodeResponse(e *ports.EstadoNodo, stale bool) EstadoNodeResponse {
 // ObtenerHistorial devuelve la serie histórica del host para el gráfico del Dashboard.
 //
 // @Summary      Histórico de uso del nodo
-// @Description  Devuelve la serie histórica del host (CPU, memoria y rootfs) normalizada a porcentajes. Es lo que hace que el gráfico del Dashboard ya esté formado al entrar, en vez de arrancar de cero y esperar minutos a que se llene. La fuente es el RRD de Proxmox, cacheado en Redis para no golpear la infraestructura en cada visita.
+// @Description  Devuelve la serie histórica del host (CPU, memoria y rootfs) normalizada a porcentajes. Para quien no es ADMIN se omite `storagePercent` en todos los puntos (no ve la capacidad física de almacenamiento). Es lo que hace que el gráfico del Dashboard ya esté formado al entrar, en vez de arrancar de cero y esperar minutos a que se llene. La fuente es el RRD de Proxmox, cacheado en Redis para no golpear la infraestructura en cada visita.
 // @Tags         Nodo
 // @Produce      json
 // @Security     BearerAuth
@@ -104,6 +150,15 @@ func (h *NodeHandler) ObtenerHistorial(c *gin.Context) {
 	if serie == nil {
 		// Un array vacío y no null: el frontend siempre recibe una lista.
 		serie = []ports.PuntoHistorialNodo{}
+	}
+	if !esAdmin(c) {
+		// Copia: la serie puede venir de la caché compartida.
+		sinDisco := make([]ports.PuntoHistorialNodo, len(serie))
+		for i, p := range serie {
+			p.StoragePercent = nil
+			sinDisco[i] = p
+		}
+		serie = sinDisco
 	}
 	c.JSON(http.StatusOK, serie)
 }
