@@ -148,7 +148,7 @@ func main() {
 	topologia := cargarTopologia(nodoNombre, os.Getenv("INSTANCE_ID_SALT"))
 	auditService := services.NewAuditService(auditRepo, refsInstancia)
 	authService := services.NewAuthService(authRepo, kvStore, emailService, auditService)
-	userService := services.NewUserService(userRepo, authRepo, kvStore, auditService, emailService)
+	userService := services.NewUserService(userRepo, authRepo, kvStore, auditService, emailService, proxmoxClient, vmidsProtegidos)
 	cuotasService := services.NewCuotasService(proxmoxClient, proxmoxClient, kvStore)
 
 	// 5. Inicializar handlers HTTP

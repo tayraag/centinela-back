@@ -21,11 +21,12 @@ type usuariosFalso struct {
 	ports.UserService
 	asignados []ports.PermisoInstanciaInput
 	asigno    bool
+	err       error
 }
 
 func (f *usuariosFalso) AsignarPermisos(_ context.Context, _, _, _ uuid.UUID, permisos []ports.PermisoInstanciaInput) error {
 	f.asigno, f.asignados = true, permisos
-	return nil
+	return f.err
 }
 
 func (f *usuariosFalso) ObtenerPermisos(context.Context, uuid.UUID, uuid.UUID) ([]ports.PermisoInstanciaInput, error) {
@@ -102,6 +103,33 @@ func TestAsignarPermisos_ReferenciaInvalidaEs400SinCambios(t *testing.T) {
 		if w.Code != http.StatusBadRequest || f.asigno {
 			t.Errorf("%s: se esperaba 400 sin tocar permisos, vino %d (asignó=%v) %s", cuerpo, w.Code, f.asigno, w.Body.String())
 		}
+	}
+}
+
+func TestAsignarPermisos_TraduceValidacionesDelCatalogo(t *testing.T) {
+	casos := []struct {
+		nombre string
+		err    error
+		status int
+		codigo string
+		msg    string
+	}{
+		{"inexistente", &ports.ErrorVMIDNoExiste{VMID: 999}, http.StatusBadRequest, "INVALID_REQUEST", "El VMID 999 no existe en el hipervisor."},
+		{"protegida", &ports.ErrorVMIDProtegido{VMID: 100}, http.StatusForbidden, "PROTECTED_INSTANCE_CANNOT_BE_ASSIGNED", "La instancia 100 es de infraestructura protegida y no puede asignarse a operadores."},
+	}
+	for _, caso := range casos {
+		t.Run(caso.nombre, func(t *testing.T) {
+			f := &usuariosFalso{err: caso.err}
+			cuerpo := `{"permisos":[{"vmid":"` + RefInst(110) + `"}]}`
+			w := pedirUsuarios(routerUsuarios(f), http.MethodPut, "/api/admin/users/"+uuid.NewString()+"/permissions", cuerpo)
+			var respuesta map[string]string
+			if err := json.Unmarshal(w.Body.Bytes(), &respuesta); err != nil {
+				t.Fatal(err)
+			}
+			if w.Code != caso.status || respuesta["errorCode"] != caso.codigo || respuesta["message"] != caso.msg {
+				t.Fatalf("respuesta inesperada: status=%d body=%s", w.Code, w.Body.String())
+			}
+		})
 	}
 }
 

@@ -21,10 +21,14 @@ type userServiceImpl struct {
 	bus          busEventos           // para cortar los streams de eventos de un usuario revocado
 	emailService ports.EmailService
 	auditSvc     ports.AuditService
+	proxmox      ports.ProxmoxPort
+	protegidos   map[int]bool
 }
 
-// NewUserService crea una nueva instancia del servicio de usuarios.
-func NewUserService(userRepo ports.UserRepository, authRepo ports.AuthRepository, kv ports.KeyValueStore, auditSvc ports.AuditService, emailService ports.EmailService) ports.UserService {
+// NewUserService crea una nueva instancia del servicio de usuarios. Proxmox y
+// los VMID protegidos son dependencias obligatorias porque AsignarPermisos debe
+// validar el catálogo antes de modificar la base.
+func NewUserService(userRepo ports.UserRepository, authRepo ports.AuthRepository, kv ports.KeyValueStore, auditSvc ports.AuditService, emailService ports.EmailService, proxmox ports.ProxmoxPort, protegidos map[int]bool) ports.UserService {
 	return &userServiceImpl{
 		userRepo:     userRepo,
 		authRepo:     authRepo,
@@ -32,6 +36,8 @@ func NewUserService(userRepo ports.UserRepository, authRepo ports.AuthRepository
 		bus:          busEventos{kv: kv},
 		emailService: emailService,
 		auditSvc:     auditSvc,
+		proxmox:      proxmox,
+		protegidos:   protegidos,
 	}
 }
 
@@ -269,6 +275,33 @@ func (s *userServiceImpl) AsignarPermisos(ctx context.Context, usuarioID, orgID 
 	// Verificar que el usuario existe en la organización y no fue eliminado
 	if _, err := s.buscarModificable(ctx, usuarioID, orgID); err != nil {
 		return err
+	}
+
+	// El bloqueo se evalúa sobre todo el payload antes de consultar Proxmox: una
+	// instancia protegida nunca debe llegar al catálogo ni a persistencia.
+	for _, permiso := range permisos {
+		if s.protegidos[permiso.Vmid] {
+			return &ports.ErrorVMIDProtegido{VMID: permiso.Vmid}
+		}
+	}
+
+	if len(permisos) > 0 {
+		if s.proxmox == nil {
+			return errors.New("validador de catálogo Proxmox no configurado")
+		}
+		instancias, err := s.proxmox.ListarInstancias(ctx)
+		if err != nil {
+			return fmt.Errorf("validar catálogo de instancias: %w", err)
+		}
+		existentes := make(map[int]struct{}, len(instancias))
+		for _, instancia := range instancias {
+			existentes[instancia.Vmid] = struct{}{}
+		}
+		for _, permiso := range permisos {
+			if _, existe := existentes[permiso.Vmid]; !existe {
+				return &ports.ErrorVMIDNoExiste{VMID: permiso.Vmid}
+			}
+		}
 	}
 
 	if err := s.userRepo.ReemplazarPermisos(ctx, usuarioID, permisos); err != nil {

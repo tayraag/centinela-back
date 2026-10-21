@@ -1758,10 +1758,13 @@ paths:
       description: 'Reemplaza atómicamente todos los permisos de instancia del usuario,
         con su nivel de acceso. Envía `{"permisos": [{"vmid": "inst_...", "nivelAcceso":
         "READ_ONLY"}]}`: `vmid` lleva el `id` de cada instancia tal como lo devuelve
-        GET /api/instances, nunca el número. Una referencia inválida (alterada, de
-        otro servidor o un número) responde 400 INVALID_REQUEST y no se cambia ningún
-        permiso. Si se omite nivelAcceso en un ítem, se asume FULL_ACCESS. Para quitar
-        todos los permisos, enviar `{"permisos": []}`.'
+        GET /api/instances, nunca el número. Antes de persistir se comprueba que todas
+        las instancias existan en Proxmox y que ninguna sea infraestructura protegida.
+        Una referencia inválida o una instancia inexistente responde 400 INVALID_REQUEST;
+        una protegida responde 403 PROTECTED_INSTANCE_CANNOT_BE_ASSIGNED. En todos
+        esos casos no se cambia ningún permiso. Si se omite nivelAcceso en un ítem,
+        se asume FULL_ACCESS. Para quitar todos los permisos, enviar `{"permisos":
+        []}`.'
       parameters:
       - description: UUID del usuario
         in: path
@@ -1780,8 +1783,8 @@ paths:
         "204":
           description: Sin contenido
         "400":
-          description: INVALID_REQUEST — falta permisos o algún vmid no es una referencia
-            válida
+          description: INVALID_REQUEST — falta permisos, algún vmid no es una referencia
+            válida o no existe en Proxmox
           schema:
             $ref: '#/definitions/http.ErrorResponse'
         "401":
@@ -1791,11 +1794,10 @@ paths:
               type: string
             type: object
         "403":
-          description: Forbidden
+          description: PROTECTED_INSTANCE_CANNOT_BE_ASSIGNED — la instancia es infraestructura
+            protegida
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/http.ErrorResponse'
         "404":
           description: USER_NOT_FOUND — no existe o fue eliminado
           schema:

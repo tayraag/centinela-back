@@ -270,7 +270,7 @@ type asignarPermisosRequest struct {
 // AsignarPermisos reemplaza todos los permisos de instancia de un usuario operador.
 //
 // @Summary      Asignar instancias Proxmox al usuario
-// @Description  Reemplaza atómicamente todos los permisos de instancia del usuario, con su nivel de acceso. Envía `{"permisos": [{"vmid": "inst_...", "nivelAcceso": "READ_ONLY"}]}`: `vmid` lleva el `id` de cada instancia tal como lo devuelve GET /api/instances, nunca el número. Una referencia inválida (alterada, de otro servidor o un número) responde 400 INVALID_REQUEST y no se cambia ningún permiso. Si se omite nivelAcceso en un ítem, se asume FULL_ACCESS. Para quitar todos los permisos, enviar `{"permisos": []}`.
+// @Description  Reemplaza atómicamente todos los permisos de instancia del usuario, con su nivel de acceso. Envía `{"permisos": [{"vmid": "inst_...", "nivelAcceso": "READ_ONLY"}]}`: `vmid` lleva el `id` de cada instancia tal como lo devuelve GET /api/instances, nunca el número. Antes de persistir se comprueba que todas las instancias existan en Proxmox y que ninguna sea infraestructura protegida. Una referencia inválida o una instancia inexistente responde 400 INVALID_REQUEST; una protegida responde 403 PROTECTED_INSTANCE_CANNOT_BE_ASSIGNED. En todos esos casos no se cambia ningún permiso. Si se omite nivelAcceso en un ítem, se asume FULL_ACCESS. Para quitar todos los permisos, enviar `{"permisos": []}`.
 // @Tags         Usuarios (Admin)
 // @Accept       json
 // @Produce      json
@@ -279,9 +279,9 @@ type asignarPermisosRequest struct {
 // @Param        body body asignarPermisosRequest true "Lista de permisos (vmid + nivelAcceso) a asignar"
 // @Success      204 "Sin contenido"
 // @Failure      401 {object} map[string]string
-// @Failure      403 {object} map[string]string
+// @Failure      403 {object} ErrorResponse "PROTECTED_INSTANCE_CANNOT_BE_ASSIGNED — la instancia es infraestructura protegida"
 // @Failure      404 {object} ErrorResponse "USER_NOT_FOUND — no existe o fue eliminado"
-// @Failure      400 {object} ErrorResponse "INVALID_REQUEST — falta permisos o algún vmid no es una referencia válida"
+// @Failure      400 {object} ErrorResponse "INVALID_REQUEST — falta permisos, algún vmid no es una referencia válida o no existe en Proxmox"
 // @Router       /admin/users/{id}/permissions [put]
 func (h *UserHandler) AsignarPermisos(c *gin.Context) {
 	id, ok := parsearUUID(c, "id")
@@ -518,6 +518,14 @@ func responderErrorUsuario(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, ports.ErrPerfilInvalido), errors.Is(err, ports.ErrEmailToken):
 		SendError(c, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+	case errors.Is(err, ports.ErrVMIDNoExiste):
+		SendError(c, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+	case errors.Is(err, ports.ErrVMIDProtegido):
+		SendError(c, http.StatusForbidden, "PROTECTED_INSTANCE_CANNOT_BE_ASSIGNED", err.Error())
+	case errors.Is(err, ports.ErrProxmoxTimeout):
+		SendError(c, http.StatusGatewayTimeout, "PROXMOX_TIMEOUT", "Proxmox no respondió a tiempo.")
+	case errors.Is(err, ports.ErrProxmoxNoDisponible):
+		SendError(c, http.StatusBadGateway, "PROXMOX_UNAVAILABLE", "Error al consultar la infraestructura subyacente.")
 	case errors.Is(err, ports.ErrPerfilAuth):
 		SendError(c, http.StatusUnauthorized, "AUTH_FAILED", "Reautenticación incorrecta.")
 	case errors.Is(err, ports.ErrPerfilOTP):

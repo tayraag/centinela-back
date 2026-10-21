@@ -3,6 +3,7 @@ package ports
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"el-centinela/internal/core/domain"
@@ -168,7 +169,32 @@ var (
 	// ErrRevocacionFallida: no se pudo cortar el acceso del usuario (sesiones en
 	// PostgreSQL o en el almacén efímero). La operación no se aplicó (fail-closed).
 	ErrRevocacionFallida = errors.New("no se pudo revocar el acceso del usuario")
+	// ErrVMIDNoExiste identifica un permiso referido a una instancia que no
+	// figura en el catálogo actual del hipervisor.
+	ErrVMIDNoExiste = errors.New("VMID inexistente en el hipervisor")
+	// ErrVMIDProtegido identifica un intento de asignar infraestructura interna
+	// a un operador.
+	ErrVMIDProtegido = errors.New("instancia protegida no asignable")
 )
+
+// ErrorVMIDNoExiste conserva el VMID para poder devolver el mensaje de negocio
+// exacto sin que la capa HTTP tenga que interpretar strings.
+type ErrorVMIDNoExiste struct{ VMID int }
+
+func (e *ErrorVMIDNoExiste) Error() string {
+	return fmt.Sprintf("El VMID %d no existe en el hipervisor.", e.VMID)
+}
+
+func (e *ErrorVMIDNoExiste) Is(target error) bool { return target == ErrVMIDNoExiste }
+
+// ErrorVMIDProtegido conserva el identificador de la instancia protegida.
+type ErrorVMIDProtegido struct{ VMID int }
+
+func (e *ErrorVMIDProtegido) Error() string {
+	return fmt.Sprintf("La instancia %d es de infraestructura protegida y no puede asignarse a operadores.", e.VMID)
+}
+
+func (e *ErrorVMIDProtegido) Is(target error) bool { return target == ErrVMIDProtegido }
 
 type UserRepository interface {
 	// ConfirmarCambioEmail actualiza el correo y registra la auditoría en la misma transacción.

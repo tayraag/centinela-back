@@ -61,7 +61,7 @@ func TestCambiarContrasena_RevocaOtrasSesionesYConservaLaActual(t *testing.T) {
 
 	auditoria := &auditoriaGrabadora{}
 	usuarios := &repoUsuarioCambioContrasena{repo: e.repo}
-	servicio := services.NewUserService(usuarios, e.repo, e.kv, auditoria, nil)
+	servicio := services.NewUserService(usuarios, e.repo, e.kv, auditoria, nil, nil, nil)
 	if err := servicio.CambiarContrasena(ctx, e.repo.usuario.ID, sidActual, ports.CambiarContrasenaInput{
 		ContrasenaActual: contrasenaPrueba,
 		ContrasenaNueva:  "NuevaClave456!",
