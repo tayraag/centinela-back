@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
+	"unicode/utf8"
 
 	"el-centinela/internal/core/domain"
 	"el-centinela/internal/infrastructure/crypto"
@@ -430,7 +432,46 @@ func crearParticionesAuditoria(db *gorm.DB) error {
 	return nil
 }
 
-// seedAdminPorDefecto crea un administrador por defecto si la tabla de usuarios está vacía.
+// emailAdminDesarrollo es el usuario que se siembra en desarrollo cuando no se
+// configura INITIAL_ADMIN_EMAIL.
+const emailAdminDesarrollo = "admin@elcentinela.com"
+
+// credencialesIniciales decide con qué datos se siembra el primer ADMIN.
+// Nunca hay una clave fija en el código:
+//   - INITIAL_ADMIN_EMAIL e INITIAL_ADMIN_PASSWORD configuradas (en cualquier
+//     entorno): se usan esas. Si falta una de las dos o no son válidas, no se
+//     siembra nada.
+//   - Sin ellas, con APP_ENV=production: no se siembra (hay que usar cmd/seed).
+//   - Sin ellas, fuera de producción: clave aleatoria (generada = true), que se
+//     muestra en el log local porque si no nadie podría entrar.
+//
+// Devuelve ok = false y el motivo cuando no corresponde sembrar.
+func credencialesIniciales(appEnv, email, clave string) (emailFinal, claveFinal string, generada, ok bool, motivo string) {
+	email, clave = strings.TrimSpace(email), strings.TrimSpace(clave)
+	switch {
+	case email != "" && clave != "":
+		if !strings.Contains(email, "@") {
+			return "", "", false, false, "INITIAL_ADMIN_EMAIL no es un correo válido"
+		}
+		if n := utf8.RuneCountInString(clave); n < 8 || n > 128 {
+			return "", "", false, false, "INITIAL_ADMIN_PASSWORD debe tener entre 8 y 128 caracteres"
+		}
+		return email, clave, false, true, ""
+	case email != "" || clave != "":
+		return "", "", false, false, "falta INITIAL_ADMIN_EMAIL o INITIAL_ADMIN_PASSWORD (se necesitan las dos)"
+	case appEnv == "production":
+		return "", "", false, false, "APP_ENV=production: el sembrado automático de credenciales por defecto está deshabilitado"
+	}
+	temporal, err := crypto.GenerarContrasenaTemp()
+	if err != nil {
+		return "", "", false, false, fmt.Sprintf("no se pudo generar una clave aleatoria: %v", err)
+	}
+	return emailAdminDesarrollo, temporal, true, true, ""
+}
+
+// seedAdminPorDefecto crea el primer administrador si la tabla de usuarios
+// está vacía, con las credenciales que decide credencialesIniciales. La clave
+// solo se muestra en el log cuando es aleatoria y fuera de producción.
 func seedAdminPorDefecto(db *gorm.DB) {
 	var count int64
 	db.Model(&domain.Usuario{}).Count(&count)
@@ -438,7 +479,13 @@ func seedAdminPorDefecto(db *gorm.DB) {
 		return // Ya existen usuarios, no hacemos nada
 	}
 
-	log.Println("⚠️  Base de datos vacía. Generando Administrador por defecto...")
+	email, clave, generada, ok, motivo := credencialesIniciales(os.Getenv("APP_ENV"), os.Getenv("INITIAL_ADMIN_EMAIL"), os.Getenv("INITIAL_ADMIN_PASSWORD"))
+	if !ok {
+		log.Printf("[INFO] Base de datos sin usuarios y sin administrador inicial: %s. Crear el primero con: go run ./cmd/seed/", motivo)
+		return
+	}
+
+	log.Println("⚠️  Base de datos vacía. Generando el administrador inicial...")
 
 	// 1. Crear Organización por defecto
 	org := domain.Organizacion{
@@ -452,13 +499,17 @@ func seedAdminPorDefecto(db *gorm.DB) {
 	}
 
 	// 2. Crear Administrador
-	hash, _ := crypto.HashContrasena("Admin123!")
+	hash, err := crypto.HashContrasena(clave)
+	if err != nil {
+		log.Printf("❌ Error preparando la clave del administrador inicial: %v", err)
+		return
+	}
 	admin := domain.Usuario{
 		ID:               uuid.New(),
 		OrganizacionID:   org.ID,
 		NombreCompleto:   "Administrador",
 		NombreUsuario:    "admin",
-		EmailUsuario:     "admin@elcentinela.com",
+		EmailUsuario:     email,
 		ContrasenaHash:   hash,
 		Rol:              "ADMIN",
 		Activo:           true,
@@ -473,7 +524,11 @@ func seedAdminPorDefecto(db *gorm.DB) {
 	// 3. Actualizar CreadoPor en la organización
 	db.Model(&org).Update("creado_por", admin.ID)
 
-	log.Println("✅ Administrador por defecto creado exitosamente.")
-	log.Println("   👉 Email: admin@elcentinela.com")
-	log.Println("   👉 Clave: Admin123!")
+	log.Println("✅ Administrador inicial creado exitosamente (debe cambiar la clave en el primer login).")
+	log.Printf("   👉 Email: %s", email)
+	if generada {
+		log.Printf("   👉 Clave temporal (solo desarrollo): %s", clave)
+	} else {
+		log.Println("   👉 Clave: la de INITIAL_ADMIN_PASSWORD (no se muestra)")
+	}
 }

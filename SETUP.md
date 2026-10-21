@@ -39,6 +39,7 @@ Editar `.env` con valores reales. Los campos obligatorios son:
 | `JWT_ACCESS_TTL_HOURS` | Vida del access token en horas                                       | `8`                                     |
 | `JWT_REFRESH_TTL_DAYS` | Vida del refresh token en días                                       | `30`                                    |
 | `TOTP_ENCRYPTION_KEY`  | Clave AES-256 para cifrar secretos TOTP (exactamente 32 chars ASCII) | `0123456789abcdef0123456789abcdef`      |
+| `INITIAL_ADMIN_EMAIL` / `INITIAL_ADMIN_PASSWORD` | Opcionales. Administrador que se crea solo si la base no tiene usuarios (ver sección 5). Vacías está bien | *(vacío)* |
 | `INSTANCE_ID_SALT`     | Secreto (≥32 chars) que cifra el VMID en la referencia pública `inst_...` de cada instancia. Sin él la API no arranca; si cambia, cambian todas las referencias | `openssl rand -base64 48`               |
 | `APP_NAME`             | Nombre que aparece en Google Authenticator                           | `El Centinela`                          |
 | `APP_ENV`              | Entorno de ejecución; usar `production` en producción                | `development`                           |
@@ -168,6 +169,18 @@ go mod tidy
 ---
 
 ## 5. Crear el primer usuario administrador (seed)
+
+> **Administrador automático.** Si la API arranca sobre una base sin ningún
+> usuario, puede crear el primer ADMIN sola. Nunca usa una clave fija:
+>
+> - Con `INITIAL_ADMIN_EMAIL` e `INITIAL_ADMIN_PASSWORD` (mínimo 8 caracteres)
+>   crea ese ADMIN, en cualquier entorno. La clave no se escribe en el log.
+> - Sin ellas y con `APP_ENV=production` **no crea nadie**: hay que usar el seed
+>   de abajo.
+> - Sin ellas y en desarrollo crea `admin@elcentinela.com` con una clave
+>   aleatoria que se muestra una sola vez en el log de arranque.
+>
+> En todos los casos hay que cambiar la clave en el primer login.
 
 > ⚠️ **Solo se ejecuta UNA vez**, al configurar el proyecto por primera vez.
 > No elimina nada, no pisa credenciales existentes.
