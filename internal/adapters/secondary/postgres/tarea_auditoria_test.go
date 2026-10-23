@@ -83,7 +83,7 @@ func TestRF08ParticionesCorrelacionFiltrosYCierreConcurrente(t *testing.T) {
 				wg.Add(1)
 				go func() {
 					defer wg.Done()
-					if err := repo.ActualizarEstado(ctx, tarea.ID, ports.TareaCompleted, map[string]any{"exitstatus": "OK", "motivo": nil}, services.NewAuditService(nil).PrepararAuditoriaTarea(tarea, map[string]any{"exitstatus": "OK", "motivo": nil}, time.Now())); err != nil {
+					if _, err := repo.ActualizarEstado(ctx, tarea.ID, ports.TareaCompleted, map[string]any{"exitstatus": "OK", "motivo": nil}, services.NewAuditService(nil).PrepararAuditoriaTarea(tarea, map[string]any{"exitstatus": "OK", "motivo": nil}, time.Now())); err != nil {
 						t.Error(err)
 					}
 				}()
@@ -143,7 +143,7 @@ func TestRF08RollbackYReintento(t *testing.T) {
 	}
 	db.Exec(`ALTER TABLE auditoria ADD CONSTRAINT simular_fallo CHECK (resultado <> 'SUCCESS')`)
 	cierre := map[string]any{"exitstatus": "OK", "motivo": nil}
-	if err := repo.ActualizarEstado(ctx, tarea.ID, ports.TareaCompleted, cierre, services.NewAuditService(nil).PrepararAuditoriaTarea(tarea, cierre, time.Now())); err == nil {
+	if _, err := repo.ActualizarEstado(ctx, tarea.ID, ports.TareaCompleted, cierre, services.NewAuditService(nil).PrepararAuditoriaTarea(tarea, cierre, time.Now())); err == nil {
 		t.Fatal("debió fallar el cierre")
 	}
 	var persistida domain.TareaAsincrona
@@ -154,7 +154,7 @@ func TestRF08RollbackYReintento(t *testing.T) {
 		t.Fatal("el cierre fallido no dejó RUNNING para reintento")
 	}
 	db.Exec(`ALTER TABLE auditoria DROP CONSTRAINT simular_fallo`)
-	if err := repo.ActualizarEstado(ctx, tarea.ID, ports.TareaCompleted, cierre, services.NewAuditService(nil).PrepararAuditoriaTarea(tarea, cierre, time.Now())); err != nil {
+	if _, err := repo.ActualizarEstado(ctx, tarea.ID, ports.TareaCompleted, cierre, services.NewAuditService(nil).PrepararAuditoriaTarea(tarea, cierre, time.Now())); err != nil {
 		t.Fatal(err)
 	}
 	db.Model(&domain.Auditoria{}).Count(&count)
@@ -170,7 +170,7 @@ func TestRF08TimeoutPersistido(t *testing.T) {
 	if err := repo.Crear(ctx, tarea, services.NewAuditService(nil).PrepararAuditoriaTarea(tarea, nil, time.Now())); err != nil {
 		t.Fatal(err)
 	}
-	if err := repo.ActualizarEstado(ctx, tarea.ID, ports.TareaFailed, map[string]any{"exitstatus": nil, "motivo": "TIMEOUT"}, services.NewAuditService(nil).PrepararAuditoriaTarea(tarea, map[string]any{"exitstatus": nil, "motivo": "TIMEOUT"}, time.Now())); err != nil {
+	if _, err := repo.ActualizarEstado(ctx, tarea.ID, ports.TareaFailed, map[string]any{"exitstatus": nil, "motivo": "TIMEOUT"}, services.NewAuditService(nil).PrepararAuditoriaTarea(tarea, map[string]any{"exitstatus": nil, "motivo": "TIMEOUT"}, time.Now())); err != nil {
 		t.Fatal(err)
 	}
 	var fin domain.Auditoria
@@ -210,7 +210,7 @@ func TestCreacionExitosaAutoasignaFullAccess(t *testing.T) {
 			t.Fatal(err)
 		}
 		cierre := map[string]any{"exitstatus": "OK", "motivo": nil, "error": nil}
-		if err := repo.ActualizarEstado(ctx, tarea.ID, ports.TareaCompleted, cierre, services.NewAuditService(nil).PrepararAuditoriaTarea(tarea, cierre, time.Now())); err != nil {
+		if _, err := repo.ActualizarEstado(ctx, tarea.ID, ports.TareaCompleted, cierre, services.NewAuditService(nil).PrepararAuditoriaTarea(tarea, cierre, time.Now())); err != nil {
 			t.Fatal(err)
 		}
 
@@ -235,7 +235,7 @@ func TestCreacionGeneraDosAuditoriasCorrelacionadasPorUPID(t *testing.T) {
 		t.Fatal(err)
 	}
 	cierre := map[string]any{"exitstatus": "OK", "motivo": nil, "error": nil}
-	if err := repo.ActualizarEstado(ctx, tarea.ID, ports.TareaCompleted, cierre, audit.PrepararAuditoriaTarea(tarea, cierre, time.Now())); err != nil {
+	if _, err := repo.ActualizarEstado(ctx, tarea.ID, ports.TareaCompleted, cierre, audit.PrepararAuditoriaTarea(tarea, cierre, time.Now())); err != nil {
 		t.Fatal(err)
 	}
 	var registros []domain.Auditoria
@@ -256,7 +256,7 @@ func TestCreacionNoAsignaPermisoCuandoFalla(t *testing.T) {
 		t.Fatal(err)
 	}
 	cierre := map[string]any{"exitstatus": "unable to create VM", "motivo": ports.MotivoProxmoxError}
-	if err := repo.ActualizarEstado(ctx, tarea.ID, ports.TareaFailed, cierre, services.NewAuditService(nil).PrepararAuditoriaTarea(tarea, cierre, time.Now())); err != nil {
+	if _, err := repo.ActualizarEstado(ctx, tarea.ID, ports.TareaFailed, cierre, services.NewAuditService(nil).PrepararAuditoriaTarea(tarea, cierre, time.Now())); err != nil {
 		t.Fatal(err)
 	}
 	var cantidad int64
@@ -275,7 +275,7 @@ func TestCreacionConAdvertenciasNoAutoasignaPermiso(t *testing.T) {
 		t.Fatal(err)
 	}
 	cierre := map[string]any{"exitstatus": "WARNINGS: 1", "motivo": nil, "error": nil}
-	if err := repo.ActualizarEstado(ctx, tarea.ID, ports.TareaCompleted, cierre, services.NewAuditService(nil).PrepararAuditoriaTarea(tarea, cierre, time.Now())); err != nil {
+	if _, err := repo.ActualizarEstado(ctx, tarea.ID, ports.TareaCompleted, cierre, services.NewAuditService(nil).PrepararAuditoriaTarea(tarea, cierre, time.Now())); err != nil {
 		t.Fatal(err)
 	}
 	var cantidad int64
@@ -298,7 +298,7 @@ func TestCreacionHaceRollbackSiNoPuedeAsignarPermiso(t *testing.T) {
 		t.Fatal(err)
 	}
 	cierre := map[string]any{"exitstatus": "OK", "motivo": nil, "error": nil}
-	if err := repo.ActualizarEstado(ctx, tarea.ID, ports.TareaCompleted, cierre, services.NewAuditService(nil).PrepararAuditoriaTarea(tarea, cierre, time.Now())); err == nil {
+	if _, err := repo.ActualizarEstado(ctx, tarea.ID, ports.TareaCompleted, cierre, services.NewAuditService(nil).PrepararAuditoriaTarea(tarea, cierre, time.Now())); err == nil {
 		t.Fatal("el cierre debía fallar si no se puede autoasignar el permiso")
 	}
 
@@ -313,5 +313,106 @@ func TestCreacionHaceRollbackSiNoPuedeAsignarPermiso(t *testing.T) {
 	db.Model(&domain.Auditoria{}).Where("instancia_id = ?", tarea.InstanciaID).Count(&auditorias)
 	if auditorias != 1 {
 		t.Fatalf("el rollback dejó auditoría final: total=%d", auditorias)
+	}
+}
+
+func TestDestruccionExitosaPurgaPermisosYAuditaEnElMismoCommit(t *testing.T) {
+	db, usuario, _ := baseRF08(t)
+	repo, ctx := postgres.NewTareaRepository(db), context.Background()
+	tarea := nuevaTareaRF08(usuario, "qmdestroy")
+	if err := db.Create(&domain.PermisoInstancia{
+		UsuarioID: usuario, VmidProxmox: 110, NivelAcceso: ports.NivelAccesoFullAccess,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Crear(ctx, tarea, services.NewAuditService(nil).PrepararAuditoriaTarea(tarea, nil, time.Now())); err != nil {
+		t.Fatal(err)
+	}
+	cierre := map[string]any{"exitstatus": "OK", "motivo": nil, "error": nil}
+	afectados, err := repo.ActualizarEstado(ctx, tarea.ID, ports.TareaCompleted, cierre,
+		services.NewAuditService(nil).PrepararAuditoriaTarea(tarea, cierre, time.Now()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(afectados) != 1 || afectados[0] != usuario {
+		t.Fatalf("usuarios afectados = %v", afectados)
+	}
+	var permisos int64
+	if err := db.Model(&domain.PermisoInstancia{}).Where("vmid_proxmox = ?", 110).Count(&permisos).Error; err != nil {
+		t.Fatal(err)
+	}
+	if permisos != 0 {
+		t.Fatalf("quedaron %d permisos huérfanos para el vmid 110", permisos)
+	}
+	var purga domain.Auditoria
+	if err := db.Where("accion = ? AND instancia_id = ?", ports.AccionInstancePermissionsPurged, "110").First(&purga).Error; err != nil {
+		t.Fatal(err)
+	}
+	if purga.Resultado != ports.ResultadoSuccess || purga.Detalles == nil {
+		t.Fatalf("auditoría de purga incompleta: %+v", purga)
+	}
+	var detalles map[string]any
+	if err := json.Unmarshal([]byte(*purga.Detalles), &detalles); err != nil {
+		t.Fatal(err)
+	}
+	usuarios, ok := detalles["usuariosAfectados"].([]any)
+	if detalles["vmid"] != float64(110) || !ok || len(usuarios) != 1 || usuarios[0] != usuario.String() {
+		t.Fatalf("detalles de purga incorrectos: %v", detalles)
+	}
+}
+
+func TestDestruccionFallidaNoPurgaPermisos(t *testing.T) {
+	db, usuario, _ := baseRF08(t)
+	repo, ctx := postgres.NewTareaRepository(db), context.Background()
+	tarea := nuevaTareaRF08(usuario, "vzdestroy")
+	if err := db.Create(&domain.PermisoInstancia{
+		UsuarioID: usuario, VmidProxmox: 110, NivelAcceso: ports.NivelAccesoFullAccess,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Crear(ctx, tarea, services.NewAuditService(nil).PrepararAuditoriaTarea(tarea, nil, time.Now())); err != nil {
+		t.Fatal(err)
+	}
+	cierre := map[string]any{"exitstatus": "TASK ERROR: locked", "motivo": ports.MotivoProxmoxError}
+	if afectados, err := repo.ActualizarEstado(ctx, tarea.ID, ports.TareaFailed, cierre,
+		services.NewAuditService(nil).PrepararAuditoriaTarea(tarea, cierre, time.Now())); err != nil || len(afectados) != 0 {
+		t.Fatalf("cierre fallido inesperado: afectados=%v err=%v", afectados, err)
+	}
+	var permisos, purgas int64
+	db.Model(&domain.PermisoInstancia{}).Where("vmid_proxmox = ?", 110).Count(&permisos)
+	db.Model(&domain.Auditoria{}).Where("accion = ?", ports.AccionInstancePermissionsPurged).Count(&purgas)
+	if permisos != 1 || purgas != 0 {
+		t.Fatalf("un fallo alteró permisos o auditoría: permisos=%d purgas=%d", permisos, purgas)
+	}
+}
+
+func TestDestruccionHaceRollbackSiFallaAuditoriaDePurga(t *testing.T) {
+	db, usuario, _ := baseRF08(t)
+	repo, ctx := postgres.NewTareaRepository(db), context.Background()
+	tarea := nuevaTareaRF08(usuario, "delete")
+	if err := db.Create(&domain.PermisoInstancia{
+		UsuarioID: usuario, VmidProxmox: 110, NivelAcceso: ports.NivelAccesoFullAccess,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Crear(ctx, tarea, services.NewAuditService(nil).PrepararAuditoriaTarea(tarea, nil, time.Now())); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`ALTER TABLE auditoria ADD CONSTRAINT simular_fallo_purga CHECK (accion <> 'INSTANCE_PERMISSIONS_PURGED')`).Error; err != nil {
+		t.Fatal(err)
+	}
+	cierre := map[string]any{"exitstatus": "OK", "motivo": nil, "error": nil}
+	if _, err := repo.ActualizarEstado(ctx, tarea.ID, ports.TareaCompleted, cierre,
+		services.NewAuditService(nil).PrepararAuditoriaTarea(tarea, cierre, time.Now())); err == nil {
+		t.Fatal("el cierre debía fallar junto con la auditoría de purga")
+	}
+	var persistida domain.TareaAsincrona
+	if err := db.First(&persistida, "id = ?", tarea.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	var permisos int64
+	db.Model(&domain.PermisoInstancia{}).Where("vmid_proxmox = ?", 110).Count(&permisos)
+	if persistida.Estado != ports.TareaRunning || permisos != 1 {
+		t.Fatalf("rollback incompleto: estado=%s permisos=%d", persistida.Estado, permisos)
 	}
 }

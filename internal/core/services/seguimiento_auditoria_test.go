@@ -18,9 +18,9 @@ type cierreConFalla struct {
 	intentos atomic.Int32
 }
 
-func (r *cierreConFalla) ActualizarEstado(ctx context.Context, id uuid.UUID, estado string, meta map[string]any, auditoria ports.RegistrarAuditoriaInput) error {
+func (r *cierreConFalla) ActualizarEstado(ctx context.Context, id uuid.UUID, estado string, meta map[string]any, auditoria ports.RegistrarAuditoriaInput) ([]uuid.UUID, error) {
 	if r.intentos.Add(1) == 1 {
-		return errors.New("inserción de auditoría fallida")
+		return nil, errors.New("inserción de auditoría fallida")
 	}
 	return r.tareasEnMemoria.ActualizarEstado(ctx, id, estado, meta, auditoria)
 }

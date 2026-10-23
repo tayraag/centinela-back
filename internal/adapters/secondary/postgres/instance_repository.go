@@ -2,10 +2,7 @@ package postgres
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"strconv"
-	"time"
 
 	"el-centinela/internal/core/domain"
 	"el-centinela/internal/core/ports"
@@ -78,25 +75,21 @@ func (r *InstanceRepository) PurgarPermisosPorVmid(ctx context.Context, vmid int
 		}
 
 		detalles := map[string]any{
-			"vmid":               vmid,
-			"usuarios_afectados": usuariosAfectados,
-			"resource_type":      recursoTipo,
+			"vmid":              vmid,
+			"usuariosAfectados": usuariosAfectados,
+			"resource_type":     recursoTipo,
 		}
-		detallesBytes, err := json.Marshal(detalles)
-		if err != nil {
-			return fmt.Errorf("error al serializar detalles de auditoría: %w", err)
+		var usuarioID uuid.UUID
+		if usuarioIDPtr != nil {
+			usuarioID = *usuarioIDPtr
 		}
-		detallesStr := string(detallesBytes)
-
-		auditoriaEntry := domain.Auditoria{
-			UsuarioID:   usuarioIDPtr,
+		if err := NewAuditRepository(tx).Registrar(ctx, ports.RegistrarAuditoriaInput{
+			UsuarioID:   usuarioID,
 			Accion:      ports.AccionInstancePermissionsPurged,
-			InstanciaID: strconv.Itoa(vmid),
-			Resultado:   "SUCCESS",
-			Detalles:    &detallesStr,
-			FechaHora:   time.Now(),
-		}
-		if err := tx.Create(&auditoriaEntry).Error; err != nil {
+			InstanciaID: fmt.Sprintf("%d", vmid),
+			Resultado:   ports.ResultadoSuccess,
+			Detalles:    detalles,
+		}); err != nil {
 			return fmt.Errorf("error al registrar auditoría de purga: %w", err)
 		}
 

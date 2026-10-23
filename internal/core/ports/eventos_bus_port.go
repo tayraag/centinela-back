@@ -28,10 +28,11 @@ const (
 
 // MensajeBus es el sobre que viaja por CanalEventos (en JSON).
 type MensajeBus struct {
-	Tipo      string         `json:"tipo"`
-	Evento    *RealtimeEvent `json:"evento,omitempty"`
-	UsuarioID *uuid.UUID     `json:"usuarioId,omitempty"`
-	SesionID  *uuid.UUID     `json:"sesionId,omitempty"`
+	Tipo          string         `json:"tipo"`
+	Evento        *RealtimeEvent `json:"evento,omitempty"`
+	UsuarioID     *uuid.UUID     `json:"usuarioId,omitempty"`
+	SesionID      *uuid.UUID     `json:"sesionId,omitempty"`
+	Destinatarios []uuid.UUID    `json:"destinatarios,omitempty"`
 }
 
 // ErrTicketInvalido indica que el ticket no existe, venció o ya se usó.
@@ -62,6 +63,11 @@ type EventosService interface {
 
 	// Publicar envía un evento a todos los clientes que puedan verlo.
 	Publicar(ctx context.Context, evento RealtimeEvent) error
+
+	// PublicarParaUsuarios conserva el RBAC normal para administradores y,
+	// además, entrega el evento a los usuarios indicados. Se usa para el último
+	// TASK_FINISHED de una instancia cuyos permisos ya fueron purgados.
+	PublicarParaUsuarios(ctx context.Context, evento RealtimeEvent, usuarios []uuid.UUID) error
 }
 
 // SeguimientoTareas registra una tarea asíncrona de Proxmox (UPID), la sigue

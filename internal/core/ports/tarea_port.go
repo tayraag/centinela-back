@@ -54,7 +54,11 @@ type TareaRepository interface {
 	// creador sobre el VMID reservado.
 	// Repetir el cierre de una tarea terminada no genera nuevos registros. Un
 	// error deja RUNNING para reintento.
-	ActualizarEstado(ctx context.Context, id uuid.UUID, estado string, metadatos map[string]any, auditoria RegistrarAuditoriaInput) error
+	// Si confirma una destrucción con exitstatus OK, la misma transacción
+	// recolecta y elimina los permisos del VMID y registra
+	// INSTANCE_PERMISSIONS_PURGED. Devuelve los usuarios afectados para que el
+	// worker pueda dirigirles el último TASK_FINISHED después del commit.
+	ActualizarEstado(ctx context.Context, id uuid.UUID, estado string, metadatos map[string]any, auditoria RegistrarAuditoriaInput) ([]uuid.UUID, error)
 
 	// BuscarTareasActivasPorVmids devuelve un mapa vmid → tarea en curso
 	// (tareaId, acción en mayúsculas y estado RUNNING) de cualquiera de los

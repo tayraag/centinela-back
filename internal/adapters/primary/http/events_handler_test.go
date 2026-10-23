@@ -41,6 +41,9 @@ func (f *eventosFalso) Conectar(_ context.Context, ticket string) (*ports.Conexi
 	return &ports.ConexionEventos{Eventos: f.eventos, Cierre: f.cierre, Cerrar: func() { close(f.cerrado) }}, nil
 }
 func (f *eventosFalso) Publicar(context.Context, ports.RealtimeEvent) error { return nil }
+func (f *eventosFalso) PublicarParaUsuarios(context.Context, ports.RealtimeEvent, []uuid.UUID) error {
+	return nil
+}
 
 func routerEventos(f *eventosFalso) *gin.Engine {
 	gin.SetMode(gin.TestMode)

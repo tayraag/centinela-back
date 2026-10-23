@@ -18,9 +18,9 @@ import (
 
 // purgerEnMemoria simula la purga atómica de permisos en BD y el registro de auditoría.
 type purgerEnMemoria struct {
-	mu            sync.Mutex
-	permisos      map[int]map[uuid.UUID]string // vmid -> usuarioID -> nivel
-	auditorias    []ports.RegistrarAuditoriaInput
+	mu             sync.Mutex
+	permisos       map[int]map[uuid.UUID]string // vmid -> usuarioID -> nivel
+	auditorias     []ports.RegistrarAuditoriaInput
 	purgadoLlamado bool
 }
 
@@ -76,9 +76,9 @@ func (p *purgerEnMemoria) PurgarPermisosPorVmid(_ context.Context, vmid int, rec
 	}
 
 	detalles := map[string]any{
-		"vmid":               vmid,
-		"usuarios_afectados": usuariosAfectados,
-		"resource_type":      recursoTipo,
+		"vmid":              vmid,
+		"usuariosAfectados": usuariosAfectados,
+		"resource_type":     recursoTipo,
 	}
 
 	p.auditorias = append(p.auditorias, ports.RegistrarAuditoriaInput{
@@ -93,11 +93,11 @@ func (p *purgerEnMemoria) PurgarPermisosPorVmid(_ context.Context, vmid int, rec
 }
 
 // TestReciclajeVMID_SecuenciaEstrictaDestruccionYPurga verifica los Criterios de Aceptación (DoD):
-// 1. Paso 1 (Emisión Previa de Evento): El operador recibe TASK_FINISHED por SSE antes de la purga.
-// 2. Paso 2 (Transacción Atómica de Purga en BD): Tras la eliminación completada de la máquina 110,
-//    los permisos vinculados a 110 se eliminan y no están disponibles.
-// 3. Se genera la traza en auditoría con acción "INSTANCE_PERMISSIONS_PURGED" detallando los usuarios desvinculados.
-// 4. Al aprovisionar una nueva máquina que reutilice el VMID 110, el operador no la visualiza ni tiene acceso.
+//  1. La purga y sus auditorías se confirman antes de emitir el evento.
+//  2. Tras la eliminación completada de la máquina 110,
+//     los permisos vinculados a 110 se eliminan y no están disponibles.
+//  3. Se genera la traza en auditoría con acción "INSTANCE_PERMISSIONS_PURGED" detallando los usuarios desvinculados.
+//  4. Al aprovisionar una nueva máquina que reutilice el VMID 110, el operador no la visualiza ni tiene acceso.
 func TestReciclajeVMID_SecuenciaEstrictaDestruccionYPurga(t *testing.T) {
 	// 1. Configurar entorno: operador con permisos sobre VMID 110
 	e := nuevoEntornoEventos(t, "OPERATOR")
@@ -125,14 +125,14 @@ func TestReciclajeVMID_SecuenciaEstrictaDestruccionYPurga(t *testing.T) {
 
 	// Proxmox simulado para la tarea de eliminación (delete) de VM 110
 	px := &proxmoxTareas{vueltas: 1, exitStatus: "OK", tipo: "qemu"}
-	repoTareas := &tareasEnMemoria{tareas: map[uuid.UUID]*domain.TareaAsincrona{}}
+	repoTareas := &tareasEnMemoria{tareas: map[uuid.UUID]*domain.TareaAsincrona{}, purger: purger}
 
 	adminID := uuid.New()
 	cfg := services.ConfigSeguimiento{
-		Intervalo:      10 * time.Millisecond,
-		PermisosPurger: purger,
+		Intervalo: 10 * time.Millisecond,
 		OnTaskFinished: func(ctx context.Context, tarea *domain.TareaAsincrona, recursoTipo string, r services.ResultadoTarea) {
-			// Paso 1 (Emisión Previa de Evento): Publicar primero el evento TASK_FINISHED en Redis Pub/Sub
+			// La lista capturada por la purga dirige el último evento al operador
+			// aunque el commit ya haya revocado su permiso.
 			resultado := ports.ResultadoExito
 			if r.Estado != ports.TareaCompleted {
 				resultado = ports.ResultadoFalla
@@ -144,7 +144,7 @@ func TestReciclajeVMID_SecuenciaEstrictaDestruccionYPurga(t *testing.T) {
 				Resultado:   resultado,
 				Detalles:    r.Detalles(tarea),
 			})
-			if err := eventosSvc.Publicar(ctx, services.EventoTareaFinalizada(tarea, recursoTipo, r)); err != nil {
+			if err := eventosSvc.PublicarParaUsuarios(ctx, services.EventoTareaFinalizada(tarea, recursoTipo, r), r.UsuariosAfectados); err != nil {
 				t.Errorf("Error al publicar evento: %v", err)
 			}
 		},
@@ -181,7 +181,7 @@ func TestReciclajeVMID_SecuenciaEstrictaDestruccionYPurga(t *testing.T) {
 			t.Errorf("estado esperado %s, obtenido %v", ports.TareaCompleted, det["estado"])
 		}
 	case <-time.After(3 * time.Second):
-		t.Fatal("El operador no recibió el evento TASK_FINISHED por SSE antes de la revocación")
+		t.Fatal("El operador no recibió el TASK_FINISHED dirigido después de la revocación")
 	}
 
 	// Esperar que la tarea termine y se complete la purga atómica
@@ -239,9 +239,9 @@ func TestReciclajeVMID_SecuenciaEstrictaDestruccionYPurga(t *testing.T) {
 	if trazaPurga.Resultado != "SUCCESS" {
 		t.Errorf("Resultado esperado 'SUCCESS', obtenido '%s'", trazaPurga.Resultado)
 	}
-	afectados, ok := trazaPurga.Detalles["usuarios_afectados"].([]string)
+	afectados, ok := trazaPurga.Detalles["usuariosAfectados"].([]string)
 	if !ok || len(afectados) != 1 || afectados[0] != operadorID.String() {
-		t.Errorf("Detalle usuarios_afectados no coincide: esperado [%s], obtenido %v", operadorID, trazaPurga.Detalles["usuarios_afectados"])
+		t.Errorf("Detalle usuariosAfectados no coincide: esperado [%s], obtenido %v", operadorID, trazaPurga.Detalles["usuariosAfectados"])
 	}
 }
 
@@ -258,12 +258,11 @@ func TestReciclajeVMID_FalloDeBorradoConservaPermisos(t *testing.T) {
 
 	// Simular fallo de Proxmox al eliminar (ej. timeout o error de bloqueo)
 	px := &proxmoxTareas{vueltas: 0, exitStatus: "TASK ERROR: VM 110 is locked (backup)", tipo: "qemu"}
-	repoTareas := &tareasEnMemoria{tareas: map[uuid.UUID]*domain.TareaAsincrona{}}
+	repoTareas := &tareasEnMemoria{tareas: map[uuid.UUID]*domain.TareaAsincrona{}, purger: purger}
 
 	eventoPublicado := make(chan ports.RealtimeEvent, 1)
 	cfg := services.ConfigSeguimiento{
-		Intervalo:      10 * time.Millisecond,
-		PermisosPurger: purger,
+		Intervalo: 10 * time.Millisecond,
 		OnTaskFinished: func(ctx context.Context, tarea *domain.TareaAsincrona, recursoTipo string, r services.ResultadoTarea) {
 			eventoPublicado <- services.EventoTareaFinalizada(tarea, recursoTipo, r)
 		},
@@ -310,12 +309,11 @@ func TestReciclajeVMID_AccionDistintaDeDeleteNoPurga(t *testing.T) {
 	purger.asignar(110, operadorID, ports.NivelAccesoFullAccess)
 
 	px := &proxmoxTareas{vueltas: 0, exitStatus: "OK", tipo: "qemu"}
-	repoTareas := &tareasEnMemoria{tareas: map[uuid.UUID]*domain.TareaAsincrona{}}
+	repoTareas := &tareasEnMemoria{tareas: map[uuid.UUID]*domain.TareaAsincrona{}, purger: purger}
 
 	finalizada := make(chan struct{}, 1)
 	cfg := services.ConfigSeguimiento{
-		Intervalo:      10 * time.Millisecond,
-		PermisosPurger: purger,
+		Intervalo: 10 * time.Millisecond,
 		OnTaskFinished: func(_ context.Context, _ *domain.TareaAsincrona, _ string, _ services.ResultadoTarea) {
 			finalizada <- struct{}{}
 		},

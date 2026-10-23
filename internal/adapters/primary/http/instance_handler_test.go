@@ -202,8 +202,8 @@ func (m *mockTareaRepository) Crear(context.Context, *domain.TareaAsincrona, por
 func (m *mockTareaRepository) ListarEnCurso(context.Context) ([]domain.TareaAsincrona, error) {
 	return nil, nil
 }
-func (m *mockTareaRepository) ActualizarEstado(context.Context, uuid.UUID, string, map[string]any, ports.RegistrarAuditoriaInput) error {
-	return nil
+func (m *mockTareaRepository) ActualizarEstado(context.Context, uuid.UUID, string, map[string]any, ports.RegistrarAuditoriaInput) ([]uuid.UUID, error) {
+	return nil, nil
 }
 func (m *mockTareaRepository) BuscarTareasActivasPorVmids(context.Context, []int) (map[int]ports.ActiveTaskDTO, error) {
 	if m.activas == nil {

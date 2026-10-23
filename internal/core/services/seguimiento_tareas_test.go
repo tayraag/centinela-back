@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -87,6 +88,9 @@ type tareasEnMemoria struct {
 	tareas           map[uuid.UUID]*domain.TareaAsincrona
 	audit            *auditoriaGrabadora
 	auditoriaInicial ports.RegistrarAuditoriaInput
+	purger           interface {
+		PurgarPermisosPorVmid(context.Context, int, string, *uuid.UUID) ([]string, error)
+	}
 }
 
 func (r *tareasEnMemoria) Crear(_ context.Context, t *domain.TareaAsincrona, auditoria ports.RegistrarAuditoriaInput) error {
@@ -97,9 +101,8 @@ func (r *tareasEnMemoria) Crear(_ context.Context, t *domain.TareaAsincrona, aud
 	r.auditoriaInicial = auditoria
 	return nil
 }
-func (r *tareasEnMemoria) ActualizarEstado(_ context.Context, id uuid.UUID, estado string, metadatos map[string]any, auditoria ports.RegistrarAuditoriaInput) error {
+func (r *tareasEnMemoria) ActualizarEstado(ctx context.Context, id uuid.UUID, estado string, metadatos map[string]any, auditoria ports.RegistrarAuditoriaInput) ([]uuid.UUID, error) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	if t, ok := r.tareas[id]; ok {
 		if r.audit != nil {
 			r.audit.Registrar(context.Background(), auditoria)
@@ -110,9 +113,26 @@ func (r *tareasEnMemoria) ActualizarEstado(_ context.Context, id uuid.UUID, esta
 			texto := string(crudo)
 			t.Metadatos = &texto
 		}
-		return nil
+		accion, actor, instanciaID := t.Accion, t.UsuarioID, t.InstanciaID
+		r.mu.Unlock()
+		if r.purger != nil && accion == "delete" && estado == ports.TareaCompleted && metadatos["exitstatus"] == "OK" {
+			vmid, _ := strconv.Atoi(instanciaID)
+			ids, err := r.purger.PurgarPermisosPorVmid(ctx, vmid, ports.RecursoVM, &actor)
+			if err != nil {
+				return nil, err
+			}
+			afectados := make([]uuid.UUID, 0, len(ids))
+			for _, idTexto := range ids {
+				if afectado, err := uuid.Parse(idTexto); err == nil {
+					afectados = append(afectados, afectado)
+				}
+			}
+			return afectados, nil
+		}
+		return nil, nil
 	}
-	return errors.New("no existe")
+	r.mu.Unlock()
+	return nil, errors.New("no existe")
 }
 func (r *tareasEnMemoria) BuscarTareasActivasPorVmids(ctx context.Context, vmids []int) (map[int]ports.ActiveTaskDTO, error) {
 	return map[int]ports.ActiveTaskDTO{}, nil

@@ -31,3 +31,27 @@ func TestDebeAsignarPermisoCreacion(t *testing.T) {
 		})
 	}
 }
+
+func TestDebePurgarPermisosDestruccion(t *testing.T) {
+	casos := []struct {
+		nombre, accion, estado, exitstatus string
+		esperado                           bool
+	}{
+		{"delete OK", "delete", ports.TareaCompleted, "OK", true},
+		{"qmdestroy OK", "qmdestroy", ports.TareaCompleted, "OK", true},
+		{"vzdestroy OK", "vzdestroy", ports.TareaCompleted, "OK", true},
+		{"destroy fallido", "qmdestroy", ports.TareaFailed, "TASK ERROR", false},
+		{"destroy con warnings", "vzdestroy", ports.TareaCompleted, "WARNINGS: 1", false},
+		{"creación", ports.AccionProxmoxCrearVM, ports.TareaCompleted, "OK", false},
+		{"otra acción", "stop", ports.TareaCompleted, "OK", false},
+	}
+	for _, caso := range casos {
+		t.Run(caso.nombre, func(t *testing.T) {
+			tarea := domain.TareaAsincrona{Accion: caso.accion}
+			obtenido := debePurgarPermisosDestruccion(tarea, caso.estado, map[string]any{"exitstatus": caso.exitstatus})
+			if obtenido != caso.esperado {
+				t.Fatalf("debePurgarPermisosDestruccion() = %v, se esperaba %v", obtenido, caso.esperado)
+			}
+		})
+	}
+}

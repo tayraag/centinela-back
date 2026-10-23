@@ -160,9 +160,8 @@ func main() {
 	tareaRepo := postgres.NewTareaRepository(db)
 	seguimientoTareas := services.NewSeguimientoTareas(proxmoxClient, tareaRepo, auditService,
 		services.ConfigSeguimiento{
-			Workers:        enteroDeEntorno("UPID_WORKERS", 8),
-			UpidTimeout:    duracionDeEntorno("UPID_TIMEOUT", 3*time.Minute),
-			PermisosPurger: instanceRepo,
+			Workers:     enteroDeEntorno("UPID_WORKERS", 8),
+			UpidTimeout: duracionDeEntorno("UPID_TIMEOUT", 3*time.Minute),
 			OnTaskFinished: func(ctx context.Context, tarea *domain.TareaAsincrona, recursoTipo string, r services.ResultadoTarea) {
 				if tarea.Metadatos != nil {
 					var meta map[string]any
@@ -176,7 +175,14 @@ func main() {
 				}
 				// El repositorio confirmó el cierre y la auditoría RF-08 en una
 				// misma transacción antes de publicar el evento.
-				if err := eventosService.Publicar(ctx, services.EventoTareaFinalizada(tarea, recursoTipo, r)); err != nil {
+				evento := services.EventoTareaFinalizada(tarea, recursoTipo, r)
+				var err error
+				if len(r.UsuariosAfectados) > 0 {
+					err = eventosService.PublicarParaUsuarios(ctx, evento, r.UsuariosAfectados)
+				} else {
+					err = eventosService.Publicar(ctx, evento)
+				}
+				if err != nil {
 					log.Printf("[TAREAS] no se pudo publicar TASK_FINISHED de la tarea %s: %v", tarea.ID, err)
 				}
 			},

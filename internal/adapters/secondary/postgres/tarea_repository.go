@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"el-centinela/internal/core/domain"
 	"el-centinela/internal/core/ports"
@@ -38,14 +39,15 @@ func (r *TareaRepository) Crear(ctx context.Context, tarea *domain.TareaAsincron
 
 // ActualizarEstado guarda el estado final de la tarea y sus metadatos (JSONB).
 // Para una creación que Proxmox dio por completada con exitstatus OK, la misma
-// transacción otorga FULL_ACCESS al usuario creador. Así nunca queda una tarea
-// COMPLETED sin su permiso, ni se publica TASK_FINISHED antes de que el
-// inventario sea visible.
-func (r *TareaRepository) ActualizarEstado(ctx context.Context, id uuid.UUID, estado string, metadatos map[string]any, auditoria ports.RegistrarAuditoriaInput) error {
+// transacción otorga FULL_ACCESS al usuario creador. Para una destrucción con
+// ese mismo resultado, recolecta y elimina todos los permisos del VMID y deja
+// su auditoría inmutable. TASK_FINISHED se publica después de este commit.
+func (r *TareaRepository) ActualizarEstado(ctx context.Context, id uuid.UUID, estado string, metadatos map[string]any, auditoria ports.RegistrarAuditoriaInput) ([]uuid.UUID, error) {
 	if estado != ports.TareaCompleted && estado != ports.TareaFailed {
-		return fmt.Errorf("estado de cierre inválido: %s", estado)
+		return nil, fmt.Errorf("estado de cierre inválido: %s", estado)
 	}
-	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	usuariosAfectados := make([]uuid.UUID, 0)
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var tarea domain.TareaAsincrona
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&tarea, "id = ?", id).Error; err != nil {
 			return err
@@ -68,6 +70,43 @@ func (r *TareaRepository) ActualizarEstado(ctx context.Context, id uuid.UUID, es
 				return fmt.Errorf("error al autoasignar permiso de la instancia %d: %w", vmid, err)
 			}
 		}
+		if debePurgarPermisosDestruccion(tarea, estado, metadatos) {
+			vmid, err := strconv.Atoi(tarea.InstanciaID)
+			if err != nil {
+				return fmt.Errorf("VMID inválido en tarea de destrucción %s: %w", tarea.ID, err)
+			}
+			// Serializa las escrituras sobre permisos_instancia durante la ventana
+			// corta SELECT+DELETE, de modo que la lista auditada coincida con todas
+			// las filas eliminadas por este cierre.
+			if err := tx.Exec("LOCK TABLE permisos_instancia IN SHARE ROW EXCLUSIVE MODE").Error; err != nil {
+				return fmt.Errorf("error al bloquear permisos para purgar el vmid %d: %w", vmid, err)
+			}
+			if err := tx.Model(&domain.PermisoInstancia{}).
+				Where("vmid_proxmox = ?", vmid).
+				Pluck("usuario_id", &usuariosAfectados).Error; err != nil {
+				return fmt.Errorf("error al obtener usuarios afectados para el vmid %d: %w", vmid, err)
+			}
+			if err := tx.Where("vmid_proxmox = ?", vmid).
+				Delete(&domain.PermisoInstancia{}).Error; err != nil {
+				return fmt.Errorf("error al purgar permisos del vmid %d: %w", vmid, err)
+			}
+			usuariosTexto := make([]string, len(usuariosAfectados))
+			for i, usuarioID := range usuariosAfectados {
+				usuariosTexto[i] = usuarioID.String()
+			}
+			if err := NewAuditRepository(tx).Registrar(ctx, ports.RegistrarAuditoriaInput{
+				UsuarioID:   tarea.UsuarioID,
+				Accion:      ports.AccionInstancePermissionsPurged,
+				InstanciaID: tarea.InstanciaID,
+				RecursoTipo: recursoTipoTarea(tarea),
+				Resultado:   ports.ResultadoSuccess,
+				Detalles: map[string]any{
+					"vmid": vmid, "usuariosAfectados": usuariosTexto,
+				},
+			}); err != nil {
+				return fmt.Errorf("error al auditar la purga del vmid %d: %w", vmid, err)
+			}
+		}
 		if err := NewAuditRepository(tx).Registrar(ctx, auditoria); err != nil {
 			return err
 		}
@@ -77,6 +116,10 @@ func (r *TareaRepository) ActualizarEstado(ctx context.Context, id uuid.UUID, es
 		}
 		return tx.Model(&tarea).Updates(map[string]any{"estado": estado, "metadatos": string(crudo)}).Error
 	})
+	if err != nil {
+		return nil, err
+	}
+	return usuariosAfectados, nil
 }
 
 func debeAsignarPermisoCreacion(tarea domain.TareaAsincrona, estado string, metadatos map[string]any) bool {
@@ -84,6 +127,32 @@ func debeAsignarPermisoCreacion(tarea domain.TareaAsincrona, estado string, meta
 	exitstatus, _ := metadatos["exitstatus"].(string)
 	exitoProxmox := exitstatus == "OK"
 	return esCreacion && estado == ports.TareaCompleted && exitoProxmox
+}
+
+func debePurgarPermisosDestruccion(tarea domain.TareaAsincrona, estado string, metadatos map[string]any) bool {
+	accion := strings.ToLower(strings.TrimSpace(tarea.Accion))
+	esDestruccion := accion == "delete" || accion == "qmdestroy" || accion == "vzdestroy"
+	exitstatus, _ := metadatos["exitstatus"].(string)
+	return esDestruccion && estado == ports.TareaCompleted && exitstatus == "OK"
+}
+
+func recursoTipoTarea(tarea domain.TareaAsincrona) string {
+	tipo := ports.RecursoVM
+	if strings.EqualFold(strings.TrimSpace(tarea.Accion), "vzdestroy") {
+		return ports.RecursoLXC
+	}
+	if tarea.Metadatos == nil {
+		return tipo
+	}
+	var metadatos map[string]any
+	if json.Unmarshal([]byte(*tarea.Metadatos), &metadatos) != nil {
+		return tipo
+	}
+	recurso, _ := metadatos["resource_type"].(string)
+	if strings.EqualFold(recurso, ports.TipoInstanciaLXC) || strings.EqualFold(recurso, ports.RecursoLXC) {
+		return ports.RecursoLXC
+	}
+	return tipo
 }
 
 // BuscarTareasActivasPorVmids devuelve un mapa vmid → tarea en curso para todas

@@ -112,7 +112,7 @@ func (s *eventosService) Conectar(ctx context.Context, ticket string) (*ports.Co
 			}
 			motivo := s.motivoDeCierre(msg, t)
 			if motivo == "" && msg.Tipo == ports.MensajeEvento && msg.Evento != nil {
-				visible, inactivo, admin := s.puedeVer(context.Background(), t.UsuarioID, *msg.Evento)
+				visible, inactivo, admin := s.puedeVer(context.Background(), t.UsuarioID, *msg.Evento, msg.Destinatarios)
 				if inactivo {
 					motivo = MotivoUsuarioInactivo
 				} else if visible {
@@ -168,13 +168,18 @@ func (s *eventosService) motivoDeCierre(msg ports.MensajeBus, t ticketEventos) s
 // ejemplo, un ALERT_TRIGGERED del HOST) son solo para ADMIN. Como se consulta en vivo,
 // si un admin le quita un permiso deja de recibir esos eventos al instante.
 // Si el usuario ya no está activo devuelve inactivo = true.
-func (s *eventosService) puedeVer(ctx context.Context, usuarioID uuid.UUID, ev ports.RealtimeEvent) (visible, inactivo, admin bool) {
+func (s *eventosService) puedeVer(ctx context.Context, usuarioID uuid.UUID, ev ports.RealtimeEvent, destinatarios []uuid.UUID) (visible, inactivo, admin bool) {
 	usuario, err := s.authRepo.BuscarUsuarioPorID(ctx, usuarioID)
 	if err != nil || !usuario.Activo {
 		return false, true, false
 	}
 	if usuario.Rol == "ADMIN" {
 		return true, false, true
+	}
+	for _, destinatario := range destinatarios {
+		if destinatario == usuarioID {
+			return true, false, false
+		}
 	}
 	switch ev.RecursoTipo {
 	case ports.RecursoVM, ports.RecursoLXC:
@@ -228,4 +233,13 @@ func (s *eventosService) registrarCierre(t ticketEventos, motivo string) {
 // Publicar envía un evento a todos los clientes que puedan verlo.
 func (s *eventosService) Publicar(ctx context.Context, evento ports.RealtimeEvent) error {
 	return s.bus.publicar(ctx, ports.MensajeBus{Tipo: ports.MensajeEvento, Evento: &evento})
+}
+
+// PublicarParaUsuarios permite entregar el último TASK_FINISHED a operadores
+// cuyos permisos fueron revocados atómicamente antes de publicar el evento.
+func (s *eventosService) PublicarParaUsuarios(ctx context.Context, evento ports.RealtimeEvent, usuarios []uuid.UUID) error {
+	if evento.Tipo != ports.EventoTareaFinalizada {
+		return fmt.Errorf("la entrega dirigida solo está permitida para %s", ports.EventoTareaFinalizada)
+	}
+	return s.bus.publicar(ctx, ports.MensajeBus{Tipo: ports.MensajeEvento, Evento: &evento, Destinatarios: usuarios})
 }

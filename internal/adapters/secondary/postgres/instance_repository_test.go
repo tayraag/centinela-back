@@ -99,4 +99,7 @@ func TestInstanceRepository_PurgarPermisosPorVmid(t *testing.T) {
 	if det["vmid"] != float64(testVmidPurga) {
 		t.Errorf("vmid en detalles esperado %d, obtenido %v", testVmidPurga, det["vmid"])
 	}
+	if usuarios, ok := det["usuariosAfectados"].([]any); !ok || len(usuarios) != 1 || usuarios[0] != usuario.ID.String() {
+		t.Errorf("usuariosAfectados inesperado: %v", det["usuariosAfectados"])
+	}
 }
