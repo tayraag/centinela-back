@@ -310,3 +310,11 @@ func TestMetricsWS_HandshakeYStreaming(t *testing.T) {
 		}
 	})
 }
+
+func (m *mockProxmoxForWS) CrearSnapshot(context.Context, string, string, int, string, string) (string, error) {
+	return "", nil
+}
+
+func (m *mockProxmoxForWS) ListarSnapshots(context.Context, string, string, int) ([]ports.SnapshotDTO, error) {
+	return nil, nil
+}

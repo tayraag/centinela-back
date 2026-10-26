@@ -116,6 +116,8 @@ const (
 	AccionResumeVM       = "REANUDAR_VM"
 	// AccionConfigurarInstancia: cambio de CPU o RAM (PUT /api/instances/:instanceRef/config).
 	AccionConfigurarInstancia = "CONFIG_INSTANCE"
+	// AccionCrearSnapshot: creación de un snapshot (POST /api/instances/:instanceRef/snapshots).
+	AccionCrearSnapshot = "CREAR_SNAPSHOT"
 )
 
 // Resultados existentes de autenticación, usuarios y otras operaciones.

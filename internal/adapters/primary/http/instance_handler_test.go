@@ -1190,3 +1190,11 @@ func TestAuditoriaDeAlias_FalloUsaAccionCanonicaYNombreReal(t *testing.T) {
 		})
 	}
 }
+
+func (m *mockProxmoxPort) CrearSnapshot(context.Context, string, string, int, string, string) (string, error) {
+	return "", nil
+}
+
+func (m *mockProxmoxPort) ListarSnapshots(context.Context, string, string, int) ([]ports.SnapshotDTO, error) {
+	return nil, nil
+}

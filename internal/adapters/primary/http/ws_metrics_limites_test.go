@@ -290,3 +290,11 @@ func TestMetricsWS_InstanciaEliminadaCierra(t *testing.T) {
 		return
 	}
 }
+
+func (p *proxmoxWSConfigurable) CrearSnapshot(context.Context, string, string, int, string, string) (string, error) {
+	return "", nil
+}
+
+func (p *proxmoxWSConfigurable) ListarSnapshots(context.Context, string, string, int) ([]ports.SnapshotDTO, error) {
+	return nil, nil
+}

@@ -238,6 +238,7 @@ func (s *auditServiceImpl) PrepararAuditoriaTarea(t *domain.TareaAsincrona, cier
 	acciones := map[string]string{
 		"start": ports.AccionIniciarVM, "stop": ports.AccionDetenerVM,
 		"shutdown": ports.AccionApagarVM, "reboot": ports.AccionReiniciarVM, "delete": ports.AccionEliminarVM,
+		ports.AccionTareaSnapshot: ports.AccionCrearSnapshot,
 	}
 	accion := acciones[strings.ToLower(t.Accion)]
 	recursoTipo, esCreacion := ports.TipoRecursoCreacion(t.Accion)
@@ -284,6 +285,9 @@ func (s *auditServiceImpl) PrepararAuditoriaTarea(t *domain.TareaAsincrona, cier
 	detalles := map[string]any{"tareaId": t.ID.String(), "instanciaNombre": nombre}
 	if tipo, ok := meta["resource_type"]; ok {
 		detalles["resource_type"] = tipo
+	}
+	if snap, ok := meta["snapname"]; ok {
+		detalles["snapname"] = snap
 	}
 	resultado := ports.ResultadoPendiente
 	if cierre != nil {

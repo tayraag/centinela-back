@@ -53,6 +53,17 @@ var ErrCoordinacionAprovisionamiento = errors.New("no se pudo coordinar la reser
 // con una respuesta perdida después de que Proxmox pudo aceptar la operación.
 var ErrCreacionNoDespachada = errors.New("la creación no fue despachada a Proxmox")
 
+// ErrSnapshotNombreInvalido: el nombre del snapshot no cumple el formato que
+// acepta Proxmox (empieza con letra; letras, números, _ y -; de 2 a 40).
+var ErrSnapshotNombreInvalido = errors.New("nombre de snapshot inválido")
+
+// ErrSnapshotExistente: la instancia ya tiene un snapshot con ese nombre.
+var ErrSnapshotExistente = errors.New("ya existe un snapshot con ese nombre")
+
+// ErrSeguimientoNoRegistrado: Proxmox aceptó la orden, pero no se pudo
+// registrar la tarea en tareas_asincronas (no hay tareaId que devolver).
+var ErrSeguimientoNoRegistrado = errors.New("no se pudo registrar el seguimiento de la tarea")
+
 // ErrParametroInvalido indica que un valor que se arma dentro de una directiva
 // de Proxmox (net0, scsi0, rootfs, ide2: "clave=valor,clave=valor") trae un
 // carácter que permitiría inyectar directivas propias, como la coma.
@@ -177,6 +188,25 @@ type ProxmoxPort interface {
 	// ObtenerConfig) hace que Proxmox rechace el cambio si la configuración se
 	// modificó en el medio.
 	ActualizarConfig(ctx context.Context, nodo, tipo string, vmid int, cores, memoriaMB int, digest string) error
+
+	// CrearSnapshot hace POST /nodes/{node}/{tipo}/{vmid}/snapshot con snapname
+	// y description (en QEMU también vmstate=0: sin guardar la RAM). Devuelve
+	// el UPID de la tarea.
+	CrearSnapshot(ctx context.Context, node, tipo string, vmid int, snapname, descripcion string) (string, error)
+
+	// ListarSnapshots consulta GET /nodes/{node}/{tipo}/{vmid}/snapshot. No
+	// incluye la entrada sintética "current" (el estado actual, que no es un
+	// snapshot guardado).
+	ListarSnapshots(ctx context.Context, node, tipo string, vmid int) ([]SnapshotDTO, error)
+}
+
+// SnapshotDTO es un punto de restauración de una instancia.
+type SnapshotDTO struct {
+	Nombre      string // snapname
+	SnapTime    int64  // segundos UNIX
+	Descripcion string
+	Padre       string // snapshot anterior en la cadena ("" si es el primero)
+	VMState     bool   // si guardó la RAM (solo QEMU)
 }
 
 // ConfigInstanciaDTO es la CPU y RAM configuradas de una instancia.

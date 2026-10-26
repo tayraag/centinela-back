@@ -175,7 +175,7 @@ configuran con `TOPOLOGY_NODE_ALIASES` y `TOPOLOGY_STORAGE_ALIASES`
   instancia, o `null` si no tiene ninguna. Esquema `http.ActiveTaskResponse`:
   - `tareaId`: el mismo valor que devolvió el `202` de la acción y que llega en
     el `TASK_FINISHED`.
-  - `action`: `START`, `STOP`, `SHUTDOWN`, `REBOOT` o `DELETE`, en mayúsculas
+  - `action`: `START`, `STOP`, `SHUTDOWN`, `REBOOT`, `DELETE`, `CREATE` o `SNAPSHOT`, en mayúsculas
     como `detalles.accion` del evento.
   - `status`: siempre `RUNNING`; cuando la tarea termina, `activeTask` vuelve a
     `null`.
@@ -399,6 +399,58 @@ Hoy esa ruta responde `404 NOT_FOUND` y `pause` en el endpoint genérico respond
 `400 INVALID_ACTION`. El contrato queda documentado en Swagger con
 `x-implementation-status: planned`; el frontend no debe ofrecer la acción.
 
+## Snapshots — operativo (RF-06)
+
+Puntos de restauración de una instancia, VM o LXC. `:instanceRef` es la
+referencia pública de la instancia (la `id` del inventario).
+
+| Ruta                               | Método | Rol                                  | Respuesta |
+|------------------------------------|--------|--------------------------------------|-----------|
+| `/api/instances/:instanceRef/snapshots` | GET  | ADMIN, u OPERATOR con READ_ONLY o más | `200`     |
+| `/api/instances/:instanceRef/snapshots` | POST | ADMIN, u OPERATOR con FULL_ACCESS    | `202`     |
+
+**Listar.** Devuelve un array, del snapshot más nuevo al más viejo (por
+`snaptime`, en segundos UNIX). `parent` es el snapshot anterior en la cadena
+(`""` si es el primero) y `vmstate` indica si guardó la RAM (solo VM). La
+entrada `current` que devuelve Proxmox (el estado actual) no se incluye.
+
+```json
+[
+  {
+    "name": "snap_pre_upgrade",
+    "snaptime": 1774358400,
+    "description": "Punto previo a upgrade",
+    "parent": "base",
+    "vmstate": false
+  }
+]
+```
+
+**Crear.** Cuerpo `{ "snapname": "snap_pre_upgrade", "description": "..." }`
+(`description` es opcional, hasta 255 caracteres). `snapname` sigue la regla de
+Proxmox: empieza con letra, tiene solo letras, números, `_` y `-`, de 2 a 40
+caracteres, y no puede ser `current`. Si no la cumple (por ejemplo `snap test!`)
+responde `400 INVALID_SNAPSHOT_NAME` sin contactar a Proxmox. Un nombre que la
+instancia ya tiene responde `409 SNAPSHOT_ALREADY_EXISTS`. El snapshot se crea
+sin guardar la RAM.
+
+La creación es asíncrona, como las acciones de energía: se registra la tarea
+`RUNNING` en `tareas_asincronas` con su auditoría `PENDIENTE`
+(`CREAR_SNAPSHOT`) y se responde `202` con el `tareaId`, que también llega en
+el `TASK_FINISHED` (`accion: "SNAPSHOT"`). El UPID de Proxmox no se devuelve.
+
+```json
+{ "tareaId": "0192e4a1-4f89-7e23-9a0c-0305e82c3301", "snapname": "snap_pre_upgrade" }
+```
+
+Lleva la exclusión mutua (`409 INSTANCE_BUSY` si la instancia tiene otra
+operación en curso, y mientras corre el snapshot las demás operaciones reciben
+`409`). A diferencia de la energía y la configuración, las instancias
+protegidas de la infraestructura **sí** admiten snapshots: no las apaga ni las
+cambia, y conviene tenerlo antes de tocarlas. Si Proxmox aceptó el snapshot
+pero no se pudo registrar el seguimiento, responde
+`500 TASK_TRACKING_UNAVAILABLE`.
+
 ## Catálogo de errores
 
 Todo error `4xx` y `5xx` usa el mismo sobre, ya vigente en el servidor y definido
@@ -437,7 +489,7 @@ que quita rutas del sistema (`/usr/...`), archivos y módulos Perl (`.pm`,
 
 **Exclusión mutua (`RequireInstanceIdle`).** Las operaciones que modifican una
 instancia (`start`, `stop`, `status/{action}` y el borrado; también la edición
-de configuración y los snapshots, cuando existan) pasan por una guarda que
+de configuración y la creación de snapshots) pasan por una guarda que
 permite **una sola operación a la vez por instancia**. Si hay una tarea
 `RUNNING` de esa instancia o el lock `lock:instance:{vmid}:operation` está
 tomado, responde `409 INSTANCE_BUSY` **sin contactar a Proxmox**. Ante una
@@ -623,7 +675,7 @@ aplican valen `null`, nunca se omiten:
 | Campo        | Tipo             | Valor                                                  |
 |--------------|------------------|--------------------------------------------------------|
 | `tareaId`    | string           | El `tareaId` del `202`                                 |
-| `accion`     | enum             | `START`, `STOP`, `SHUTDOWN`, `REBOOT`, `DELETE` o `CREATE` |
+| `accion`     | enum             | `START`, `STOP`, `SHUTDOWN`, `REBOOT`, `DELETE`, `CREATE` o `SNAPSHOT` |
 | `estado`     | enum             | `COMPLETED` o `FAILED`                                 |
 | `exitstatus` | string o `null`  | Lo que informó Proxmox; `null` si no la cerró          |
 | `motivo`     | enum o `null`    | `null` salvo con `estado` `FAILED`                     |

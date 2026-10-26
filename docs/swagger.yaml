@@ -39,6 +39,7 @@ definitions:
         - REBOOT
         - DELETE
         - CREATE
+        - SNAPSHOT
         example: START
         type: string
       status:
@@ -173,6 +174,17 @@ definitions:
     - storageId
     - templateOso
     - tipo
+    type: object
+  http.CrearSnapshotRequest:
+    properties:
+      description:
+        example: Punto previo a upgrade
+        type: string
+      snapname:
+        example: snap_pre_upgrade
+        type: string
+    required:
+    - snapname
     type: object
   http.CuotaAsignableNode:
     properties:
@@ -489,6 +501,7 @@ definitions:
         - REBOOT
         - DELETE
         - CREATE
+        - SNAPSHOT
         example: START
         type: string
       error:
@@ -585,6 +598,44 @@ definitions:
     - taskFailed
     - taskSuccess
     type: object
+  http.SnapshotAceptadoResponse:
+    properties:
+      snapname:
+        example: snap_pre_upgrade
+        type: string
+      tareaId:
+        example: 0192e4a1-4f89-7e23-9a0c-0305e82c3301
+        type: string
+    required:
+    - snapname
+    - tareaId
+    type: object
+  http.SnapshotResponse:
+    properties:
+      description:
+        example: Punto previo a upgrade
+        type: string
+      name:
+        example: snap_pre_upgrade
+        type: string
+      parent:
+        description: snapshot anterior; "" si es el primero
+        example: ""
+        type: string
+      snaptime:
+        description: segundos UNIX
+        example: 1774358400
+        type: integer
+      vmstate:
+        example: false
+        type: boolean
+    required:
+    - description
+    - name
+    - parent
+    - snaptime
+    - vmstate
+    type: object
   http.StorageResponse:
     properties:
       contentTypes:
@@ -623,6 +674,7 @@ definitions:
         - REBOOT
         - DELETE
         - CREATE
+        - SNAPSHOT
         example: STOP
         type: string
       error:
@@ -665,6 +717,7 @@ definitions:
         - REBOOT
         - DELETE
         - CREATE
+        - SNAPSHOT
         example: START
         type: string
       error:
@@ -2610,6 +2663,138 @@ paths:
       tags:
       - Instancias Proxmox
       x-implementation-status: planned
+  /instances/{instanceRef}/snapshots:
+    get:
+      description: OPERATIVO. Devuelve los snapshots de la instancia, del más nuevo
+        al más viejo (por `snaptime`). `parent` es el snapshot anterior en la cadena
+        ("" si es el primero); `vmstate` indica si guardó la RAM (solo VM). No incluye
+        la entrada "current" de Proxmox (el estado actual). Un OPERATOR necesita al
+        menos READ_ONLY sobre la instancia.
+      parameters:
+      - description: Referencia pública de la instancia (inst_...)
+        in: path
+        name: instanceRef
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/http.SnapshotResponse'
+            type: array
+        "401":
+          description: MISSING_TOKEN | INVALID_TOKEN | TOKEN_REVOKED
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "403":
+          description: INSTANCE_ACCESS_DENIED — el OPERATOR no tiene permiso sobre
+            la instancia
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "404":
+          description: RESOURCE_NOT_FOUND — referencia inválida o instancia inexistente
+            (misma respuesta)
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "500":
+          description: INTERNAL_ERROR | PROXMOX_ERROR
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "502":
+          description: PROXMOX_UNAVAILABLE
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "504":
+          description: PROXMOX_TIMEOUT
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Listar snapshots
+      tags:
+      - Snapshots
+    post:
+      consumes:
+      - application/json
+      description: 'OPERATIVO. Crea un punto de restauración (sin guardar la RAM).
+        Requiere ADMIN o FULL_ACCESS. `snapname` debe empezar con letra y tener solo
+        letras, números, `_` y `-`, de 2 a 40 caracteres (no puede ser `current`);
+        si no, 400 INVALID_SNAPSHOT_NAME sin contactar a Proxmox. `description` es
+        opcional, hasta 255 caracteres. La operación es asíncrona: responde 202 con
+        `tareaId` (el mismo que llega en TASK_FINISHED con `accion: "SNAPSHOT"`) y
+        `snapname`; el UPID de Proxmox nunca se devuelve. Las instancias de infraestructura
+        también admiten snapshots. Lleva la exclusión mutua: con otra operación en
+        curso responde 409 INSTANCE_BUSY.'
+      parameters:
+      - description: Referencia pública de la instancia (inst_...)
+        in: path
+        name: instanceRef
+        required: true
+        type: string
+      - description: Nombre y descripción del snapshot
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/http.CrearSnapshotRequest'
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Accepted
+          schema:
+            $ref: '#/definitions/http.SnapshotAceptadoResponse'
+        "400":
+          description: INVALID_SNAPSHOT_NAME — nombre con espacios, caracteres especiales,
+            que no empieza con letra, fuera de 2 a 40 caracteres o \"current\" | INVALID_REQUEST
+            — cuerpo inválido o descripción de más de 255 caracteres
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "401":
+          description: MISSING_TOKEN | INVALID_TOKEN | TOKEN_REVOKED
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "403":
+          description: INSTANCE_ACCESS_DENIED — el OPERATOR no tiene FULL_ACCESS (READ_ONLY
+            solo lista)
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "404":
+          description: RESOURCE_NOT_FOUND — referencia inválida o instancia inexistente
+            (misma respuesta)
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "409":
+          description: SNAPSHOT_ALREADY_EXISTS — la instancia ya tiene un snapshot
+            con ese nombre | INSTANCE_BUSY — la instancia está ejecutando otra tarea
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "500":
+          description: TASK_TRACKING_UNAVAILABLE — Proxmox aceptó el snapshot pero
+            no se pudo registrar su seguimiento; verificar antes de reintentar | PROXMOX_ERROR
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "502":
+          description: PROXMOX_UNAVAILABLE
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "503":
+          description: INSTANCE_LOCK_UNAVAILABLE — no se pudo verificar si la instancia
+            está ocupada
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "504":
+          description: PROXMOX_TIMEOUT — el snapshot puede haberse creado
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Crear snapshot
+      tags:
+      - Snapshots
   /instances/{instanceRef}/start:
     post:
       description: 'OPERATIVO. Dispara el arranque de una VM o contenedor en Proxmox

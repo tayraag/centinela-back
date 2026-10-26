@@ -384,3 +384,11 @@ func TestSeguimiento_ReintentaSiProxmoxNoResponde(t *testing.T) {
 		t.Errorf("Después de errores de red transitorios debe terminar COMPLETED, quedó %s", repo.estado(id))
 	}
 }
+
+func (p *proxmoxTareas) CrearSnapshot(context.Context, string, string, int, string, string) (string, error) {
+	return "", nil
+}
+
+func (p *proxmoxTareas) ListarSnapshots(context.Context, string, string, int) ([]ports.SnapshotDTO, error) {
+	return nil, nil
+}

@@ -99,7 +99,7 @@ func TestContratoEtapa1(t *testing.T) {
 	}
 	const activeTaskDef = "http.ActiveTaskResponse"
 	verificarObjetoRequerido(t, definitions, activeTaskDef, []string{"tareaId", "action", "status"})
-	verificarEnum(t, definitions, activeTaskDef, "action", "START", "STOP", "SHUTDOWN", "REBOOT", "DELETE", "CREATE")
+	verificarEnum(t, definitions, activeTaskDef, "action", "START", "STOP", "SHUTDOWN", "REBOOT", "DELETE", "CREATE", "SNAPSHOT")
 	verificarEnum(t, definitions, activeTaskDef, "status", ports.TareaRunning)
 
 	// ==========================================================
@@ -347,7 +347,7 @@ func TestContratoEtapa1(t *testing.T) {
 	// Las dos formas concretas de detalles en TASK_FINISHED. El servidor manda
 	// siempre las seis claves; las que no aplican van en null.
 	camposTarea := []string{"tareaId", "accion", "estado", "exitstatus", "motivo", "error"}
-	acciones := []string{"START", "STOP", "SHUTDOWN", "REBOOT", "DELETE", "CREATE"}
+	acciones := []string{"START", "STOP", "SHUTDOWN", "REBOOT", "DELETE", "CREATE", "SNAPSHOT"}
 
 	const successDef = "http.TaskSuccess"
 	verificarObjetoRequerido(t, definitions, successDef, camposTarea)

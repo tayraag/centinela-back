@@ -82,7 +82,7 @@ type InstanciaInventarioResponse struct {
 // TASK_FINISHED; action es la acción en mayúsculas, igual que detalles.accion.
 type ActiveTaskResponse struct {
 	TareaID string `json:"tareaId" binding:"required" example:"3f2504e0-4f89-11d3-9a0c-0305e82c3301"`
-	Action  string `json:"action" binding:"required" enums:"START,STOP,SHUTDOWN,REBOOT,DELETE,CREATE" example:"START"`
+	Action  string `json:"action" binding:"required" enums:"START,STOP,SHUTDOWN,REBOOT,DELETE,CREATE,SNAPSHOT" example:"START"`
 	Status  string `json:"status" binding:"required" enums:"RUNNING" example:"RUNNING"`
 }
 
@@ -106,7 +106,7 @@ type ActiveTaskResponse struct {
 // no aplican.
 type SSEDetallesEvento struct {
 	TareaID    string  `json:"tareaId,omitempty" example:"3f2504e0-4f89-11d3-9a0c-0305e82c3301"`
-	Accion     string  `json:"accion,omitempty" enums:"START,STOP,SHUTDOWN,REBOOT,DELETE,CREATE" example:"START"`
+	Accion     string  `json:"accion,omitempty" enums:"START,STOP,SHUTDOWN,REBOOT,DELETE,CREATE,SNAPSHOT" example:"START"`
 	Estado     string  `json:"estado,omitempty" enums:"RUNNING,COMPLETED,FAILED" example:"COMPLETED"`
 	ExitStatus *string `json:"exitstatus,omitempty" extensions:"x-nullable" example:"OK"`
 	Motivo     *string `json:"motivo,omitempty" enums:"PROXMOX_ERROR,TIMEOUT" extensions:"x-nullable"`
@@ -137,7 +137,7 @@ type SSEEventPayload struct {
 // `error` en null. Las seis claves viajan siempre.
 type TaskSuccess struct {
 	TareaID    string  `json:"tareaId" binding:"required" example:"3f2504e0-4f89-11d3-9a0c-0305e82c3301"`
-	Accion     string  `json:"accion" binding:"required" enums:"START,STOP,SHUTDOWN,REBOOT,DELETE,CREATE" example:"START"`
+	Accion     string  `json:"accion" binding:"required" enums:"START,STOP,SHUTDOWN,REBOOT,DELETE,CREATE,SNAPSHOT" example:"START"`
 	Estado     string  `json:"estado" binding:"required" enums:"COMPLETED" example:"COMPLETED"`
 	ExitStatus string  `json:"exitstatus" binding:"required" enums:"OK" example:"OK"`
 	Motivo     *string `json:"motivo" binding:"required" extensions:"x-nullable"`
@@ -154,7 +154,7 @@ type TaskSuccess struct {
 //     `exitstatus` es null y `error` lo explica.
 type TaskFailed struct {
 	TareaID    string  `json:"tareaId" binding:"required" example:"3f2504e0-4f89-11d3-9a0c-0305e82c3301"`
-	Accion     string  `json:"accion" binding:"required" enums:"START,STOP,SHUTDOWN,REBOOT,DELETE,CREATE" example:"STOP"`
+	Accion     string  `json:"accion" binding:"required" enums:"START,STOP,SHUTDOWN,REBOOT,DELETE,CREATE,SNAPSHOT" example:"STOP"`
 	Estado     string  `json:"estado" binding:"required" enums:"FAILED" example:"FAILED"`
 	ExitStatus *string `json:"exitstatus" binding:"required" extensions:"x-nullable" example:"CT 201 not running"`
 	Motivo     string  `json:"motivo" binding:"required" enums:"PROXMOX_ERROR,TIMEOUT" example:"PROXMOX_ERROR"`

@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -1020,4 +1021,84 @@ func tipoProxmox(tipo string) (string, error) {
 		return "", fmt.Errorf("tipo de instancia desconocido %q", tipo)
 	}
 	return t, nil
+}
+
+// ==========================================
+// Snapshots (RF-06)
+// ==========================================
+
+// formatoSnapshot es el nombre que acepta Proxmox (pve-configid): empieza con
+// letra; letras, números, _ y -; de 2 a 40 caracteres. Se repite acá como
+// última barrera, aunque el servicio ya lo validó.
+var formatoSnapshot = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_-]{1,39}$`)
+
+// CrearSnapshot hace POST /nodes/{node}/{tipo}/{vmid}/snapshot y devuelve el
+// UPID. En QEMU manda vmstate=0 (sin guardar la RAM); LXC no acepta vmstate.
+func (c *Client) CrearSnapshot(ctx context.Context, node, tipo string, vmid int, snapname, descripcion string) (string, error) {
+	tipo, err := tipoProxmox(tipo)
+	if err != nil {
+		return "", err
+	}
+	if !formatoSnapshot.MatchString(snapname) || snapname == "current" {
+		return "", fmt.Errorf("%w: nombre de snapshot %q", ports.ErrParametroInvalido, snapname)
+	}
+	params := url.Values{"snapname": {snapname}}
+	if descripcion != "" {
+		params.Set("description", descripcion)
+	}
+	if tipo == ports.TipoInstanciaQemu {
+		params.Set("vmstate", "0")
+	}
+	path := fmt.Sprintf("/api2/json/nodes/%s/%s/%d/snapshot", url.PathEscape(node), tipo, vmid)
+	raw, err := c.doRequest(ctx, http.MethodPost, path, params)
+	if err != nil {
+		return "", err
+	}
+	var res upidResponse
+	if err := json.Unmarshal(raw, &res); err != nil || strings.TrimSpace(res.Data) == "" {
+		return "", fmt.Errorf("%w: respuesta de snapshot inválida", ports.ErrProxmoxNoDisponible)
+	}
+	return res.Data, nil
+}
+
+// snapshotProxmox es una entrada de GET .../snapshot. vmstate llega como 0/1
+// (y no llega en LXC); snaptime falta en la entrada "current".
+type snapshotProxmox struct {
+	Name        string          `json:"name"`
+	SnapTime    int64           `json:"snaptime"`
+	Description string          `json:"description"`
+	Parent      string          `json:"parent"`
+	VMState     json.RawMessage `json:"vmstate"`
+}
+
+// ListarSnapshots consulta GET /nodes/{node}/{tipo}/{vmid}/snapshot, sin la
+// entrada sintética "current" ("You are here!"), que no es un snapshot guardado.
+func (c *Client) ListarSnapshots(ctx context.Context, node, tipo string, vmid int) ([]ports.SnapshotDTO, error) {
+	tipo, err := tipoProxmox(tipo)
+	if err != nil {
+		return nil, err
+	}
+	path := fmt.Sprintf("/api2/json/nodes/%s/%s/%d/snapshot", url.PathEscape(node), tipo, vmid)
+	raw, err := c.doRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	var res struct {
+		Data []snapshotProxmox `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &res); err != nil {
+		return nil, fmt.Errorf("%w: respuesta de snapshots inválida: %v", ports.ErrProxmoxNoDisponible, err)
+	}
+	snapshots := make([]ports.SnapshotDTO, 0, len(res.Data))
+	for _, s := range res.Data {
+		if s.Name == "current" {
+			continue
+		}
+		vmstate := strings.Trim(string(s.VMState), `"`)
+		snapshots = append(snapshots, ports.SnapshotDTO{
+			Nombre: s.Name, SnapTime: s.SnapTime, Descripcion: s.Description, Padre: s.Parent,
+			VMState: vmstate == "1" || vmstate == "true",
+		})
+	}
+	return snapshots, nil
 }

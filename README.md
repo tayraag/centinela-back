@@ -79,6 +79,7 @@ centinela-back/
 │   │   │   ├── tarea_port.go    # Interface TareaRepository (tareas_asincronas)
 │   │   │   ├── exclusion_port.go # Interface ExclusionInstancias (una operación a la vez por instancia)
 │   │   │   ├── configuracion_port.go # Interface ConfiguracionInstancias (cambio de CPU y RAM)
+│   │   │   ├── snapshot_port.go  # Interface SnapshotService (listar y crear snapshots, RF-06)
 │   │   │   ├── metricas_vivo_port.go # Interface MetricasVivoService (acceso al WebSocket de métricas)
 │   │   │   ├── key_value_store.go # Interface KeyValueStore (Redis o memoria)
 │   │   │   └── audit_port.go    # Interface AuditRepository + AuditService
@@ -92,6 +93,7 @@ centinela-back/
 │   │       ├── audit_service.go            # Registro y consulta de auditoría particionada
 │   │       ├── exclusion_instancias.go     # Exclusión mutua por instancia: lock Redis + tarea RUNNING (409 INSTANCE_BUSY)
 │   │       ├── configuracion_instancias.go # Cambio de CPU/RAM: DeltaRAM contra el nodo (CuotasService.AmpliarInstancia) y detección de hot-plug
+│   │       ├── snapshot_service.go  # Snapshots: regla de nombre de Proxmox, orden por snaptime y alta asíncrona (tareaId)
 │   │       ├── metricas_vivo_service.go    # Ticket y vigilancia del WebSocket de métricas (corte por logout, baja o permiso)
 │   │       └── eventos_service.go          # Despacho de eventos en tiempo real hacia Pub/Sub (HOST solo para ADMIN)
 │   │
@@ -103,6 +105,7 @@ centinela-back/
 │   │   │       ├── node_handler.go       # Endpoints de telemetría, storages y templates del nodo (/api/node/*)
 │   │   │       ├── instance_handler.go   # Endpoints de inventario y ciclo de vida (/api/instances/*)
 │   │   │       ├── instance_config_handler.go # PUT /api/instances/:instanceRef/config (cores/ramMb, DeltaRAM y requiresReboot)
+│   │   │       ├── snapshot_handler.go     # GET/POST /api/instances/:instanceRef/snapshots (RF-06)
 │   │   │       ├── instance_refs.go      # VMID ↔ referencia pública (inst_...) en respuestas, eventos, permisos y auditoría
 │   │   │       ├── ws_metrics_handler.go # Canal WebSocket de telemetría en vivo (/api/ws/instances/:instanceRef/metrics)
 │   │   │       ├── events_handler.go     # Canal de eventos SSE (/api/events)

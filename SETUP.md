@@ -578,6 +578,8 @@ centinela-back/
  | POST   | `/api/instances/:instanceRef/start`          | `ResolveInstanceRef` + `RequireInstanceAccess` (FA) + `RejectProtectedInstance` + `RequireInstanceIdle` | Iniciar instancia (asíncrono 202 con `tareaId`)        |
  | POST   | `/api/instances/:instanceRef/stop`           | `ResolveInstanceRef` + `RequireInstanceAccess` (FA) + `RejectProtectedInstance` + `RequireInstanceIdle` | Detener instancia forzadamente (asíncrono 202)    |
  | POST   | `/api/instances/:instanceRef/status/:action` | `ResolveInstanceRef` + `RequireInstanceAccess` (FA) + `RejectProtectedInstance` + `RequireInstanceIdle` | Cambiar estado (shutdown / reboot)                |
+ | GET    | `/api/instances/:instanceRef/snapshots`      | `ResolveInstanceRef` + `RequireInstanceAccess` (RO) | Snapshots de la instancia, del más nuevo al más viejo |
+ | POST   | `/api/instances/:instanceRef/snapshots`      | `ResolveInstanceRef` + `RequireInstanceAccess` (FA) + `RequireInstanceIdle` | Crear snapshot (asíncrono 202 con `tareaId` y `snapname`; 400 `INVALID_SNAPSHOT_NAME`) |
  | PUT    | `/api/instances/:instanceRef/config`         | `ResolveInstanceRef` + `RequireInstanceAccess` (FA) + `RejectProtectedInstance` + `RequireInstanceIdle` | Cambiar `cores` y/o `ramMb`: valida el incremento contra el nodo (409 `RESOURCE_QUOTA_EXCEEDED`) y responde `requiresReboot` |
  | DELETE | `/api/instances/:instanceRef`                | `ResolveInstanceRef` + `RequireRole("ADMIN")` + `RejectProtectedInstance` + `RequireInstanceIdle` | Eliminar instancia (asíncrono 202 con `tareaId`)       |
 

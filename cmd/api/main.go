@@ -191,6 +191,7 @@ func main() {
 	instanceHandler := httpHandlers.NewInstanceHandlerConNodo(proxmoxClient, userRepo, seguimientoTareas, tareaRepo, auditService,
 		services.NewInventarioService(proxmoxClient), refsInstancia, topologia, nodoNombre, aprovisionadorSeguro(kvStore, cuotasService))
 	eventsHandler := httpHandlers.NewEventsHandler(eventosService, refsInstancia)
+	snapshotHandler := httpHandlers.NewSnapshotHandler(services.NewSnapshotService(proxmoxClient, seguimientoTareas, auditService))
 	nodeHandler := httpHandlers.NewNodeHandler(services.NewNodoService(proxmoxClient, kvStore, nodoNombre), proxmoxClient, nodoNombre, userRepo)
 	wsMetricsHandler := httpHandlers.NewMetricsWSHandler(proxmoxClient, services.NewMetricasVivoService(kvStore, authRepo, instanceRepo, 0),
 		refsInstancia, nodoNombre, middleware.OrigenesPermitidos(), httpHandlers.LimitesWSPorDefecto)
@@ -336,7 +337,6 @@ func main() {
 		// Rutas de Instancias Proxmox
 		// ==========================================
 		// Exclusión mutua de las operaciones que modifican una instancia (409 INSTANCE_BUSY).
-		// Cuando existan los endpoints de snapshots, llevan la misma guarda.
 		exclusion := services.NewExclusionInstancias(kvStore, tareaRepo)
 		configHandler := httpHandlers.NewInstanceConfigHandler(services.NewConfiguracionInstancias(proxmoxClient, cuotasService), auditService)
 		instances := api.Group("/instances", middleware.RequireAuth(authService))
@@ -356,6 +356,11 @@ func main() {
 			instancia.POST("/status/:action", middleware.RequireInstanceAccess(instanceRepo, ports.NivelAccesoFullAccess), middleware.RejectProtectedInstance(vmidsProtegidos), middleware.RequireInstanceIdle(exclusion), instanceHandler.CambiarEstado)
 			instancia.PUT("/config", middleware.RequireInstanceAccess(instanceRepo, ports.NivelAccesoFullAccess), middleware.RejectProtectedInstance(vmidsProtegidos), middleware.RequireInstanceIdle(exclusion), configHandler.ActualizarConfig)
 			instancia.DELETE("", middleware.RequireRole("ADMIN"), middleware.RejectProtectedInstance(vmidsProtegidos), middleware.RequireInstanceIdle(exclusion), instanceHandler.EliminarInstancia)
+			// Snapshots (RF-06): listar con READ_ONLY; crear con FULL_ACCESS y la
+			// exclusión mutua. Sin RejectProtectedInstance: un snapshot no apaga ni
+			// cambia la instancia, y conviene tenerlo antes de tocar la infraestructura.
+			instancia.GET("/snapshots", middleware.RequireInstanceAccess(instanceRepo, ports.NivelAccesoReadOnly), snapshotHandler.ListarSnapshots)
+			instancia.POST("/snapshots", middleware.RequireInstanceAccess(instanceRepo, ports.NivelAccesoFullAccess), middleware.RequireInstanceIdle(exclusion), snapshotHandler.CrearSnapshot)
 		}
 		// ==========================================
 		// Swagger UI: apagada por defecto.

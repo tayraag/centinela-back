@@ -998,3 +998,50 @@ func TestClient_AprovisionarInstancia_RechazaInyeccionSinLlamarAProxmox(t *testi
 		t.Errorf("No debe haber ninguna llamada a Proxmox: hubo %d", llamadas)
 	}
 }
+
+// CrearSnapshot manda vmstate=0 solo en QEMU (LXC no lo acepta) y devuelve el UPID.
+func TestClient_CrearSnapshot(t *testing.T) {
+	var pedidos []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		pedidos = append(pedidos, r.Method+" "+r.URL.Path+" "+r.PostForm.Encode())
+		fmt.Fprint(w, `{"data":"UPID:pve1:0001:qmsnapshot"}`)
+	}))
+	defer server.Close()
+	client := proxmox.NewClient(server.URL, "pve1", tokenIDValido, tokenSecretValido, nil)
+
+	for _, tipo := range []string{"qemu", "lxc"} {
+		upid, err := client.CrearSnapshot(context.Background(), "pve1", tipo, 110, "snap_1", "Previo")
+		if err != nil || upid != "UPID:pve1:0001:qmsnapshot" {
+			t.Fatalf("%s: %q %v", tipo, upid, err)
+		}
+	}
+	if pedidos[0] != "POST /api2/json/nodes/pve1/qemu/110/snapshot description=Previo&snapname=snap_1&vmstate=0" ||
+		pedidos[1] != "POST /api2/json/nodes/pve1/lxc/110/snapshot description=Previo&snapname=snap_1" {
+		t.Errorf("Pedidos inesperados: %v", pedidos)
+	}
+	// Última barrera: un nombre inválido no llega a Proxmox.
+	if _, err := client.CrearSnapshot(context.Background(), "pve1", "qemu", 110, "snap,vmstate=1", ""); !errors.Is(err, ports.ErrParametroInvalido) || len(pedidos) != 2 {
+		t.Errorf("Nombre con coma: se esperaba ErrParametroInvalido sin pedido, vino %v (%d pedidos)", err, len(pedidos))
+	}
+}
+
+// ListarSnapshots normaliza la respuesta y descarta la entrada "current".
+func TestClient_ListarSnapshots(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"data":[
+			{"name":"base","snaptime":1774300000,"description":"","vmstate":0},
+			{"name":"snap_pre_upgrade","snaptime":1774358400,"description":"Previo","parent":"base","vmstate":1},
+			{"name":"current","description":"You are here!","running":1,"parent":"snap_pre_upgrade","digest":"abc"}]}`)
+	}))
+	defer server.Close()
+	client := proxmox.NewClient(server.URL, "pve1", tokenIDValido, tokenSecretValido, nil)
+	lista, err := client.ListarSnapshots(context.Background(), "pve1", "qemu", 110)
+	if err != nil || len(lista) != 2 {
+		t.Fatalf("%+v %v", lista, err)
+	}
+	esperado := ports.SnapshotDTO{Nombre: "snap_pre_upgrade", SnapTime: 1774358400, Descripcion: "Previo", Padre: "base", VMState: true}
+	if lista[1] != esperado || lista[0].VMState || lista[0].Padre != "" {
+		t.Errorf("Normalización: %+v", lista)
+	}
+}

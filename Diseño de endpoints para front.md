@@ -1099,6 +1099,8 @@ Petición (Frontend ➡️ Backend):
 
 Como devuelve lista, se utiliza la estructura plana de array con resúmen precalculado.
 
+> **OPERATIVO ETAPA-1 (código actual):** listar y crear están implementados con el contrato de RF-06, distinto del ejemplo de abajo. `GET /api/instances/{id}/snapshots` (READ_ONLY o más) devuelve un array directo, del más nuevo al más viejo: `[{name, snaptime (segundos UNIX), description, parent ("" si es el primero), vmstate}]`, sin `total` ni `currentSnapshotId`. `POST /api/instances/{id}/snapshots` (FULL_ACCESS) recibe `{snapname, description}` (sin `tags`) y responde `202 {tareaId, snapname}`; el resultado llega en `TASK_FINISHED` con `accion: "SNAPSHOT"`. `snapname`: empieza con letra; letras, números, `_` y `-`; de 2 a 40 caracteres; no puede ser `current` (si no, `400 INVALID_SNAPSHOT_NAME`). Nombre repetido: `409 SNAPSHOT_ALREADY_EXISTS`. Revertir y eliminar siguen planificados. Ver `docs/contrato-etapa1.md`.
+
 &nbsp;
 
 **GET /api/instances/{id}/snapshots**&nbsp;
