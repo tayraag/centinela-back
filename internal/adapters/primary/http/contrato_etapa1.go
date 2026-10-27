@@ -99,11 +99,12 @@ type ActiveTaskResponse struct {
 // SSEDetallesEvento documenta el objeto `detalles` de un evento del stream.
 //
 // El servidor lo serializa como `map[string]any`, así que su forma depende del
-// `tipo` del evento y ninguno de sus campos puede declararse obligatorio. Hoy
-// el único tipo que se publica es `TASK_FINISHED`; sus dos formas concretas
-// están en TaskSuccess y TaskFailed. En `TASK_FINISHED` el servidor manda
-// siempre las seis claves: `exitstatus`, `motivo` y `error` valen null cuando
-// no aplican.
+// `tipo` del evento y ninguno de sus campos puede declararse obligatorio. Se
+// publican `TASK_FINISHED` (formas concretas en TaskSuccess y TaskFailed; el
+// servidor manda siempre las seis claves y `exitstatus`, `motivo` y `error`
+// valen null cuando no aplican) y las alertas `ALERT_TRIGGERED` /
+// `ALERT_RESOLVED` (`alertId`, `type`, `metrica`, `valor`, `umbral`,
+// `acknowledged`; `valor` y `umbral` no van en `instance_down`).
 type SSEDetallesEvento struct {
 	TareaID    string  `json:"tareaId,omitempty" example:"3f2504e0-4f89-11d3-9a0c-0305e82c3301"`
 	Accion     string  `json:"accion,omitempty" enums:"START,STOP,SHUTDOWN,REBOOT,DELETE,CREATE,SNAPSHOT,ROLLBACK_SNAPSHOT,DELETE_SNAPSHOT" example:"START"`
@@ -111,6 +112,14 @@ type SSEDetallesEvento struct {
 	ExitStatus *string `json:"exitstatus,omitempty" extensions:"x-nullable" example:"OK"`
 	Motivo     *string `json:"motivo,omitempty" enums:"PROXMOX_ERROR,TIMEOUT" extensions:"x-nullable"`
 	Error      *string `json:"error,omitempty" extensions:"x-nullable" example:"CT 201 not running"`
+	// Alertas (ALERT_TRIGGERED y ALERT_RESOLVED). El mismo alertId une la
+	// alerta con su resolución.
+	AlertID      string   `json:"alertId,omitempty" example:"0192e4a1-7c9b-7123-b123-000000000001"`
+	Type         string   `json:"type,omitempty" enums:"host_saturation,resource_saturation,instance_down" example:"host_saturation"`
+	Metrica      string   `json:"metrica,omitempty" enums:"ram,cpu,disk,mem,down" example:"ram"`
+	Valor        *float64 `json:"valor,omitempty" example:"91.5"` // porcentaje medido
+	Umbral       *float64 `json:"umbral,omitempty" example:"85"`  // de activación en ALERT_TRIGGERED; de recuperación (80) en ALERT_RESOLVED
+	Acknowledged *bool    `json:"acknowledged,omitempty" example:"false"`
 }
 
 // SSEEventPayload es el JSON de cada línea `data:` del stream `GET /api/events`.
@@ -123,7 +132,7 @@ type SSEDetallesEvento struct {
 // a usuarios ADMIN.
 type SSEEventPayload struct {
 	ID          string             `json:"id" binding:"required" example:"75d0322d-1d76-4dbf-ad0d-2571c458aa63"`
-	Tipo        string             `json:"tipo" binding:"required" enums:"INSTANCE_STATE_CHANGED,INSTANCE_CREATED,RESOURCE_SATURATION,TASK_FINISHED,ALERT_TRIGGERED" example:"TASK_FINISHED"`
+	Tipo        string             `json:"tipo" binding:"required" enums:"INSTANCE_STATE_CHANGED,INSTANCE_CREATED,RESOURCE_SATURATION,TASK_FINISHED,ALERT_TRIGGERED,ALERT_RESOLVED" example:"TASK_FINISHED"`
 	Severidad   string             `json:"severidad" binding:"required" enums:"INFO,WARNING,CRITICAL" example:"INFO"`
 	RecursoTipo string             `json:"recursoTipo" binding:"required" enums:"VM,LXC,HOST" example:"VM"`
 	RecursoID   string             `json:"recursoId,omitempty" example:"inst_3Hk9aQ2mXv7LpR4sT1bN8c"`

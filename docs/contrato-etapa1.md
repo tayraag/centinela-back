@@ -679,7 +679,8 @@ El `data:` de cada evento es el esquema `http.SSEEventPayload`:
 - `fechaHora` es RFC3339, declarado en Swagger con `format: date-time`.
 - `detalles` se omite cuando el evento no trae datos extra.
 - `tipo` admite `INSTANCE_STATE_CHANGED`, `INSTANCE_CREATED`,
-  `RESOURCE_SATURATION`, `TASK_FINISHED` y `ALERT_TRIGGERED`.
+  `RESOURCE_SATURATION`, `TASK_FINISHED`, `ALERT_TRIGGERED` y `ALERT_RESOLVED`
+  (las alertas del evaluador de umbrales; ver `contrato-eventos.md`).
 - `severidad` admite `INFO`, `WARNING` y `CRITICAL`.
 - `recursoTipo` admite `VM`, `LXC` y `HOST` (el servidor físico; reemplaza al
   antiguo `NODE`).

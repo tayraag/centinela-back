@@ -3776,6 +3776,15 @@
                     ],
                     "example": "START"
                 },
+                "acknowledged": {
+                    "type": "boolean",
+                    "example": false
+                },
+                "alertId": {
+                    "description": "Alertas (ALERT_TRIGGERED y ALERT_RESOLVED). El mismo alertId une la\nalerta con su resolución.",
+                    "type": "string",
+                    "example": "0192e4a1-7c9b-7123-b123-000000000001"
+                },
                 "error": {
                     "type": "string",
                     "x-nullable": true,
@@ -3795,6 +3804,17 @@
                     "x-nullable": true,
                     "example": "OK"
                 },
+                "metrica": {
+                    "type": "string",
+                    "enum": [
+                        "ram",
+                        "cpu",
+                        "disk",
+                        "mem",
+                        "down"
+                    ],
+                    "example": "ram"
+                },
                 "motivo": {
                     "type": "string",
                     "enum": [
@@ -3806,6 +3826,25 @@
                 "tareaId": {
                     "type": "string",
                     "example": "3f2504e0-4f89-11d3-9a0c-0305e82c3301"
+                },
+                "type": {
+                    "type": "string",
+                    "enum": [
+                        "host_saturation",
+                        "resource_saturation",
+                        "instance_down"
+                    ],
+                    "example": "host_saturation"
+                },
+                "umbral": {
+                    "description": "de activación en ALERT_TRIGGERED; de recuperación (80) en ALERT_RESOLVED",
+                    "type": "number",
+                    "example": 85
+                },
+                "valor": {
+                    "description": "porcentaje medido",
+                    "type": "number",
+                    "example": 91.5
                 }
             }
         },
@@ -3865,7 +3904,8 @@
                         "INSTANCE_CREATED",
                         "RESOURCE_SATURATION",
                         "TASK_FINISHED",
-                        "ALERT_TRIGGERED"
+                        "ALERT_TRIGGERED",
+                        "ALERT_RESOLVED"
                     ],
                     "example": "TASK_FINISHED"
                 }

@@ -12,6 +12,8 @@ package memoria
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strconv"
 	"sync"
 	"time"
 
@@ -110,6 +112,44 @@ func (s *KVStore) Del(_ context.Context, keys ...string) error {
 		delete(s.ventanas, k)
 	}
 	return nil
+}
+
+// Incrementar suma 1 bajo el lock: atómico, como INCR + EXPIRE en Redis.
+func (s *KVStore) Incrementar(_ context.Context, key string, ttl time.Duration) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var valor int64
+	if actual, err := s.leer(key, false); err == nil {
+		if valor, err = strconv.ParseInt(actual, 10, 64); err != nil {
+			return 0, fmt.Errorf("%s no es un contador: %w", key, err)
+		}
+	}
+	valor++
+	e := entrada{valor: strconv.FormatInt(valor, 10)}
+	if ttl > 0 {
+		e.vence = s.ahora().Add(ttl)
+	}
+	s.datos[key] = e
+	return valor, nil
+}
+
+// SetNX guarda solo si la clave no existe (o venció), bajo el lock.
+func (s *KVStore) SetNX(_ context.Context, key string, value interface{}, ttl time.Duration) (bool, error) {
+	texto, err := ports.SerializarValor(value)
+	if err != nil {
+		return false, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, err := s.leer(key, false); err == nil {
+		return false, nil
+	}
+	e := entrada{valor: texto}
+	if ttl > 0 {
+		e.vence = s.ahora().Add(ttl)
+	}
+	s.datos[key] = e
+	return true, nil
 }
 
 func (s *KVStore) RegistrarEnVentana(_ context.Context, key, member string, ahora time.Time, ventana time.Duration, limite int64) (ports.RegistroVentana, error) {

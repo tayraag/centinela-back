@@ -8,9 +8,9 @@ de datos** del evento genérico que viajará por ese canal.
 
 El canal que los transporta es SSE (`GET /api/events`) sobre Redis Pub/Sub, y
 está documentado en [eventos-tiempo-real.md](eventos-tiempo-real.md). Hoy se
-publica `TASK_FINISHED`; el canal ya distribuye también `ALERT_TRIGGERED` (alertas
-del host) y los demás tipos, que quedan definidos para cuando se implementen sus
-emisores, que deben usar exactamente este esquema.
+publican `TASK_FINISHED` y las alertas `ALERT_TRIGGERED` / `ALERT_RESOLVED` del
+evaluador de umbrales; los demás tipos quedan definidos para cuando se
+implementen sus emisores, que deben usar exactamente este esquema.
 
 - Definición del contrato (Go): `internal/core/ports/event_port.go` (struct `RealtimeEvent`).
 - Definición del contrato (TypeScript): `frontend/centinela/src/types/notifications.ts` (interface `RealtimeEvent`).
@@ -63,6 +63,7 @@ enum** en inglés MAYÚSCULA con guión bajo.
 | EventoSaturacion      | RESOURCE_SATURATION    | Un recurso superó su umbral       |
 | EventoTareaFinalizada | TASK_FINISHED          | Terminó una tarea asincrónica     |
 | EventoAlerta          | ALERT_TRIGGERED        | Se disparó una alerta (p. ej. del host) |
+| EventoAlertaResuelta  | ALERT_RESOLVED         | Una alerta volvió a la normalidad       |
 
 ### Severidad (`severidad`)
 
@@ -137,11 +138,40 @@ Si falla, `severidad` es `WARNING` y `detalles` queda, por ejemplo:
 { "tareaId": "3f2504e0-4f89-11d3-9a0c-0305e82c3302", "accion": "STOP", "estado": "FAILED", "exitstatus": "CT 201 not running", "motivo": "PROXMOX_ERROR", "error": "CT 201 not running" }
 ```
 
-### Alerta del host (`ALERT_TRIGGERED`)
+### Alertas (`ALERT_TRIGGERED` y `ALERT_RESOLVED`)
 
-Una alerta de infraestructura del servidor físico: no refiere a una instancia,
-así que **no trae `recursoId`**, y solo la reciben los usuarios **ADMIN**. La
-forma de `detalles` depende de la alerta; por ejemplo, un umbral superado:
+Las emite el **evaluador de umbrales**, un worker que cada `ALERT_POLL_INTERVAL`
+(30 s por defecto) revisa el host y las instancias:
+
+| Recurso   | Métrica              | Se dispara con      | Se resuelve con |
+|-----------|----------------------|---------------------|-----------------|
+| Host      | RAM (`ram`)          | ≥ 85%               | < 80%           |
+| Host      | CPU (`cpu`)          | ≥ 90%               | < 80%           |
+| Host      | Disco raíz (`disk`)  | ≥ 90%               | < 80%           |
+| Instancia encendida | CPU (`cpu`) | ≥ 95%           | < 80%           |
+| Instancia encendida | Memoria (`mem`) | ≥ 95%       | < 80%           |
+| Instancia | Caída (`down`)       | estaba encendida y se apagó o desapareció sin una tarea de Centinela | vuelve a encender |
+
+**Histéresis y deduplicación.** Un valor sobre el umbral tiene que repetirse
+**dos ciclos seguidos** para disparar la alerta: un pico de un solo ciclo no
+emite nada ni se audita. Disparada, la alerta no se repite mientras el valor
+no baje del umbral de recuperación (80%): oscilar entre 84% y 86% no genera
+eventos nuevos. Al bajar de 80% llega `ALERT_RESOLVED`. La caída no necesita
+dos ciclos (un cambio de estado no es un pico) y "sin una tarea de Centinela"
+significa sin una tarea de esa instancia en curso ni creada en los últimos 10
+minutos (un stop, un rollback o un borrado ordenados desde El Centinela no
+alertan).
+
+- `ALERT_TRIGGERED`: severidad `CRITICAL`. Queda en la auditoría como
+  `ALERT_TRIGGERED` con resultado `SUCCESS` (sin usuario).
+- `ALERT_RESOLVED`: severidad `INFO`, con el mismo `alertId` de la alerta.
+- `detalles`: `alertId`, `type` (`host_saturation`, `resource_saturation` o
+  `instance_down`), `metrica`, `valor` y `umbral` (el de activación en la
+  alerta y el de recuperación, 80, en la resolución; no van en
+  `instance_down`) y `acknowledged: false`.
+- Las del host no traen `recursoId` y solo las reciben los usuarios **ADMIN**;
+  las de una instancia traen su referencia pública en `recursoId` y las reciben
+  el ADMIN y los OPERATOR con permiso sobre ella.
 
 ```json
 {
@@ -149,31 +179,35 @@ forma de `detalles` depende de la alerta; por ejemplo, un umbral superado:
   "tipo": "ALERT_TRIGGERED",
   "severidad": "CRITICAL",
   "recursoTipo": "HOST",
-  "mensaje": "El uso de CPU del host superó el 90%",
-  "fechaHora": "2026-10-16T10:15:00-03:00",
+  "mensaje": "El host superó el 85% de uso de RAM (91.5%).",
+  "fechaHora": "2026-10-27T10:15:00-03:00",
   "detalles": {
-    "metrica": "cpu",
-    "valor": 92.4,
-    "umbral": 90
+    "alertId": "0192e4a1-7c9b-7123-b123-000000000001",
+    "type": "host_saturation",
+    "metrica": "ram",
+    "valor": 91.5,
+    "umbral": 85,
+    "acknowledged": false
   }
 }
 ```
 
-O una caída del almacenamiento del host:
-
 ```json
 {
   "id": "8d1e2f3a-4b5c-4d6e-8f7a-9b0c1d2e3f4a",
-  "tipo": "ALERT_TRIGGERED",
-  "severidad": "WARNING",
-  "recursoTipo": "HOST",
-  "mensaje": "El storage local-lvm superó el 85% de uso",
-  "fechaHora": "2026-10-16T10:20:00-03:00",
+  "tipo": "ALERT_RESOLVED",
+  "severidad": "INFO",
+  "recursoTipo": "VM",
+  "recursoId": "inst_3Hk9aQ2mXv7LpR4sT1bN8c",
+  "mensaje": "El uso de CPU de la instancia srv-database volvió a la normalidad (42.0%).",
+  "fechaHora": "2026-10-27T10:20:00-03:00",
   "detalles": {
-    "metrica": "storage",
-    "storage": "local-lvm",
-    "valor": 86.1,
-    "umbral": 85
+    "alertId": "0192e4a1-7c9b-7123-b123-000000000002",
+    "type": "resource_saturation",
+    "metrica": "cpu",
+    "valor": 42,
+    "umbral": 80,
+    "acknowledged": false
   }
 }
 ```

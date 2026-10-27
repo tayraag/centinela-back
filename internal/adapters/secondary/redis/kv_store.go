@@ -156,6 +156,31 @@ func (s *KVStore) Del(ctx context.Context, keys ...string) error {
 	return nil
 }
 
+// incrementarConVencimiento hace INCR y EXPIRE en una sola operación.
+const incrementarConVencimiento = `local v = redis.call('INCR', KEYS[1])
+redis.call('PEXPIRE', KEYS[1], ARGV[1])
+return v`
+
+func (s *KVStore) Incrementar(ctx context.Context, key string, ttl time.Duration) (int64, error) {
+	valor, err := s.client.Eval(ctx, incrementarConVencimiento, []string{key}, ttl.Milliseconds()).Int64()
+	if err != nil {
+		return 0, fmt.Errorf("redis INCR %s: %w", key, err)
+	}
+	return valor, nil
+}
+
+func (s *KVStore) SetNX(ctx context.Context, key string, value interface{}, ttl time.Duration) (bool, error) {
+	texto, err := ports.SerializarValor(value)
+	if err != nil {
+		return false, err
+	}
+	guardado, err := s.client.SetNX(ctx, key, texto, ttl).Result()
+	if err != nil {
+		return false, fmt.Errorf("redis SET NX %s: %w", key, err)
+	}
+	return guardado, nil
+}
+
 // RegistrarEnVentana implementa un sliding window exacto con un script Lua para
 // que ZREMRANGEBYSCORE, ZCARD, ZADD y EXPIRE sean una sola operación atómica.
 func (s *KVStore) RegistrarEnVentana(ctx context.Context, key, member string, ahora time.Time, ventana time.Duration, limite int64) (ports.RegistroVentana, error) {

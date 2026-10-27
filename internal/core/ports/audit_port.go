@@ -88,6 +88,7 @@ const (
 const (
 	AccionEventosConexion = "EVENTOS_CONEXION" // se abrió un stream (detalles: sesion_id)
 	AccionEventosCierre   = "EVENTOS_CIERRE"   // el backend cortó un stream (detalles: sesion_id, motivo)
+	AccionAlertaDisparada = "ALERT_TRIGGERED"  // el evaluador de umbrales emitió una alerta (sin usuario)
 )
 
 // Acciones de gestión de usuarios

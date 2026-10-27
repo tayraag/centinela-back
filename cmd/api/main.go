@@ -192,7 +192,14 @@ func main() {
 		services.NewInventarioService(proxmoxClient), refsInstancia, topologia, nodoNombre, aprovisionadorSeguro(kvStore, cuotasService))
 	eventsHandler := httpHandlers.NewEventsHandler(eventosService, refsInstancia)
 	snapshotHandler := httpHandlers.NewSnapshotHandler(services.NewSnapshotService(proxmoxClient, seguimientoTareas, auditService))
-	nodeHandler := httpHandlers.NewNodeHandler(services.NewNodoService(proxmoxClient, kvStore, nodoNombre), proxmoxClient, nodoNombre, userRepo)
+	nodoService := services.NewNodoService(proxmoxClient, kvStore, nodoNombre)
+	nodeHandler := httpHandlers.NewNodeHandler(nodoService, proxmoxClient, nodoNombre, userRepo)
+
+	// Evaluador de alertas (RF-11): umbrales del host y de las instancias con
+	// histéresis y deduplicación en Redis; publica ALERT_TRIGGERED/ALERT_RESOLVED.
+	// Se detiene con ctx (SIGINT/SIGTERM).
+	services.NewEvaluadorAlertas(nodoService, proxmoxClient, tareaRepo, kvStore, eventosService, auditService,
+		nodoNombre, duracionDeEntorno("ALERT_POLL_INTERVAL", 30*time.Second)).Iniciar(ctx)
 	wsMetricsHandler := httpHandlers.NewMetricsWSHandler(proxmoxClient, services.NewMetricasVivoService(kvStore, authRepo, instanceRepo, 0),
 		refsInstancia, nodoNombre, middleware.OrigenesPermitidos(), httpHandlers.LimitesWSPorDefecto)
 

@@ -25,6 +25,7 @@ const (
 	EventoSaturacion      = "RESOURCE_SATURATION"    // un recurso superó su umbral de uso
 	EventoTareaFinalizada = "TASK_FINISHED"          // terminó una tarea asincrónica
 	EventoAlerta          = "ALERT_TRIGGERED"        // se disparó una alerta de infraestructura (p. ej. del host)
+	EventoAlertaResuelta  = "ALERT_RESOLVED"         // una alerta activa volvió a la normalidad
 )
 
 // Niveles de severidad permitidos para un evento.
@@ -64,6 +65,7 @@ var tiposEventoPermitidos = []string{
 	EventoSaturacion,
 	EventoTareaFinalizada,
 	EventoAlerta,
+	EventoAlertaResuelta,
 }
 
 // severidadesPermitidas reúne los valores válidos de severidad para validar entradas.

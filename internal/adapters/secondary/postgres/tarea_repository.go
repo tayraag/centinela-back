@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"el-centinela/internal/core/domain"
 	"el-centinela/internal/core/ports"
@@ -187,6 +188,18 @@ func (r *TareaRepository) BuscarTareasActivasPorVmids(ctx context.Context, vmids
 		resultado[vmid] = ports.ActiveTaskDTO{TareaID: t.ID.String(), Action: ports.AccionPublicaTarea(t.Accion), Status: t.Estado}
 	}
 	return resultado, nil
+}
+
+// HuboTareaDesde indica si la instancia tiene una tarea en curso o creada desde
+// el instante dado, en cualquier estado.
+func (r *TareaRepository) HuboTareaDesde(ctx context.Context, vmid int, desde time.Time) (bool, error) {
+	var cantidad int64
+	if err := r.db.WithContext(ctx).Model(&domain.TareaAsincrona{}).
+		Where("instancia_id = ? AND (estado = ? OR fecha_creacion >= ?)", strconv.Itoa(vmid), ports.TareaRunning, desde).
+		Count(&cantidad).Error; err != nil {
+		return false, fmt.Errorf("error al buscar tareas recientes: %w", err)
+	}
+	return cantidad > 0, nil
 }
 
 // ListarEnCurso devuelve las tareas RUNNING, de la más vieja a la más nueva.

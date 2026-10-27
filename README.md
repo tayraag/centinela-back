@@ -74,7 +74,7 @@ centinela-back/
 │   │   │   ├── user_port.go     # Interfaces UserRepository + UserService + DTOs de usuarios
 │   │   │   ├── instance_port.go # Interface InstanceRepository (autorización por recurso)
 │   │   │   ├── proxmox_port.go  # Interface ProxmoxPort (comunicación con hipervisor)
-│   │   │   ├── event_port.go    # Contrato RealtimeEvent (TASK_FINISHED, ALERT_TRIGGERED, recursos VM/LXC/HOST)
+│   │   │   ├── event_port.go    # Contrato RealtimeEvent (TASK_FINISHED, ALERT_TRIGGERED/ALERT_RESOLVED, recursos VM/LXC/HOST)
 │   │   │   ├── eventos_bus_port.go # Interfaces EventosService y SeguimientoTareas, mensajes del bus
 │   │   │   ├── tarea_port.go    # Interface TareaRepository (tareas_asincronas)
 │   │   │   ├── exclusion_port.go # Interface ExclusionInstancias (una operación a la vez por instancia)
@@ -95,6 +95,7 @@ centinela-back/
 │   │       ├── configuracion_instancias.go # Cambio de CPU/RAM: DeltaRAM contra el nodo (CuotasService.AmpliarInstancia) y detección de hot-plug
 │   │       ├── snapshot_service.go  # Snapshots: regla de nombre de Proxmox, orden por snaptime; crear, revertir y borrar como tareas asíncronas
 │   │       ├── metricas_vivo_service.go    # Ticket y vigilancia del WebSocket de métricas (corte por logout, baja o permiso)
+│   │       ├── alert_evaluator_worker.go   # Evaluador de umbrales (RF-11): histéresis y deduplicación en Redis; ALERT_TRIGGERED/ALERT_RESOLVED
 │   │       └── eventos_service.go          # Despacho de eventos en tiempo real hacia Pub/Sub (HOST solo para ADMIN)
 │   │
 │   ├── adapters/

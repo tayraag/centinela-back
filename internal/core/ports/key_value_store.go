@@ -59,6 +59,15 @@ type KeyValueStore interface {
 	// Del borra las claves indicadas (las inexistentes se ignoran).
 	Del(ctx context.Context, keys ...string) error
 
+	// Incrementar suma 1 al contador de key (lo crea en 1 si no existe), le
+	// renueva el vencimiento a ttl y devuelve el valor nuevo. Atómico entre
+	// procesos (INCR + EXPIRE).
+	Incrementar(ctx context.Context, key string, ttl time.Duration) (int64, error)
+
+	// SetNX guarda value en key solo si la clave no existe y devuelve true si la
+	// guardó. ttl = 0 significa sin vencimiento.
+	SetNX(ctx context.Context, key string, value interface{}, ttl time.Duration) (bool, error)
+
 	// RegistrarEnVentana elimina eventos anteriores a ahora-ventana, cuenta los
 	// restantes y agrega member solo si todavía no se alcanzó limite. La operación
 	// completa debe ser atómica entre procesos.

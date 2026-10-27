@@ -3,6 +3,7 @@ package ports
 import (
 	"context"
 	"strings"
+	"time"
 
 	"el-centinela/internal/core/domain"
 
@@ -64,6 +65,11 @@ type TareaRepository interface {
 	// (tareaId, acción en mayúsculas y estado RUNNING) de cualquiera de los
 	// vmids dados. Si un vmid no tiene tarea activa, no aparece en el mapa.
 	BuscarTareasActivasPorVmids(ctx context.Context, vmids []int) (map[int]ActiveTaskDTO, error)
+
+	// HuboTareaDesde indica si la instancia tiene una tarea de Centinela en
+	// curso o creada desde el instante dado (cualquier acción y estado). Explica
+	// un cambio de estado que Centinela ordenó (start, stop, rollback...).
+	HuboTareaDesde(ctx context.Context, vmid int, desde time.Time) (bool, error)
 
 	// ListarEnCurso devuelve todas las tareas en estado RUNNING, de la más vieja a
 	// la más nueva. Lo usa el reconciliador del seguimiento de tareas.

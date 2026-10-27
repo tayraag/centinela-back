@@ -320,7 +320,7 @@ func TestContratoEtapa1(t *testing.T) {
 
 	// Los tres enums traveling en el sobre, con los valores exactos de ports.
 	verificarEnum(t, definitions, payloadDef, "tipo",
-		"INSTANCE_STATE_CHANGED", "INSTANCE_CREATED", "RESOURCE_SATURATION", "TASK_FINISHED", "ALERT_TRIGGERED")
+		"INSTANCE_STATE_CHANGED", "INSTANCE_CREATED", "RESOURCE_SATURATION", "TASK_FINISHED", "ALERT_TRIGGERED", "ALERT_RESOLVED")
 	verificarEnum(t, definitions, payloadDef, "severidad", "INFO", "WARNING", "CRITICAL")
 	verificarEnum(t, definitions, payloadDef, "recursoTipo", "VM", "LXC", "HOST")
 
@@ -439,7 +439,7 @@ func TestContratoEtapa1(t *testing.T) {
 	// valor, esta comparación lo delata.
 	tipos := []string{
 		ports.EventoInstanciaEstado, ports.EventoInstanciaCreada,
-		ports.EventoSaturacion, ports.EventoTareaFinalizada, ports.EventoAlerta,
+		ports.EventoSaturacion, ports.EventoTareaFinalizada, ports.EventoAlerta, ports.EventoAlertaResuelta,
 	}
 	verificarEnum(t, definitions, payloadDef, "tipo", tipos...)
 	verificarEnum(t, definitions, payloadDef, "severidad",
@@ -517,6 +517,17 @@ func TestContratoEtapa1(t *testing.T) {
 	if _, tiene := sobreAlerta["recursoId"]; tiene {
 		t.Errorf("La alerta del host no debe traer recursoId: %v", sobreAlerta)
 	}
+
+	// Los detalles de las alertas (los que arma el evaluador de umbrales)
+	// están todos declarados en SSEDetallesEvento.
+	for _, detalles := range []map[string]any{
+		{"alertId": "0192e4a1-7c9b-7123-b123-000000000001", "type": "host_saturation", "metrica": "ram", "valor": 91.5, "umbral": 85.0, "acknowledged": false},
+		{"alertId": "0192e4a1-7c9b-7123-b123-000000000002", "type": "instance_down", "metrica": "down", "acknowledged": false},
+	} {
+		evento, _ := ports.NewRealtimeEvent(ports.EventoAlertaResuelta, ports.SeveridadInfo, "Volvió a la normalidad")
+		compararTodasLasClaves(t, serializar(evento.ConRecurso(ports.RecursoVM, "110").ConDetalles(detalles))["detalles"], detallesDef, definitions, "detalles de alerta")
+	}
+	verificarEnum(t, definitions, detallesDef, "type", "host_saturation", "resource_saturation", "instance_down")
 
 	contenidoContrato, err := os.ReadFile("contrato-etapa1.md")
 	if err != nil {

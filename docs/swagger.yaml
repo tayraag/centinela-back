@@ -508,6 +508,15 @@ definitions:
         - DELETE_SNAPSHOT
         example: START
         type: string
+      acknowledged:
+        example: false
+        type: boolean
+      alertId:
+        description: |-
+          Alertas (ALERT_TRIGGERED y ALERT_RESOLVED). El mismo alertId une la
+          alerta con su resolución.
+        example: 0192e4a1-7c9b-7123-b123-000000000001
+        type: string
       error:
         example: CT 201 not running
         type: string
@@ -523,6 +532,15 @@ definitions:
         example: OK
         type: string
         x-nullable: true
+      metrica:
+        enum:
+        - ram
+        - cpu
+        - disk
+        - mem
+        - down
+        example: ram
+        type: string
       motivo:
         enum:
         - PROXMOX_ERROR
@@ -532,6 +550,21 @@ definitions:
       tareaId:
         example: 3f2504e0-4f89-11d3-9a0c-0305e82c3301
         type: string
+      type:
+        enum:
+        - host_saturation
+        - resource_saturation
+        - instance_down
+        example: host_saturation
+        type: string
+      umbral:
+        description: de activación en ALERT_TRIGGERED; de recuperación (80) en ALERT_RESOLVED
+        example: 85
+        type: number
+      valor:
+        description: porcentaje medido
+        example: 91.5
+        type: number
     type: object
   http.SSEEventPayload:
     properties:
@@ -571,6 +604,7 @@ definitions:
         - RESOURCE_SATURATION
         - TASK_FINISHED
         - ALERT_TRIGGERED
+        - ALERT_RESOLVED
         example: TASK_FINISHED
         type: string
     required:

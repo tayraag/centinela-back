@@ -49,6 +49,67 @@ func ProbarContrato(t *testing.T, nuevo Fabrica) {
 		}
 	})
 
+	t.Run("Incrementar cuenta, renueva el vencimiento y es atómico", func(t *testing.T) {
+		store, avanzar := nuevo(t)
+		for esperado := int64(1); esperado <= 3; esperado++ {
+			if v, err := store.Incrementar(ctx, "contador", 90*time.Second); err != nil || v != esperado {
+				t.Fatalf("Incrementar = %d, %v; se esperaba %d", v, err, esperado)
+			}
+			avanzar(60 * time.Second) // cada INCR renueva los 90 s
+		}
+		avanzar(31 * time.Second)
+		if _, err := store.Get(ctx, "contador"); !errors.Is(err, ports.ErrClaveNoEncontrada) {
+			t.Fatalf("Sin incrementos, el contador debe vencer: %v", err)
+		}
+		if v, _ := store.Incrementar(ctx, "contador", time.Minute); v != 1 {
+			t.Errorf("Vencido, vuelve a empezar en 1: %d", v)
+		}
+		var wg sync.WaitGroup
+		for i := 0; i < 50; i++ {
+			wg.Add(1)
+			go func() { defer wg.Done(); _, _ = store.Incrementar(ctx, "paralelo", time.Minute) }()
+		}
+		wg.Wait()
+		if v, _ := store.Get(ctx, "paralelo"); v != "50" {
+			t.Errorf("50 incrementos simultáneos deben dar 50, dio %s", v)
+		}
+	})
+
+	t.Run("SetNX guarda solo si no existe", func(t *testing.T) {
+		store, avanzar := nuevo(t)
+		if ok, err := store.SetNX(ctx, "activa", "uno", time.Minute); err != nil || !ok {
+			t.Fatalf("Primer SetNX: %v %v", ok, err)
+		}
+		if ok, _ := store.SetNX(ctx, "activa", "dos", time.Minute); ok {
+			t.Fatal("SetNX sobre una clave existente no debe guardar")
+		}
+		if v, _ := store.Get(ctx, "activa"); v != "uno" {
+			t.Errorf("Conserva el primer valor: %q", v)
+		}
+		avanzar(61 * time.Second)
+		if ok, _ := store.SetNX(ctx, "activa", "tres", time.Minute); !ok {
+			t.Error("Vencida la clave, SetNX vuelve a guardar")
+		}
+		var ganadores int64
+		var mu sync.Mutex
+		var wg sync.WaitGroup
+		for i := 0; i < 50; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				if ok, _ := store.SetNX(ctx, "carrera", "x", time.Minute); ok {
+					mu.Lock()
+					ganadores++
+					mu.Unlock()
+				}
+			}()
+		}
+		wg.Wait()
+		if ganadores != 1 {
+			t.Errorf("Entre 50 SetNX simultáneos gana uno solo, ganaron %d", ganadores)
+		}
+	})
+
 	t.Run("Set serializa cualquier valor igual en todos los adaptadores", func(t *testing.T) {
 		store, _ := nuevo(t)
 		casos := []struct {

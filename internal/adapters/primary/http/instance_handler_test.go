@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	adaptersHttp "el-centinela/internal/adapters/primary/http"
 	"el-centinela/internal/adapters/primary/http/middleware"
@@ -1205,4 +1206,8 @@ func (m *mockProxmoxPort) RevertirSnapshot(context.Context, string, string, int,
 
 func (m *mockProxmoxPort) EliminarSnapshot(context.Context, string, string, int, string) (string, error) {
 	return "", nil
+}
+
+func (m *mockTareaRepository) HuboTareaDesde(context.Context, int, time.Time) (bool, error) {
+	return false, nil
 }

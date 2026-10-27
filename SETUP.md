@@ -80,6 +80,7 @@ Configuración oficial pasada por la PM. El backend se autentica **solo** con el
 | `PROXMOX_PROTECTED_VMIDS`      | Opcional. VMIDs que no se pueden apagar desde la API. Vacío = `100`–`105`   | *(vacío)*                                |
 | `TOPOLOGY_NODE_ALIASES`        | Opcional. Alias del nodo que ve quien no es ADMIN (`real=alias,...`). Vacío = `PROXMOX_NODE` como `nodo-principal` | *(vacío)*              |
 | `TOPOLOGY_STORAGE_ALIASES`     | Opcional. Alias de storages (`real=alias,...`). Vacío = `local-lvm=Almacenamiento Local Rápido,local=Almacenamiento Estándar` | *(vacío)* |
+| `ALERT_POLL_INTERVAL`          | Opcional. Cada cuánto el evaluador de alertas revisa el host y las instancias (ej. `30s`, `1m`). Vacío = `30s` | *(vacío)* |
 | `PROXMOX_SIM_*`                | Opcionales. Configuración del simulador (solo desarrollo local)             | ver `docs/simulador-proxmox.md`          |
 
 Cada request a Proxmox lleva la cabecera:
