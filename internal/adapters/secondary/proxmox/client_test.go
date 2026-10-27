@@ -1045,3 +1045,31 @@ func TestClient_ListarSnapshots(t *testing.T) {
 		t.Errorf("Normalización: %+v", lista)
 	}
 }
+
+func TestClient_RevertirYEliminarSnapshot(t *testing.T) {
+	var pedidos []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		pedidos = append(pedidos, r.Method+" "+r.URL.Path)
+		fmt.Fprint(w, `{"data":"UPID:pve1:0002:qmrollback"}`)
+	}))
+	defer server.Close()
+	client := proxmox.NewClient(server.URL, "pve1", tokenIDValido, tokenSecretValido, nil)
+	if upid, err := client.RevertirSnapshot(context.Background(), "pve1", "qemu", 110, "snap_1"); err != nil || upid == "" {
+		t.Fatalf("rollback: %q %v", upid, err)
+	}
+	if upid, err := client.EliminarSnapshot(context.Background(), "pve1", "lxc", 201, "snap_1"); err != nil || upid == "" {
+		t.Fatalf("delete: %q %v", upid, err)
+	}
+	if len(pedidos) != 2 || pedidos[0] != "POST /api2/json/nodes/pve1/qemu/110/snapshot/snap_1/rollback" || pedidos[1] != "DELETE /api2/json/nodes/pve1/lxc/201/snapshot/snap_1" {
+		t.Errorf("Pedidos inesperados: %v", pedidos)
+	}
+	// El nombre va en la ruta: uno que la alteraría no llega a Proxmox.
+	for _, malo := range []string{"../../status/stop", "snap/x", "current"} {
+		if _, err := client.EliminarSnapshot(context.Background(), "pve1", "qemu", 110, malo); !errors.Is(err, ports.ErrParametroInvalido) {
+			t.Errorf("%q: se esperaba ErrParametroInvalido, vino %v", malo, err)
+		}
+	}
+	if len(pedidos) != 2 {
+		t.Errorf("Un nombre inválido no debe llegar a Proxmox: %v", pedidos)
+	}
+}

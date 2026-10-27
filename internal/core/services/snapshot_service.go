@@ -97,3 +97,53 @@ func (s *snapshotService) Crear(ctx context.Context, usuarioID uuid.UUID, vmid i
 	}
 	return &ports.SnapshotCreado{TareaID: tareaID, Nombre: nombre}, nil
 }
+
+func (s *snapshotService) Revertir(ctx context.Context, usuarioID uuid.UUID, vmid int, nombre string) (uuid.UUID, error) {
+	return s.ordenSobreSnapshot(ctx, usuarioID, vmid, nombre, ports.AccionTareaRollbackSnapshot, s.proxmox.RevertirSnapshot)
+}
+
+func (s *snapshotService) Eliminar(ctx context.Context, usuarioID uuid.UUID, vmid int, nombre string) (uuid.UUID, error) {
+	return s.ordenSobreSnapshot(ctx, usuarioID, vmid, nombre, ports.AccionTareaDeleteSnapshot, s.proxmox.EliminarSnapshot)
+}
+
+// ordenSobreSnapshot valida el nombre, exige que el snapshot exista (Proxmox
+// lo rechaza con un error genérico), despacha la orden y registra la tarea.
+func (s *snapshotService) ordenSobreSnapshot(ctx context.Context, usuarioID uuid.UUID, vmid int, nombre, accion string,
+	despachar func(ctx context.Context, node, tipo string, vmid int, snapname string) (string, error)) (uuid.UUID, error) {
+	if !NombreSnapshotValido(nombre) {
+		return uuid.Nil, ports.ErrSnapshotNombreInvalido
+	}
+	inst, err := s.proxmox.ObtenerInstancia(ctx, vmid)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	existentes, err := s.proxmox.ListarSnapshots(ctx, inst.Nodo, inst.Tipo, vmid)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	existe := false
+	for _, e := range existentes {
+		existe = existe || e.Nombre == nombre
+	}
+	if !existe {
+		return uuid.Nil, ports.ErrSnapshotNoEncontrado
+	}
+
+	upid, err := despachar(ctx, inst.Nodo, inst.Tipo, vmid, nombre)
+	if err != nil {
+		s.audit.Registrar(ctx, ports.RegistrarAuditoriaInput{
+			UsuarioID: usuarioID, Accion: accion, InstanciaID: strconv.Itoa(vmid),
+			InstanciaNombre: inst.Nombre, Resultado: ports.ResultadoFalla,
+			Detalles: map[string]any{"snapname": nombre, "resource_type": inst.Tipo, "error": err.Error()},
+		})
+		return uuid.Nil, err
+	}
+	tareaID, err := s.seguimiento.Seguir(ctx, usuarioID, vmid, accion, upid, map[string]any{
+		"instanciaNombre": inst.Nombre, "resource_type": inst.Tipo, "snapname": nombre,
+	})
+	if err != nil {
+		log.Printf("[SNAPSHOTS] Proxmox aceptó %s de %s en %d pero no se pudo registrar su seguimiento: %v", accion, nombre, vmid, err)
+		return uuid.Nil, fmt.Errorf("%w: %v", ports.ErrSeguimientoNoRegistrado, err)
+	}
+	return tareaID, nil
+}

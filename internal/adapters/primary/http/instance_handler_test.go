@@ -1198,3 +1198,11 @@ func (m *mockProxmoxPort) CrearSnapshot(context.Context, string, string, int, st
 func (m *mockProxmoxPort) ListarSnapshots(context.Context, string, string, int) ([]ports.SnapshotDTO, error) {
 	return nil, nil
 }
+
+func (m *mockProxmoxPort) RevertirSnapshot(context.Context, string, string, int, string) (string, error) {
+	return "", nil
+}
+
+func (m *mockProxmoxPort) EliminarSnapshot(context.Context, string, string, int, string) (string, error) {
+	return "", nil
+}

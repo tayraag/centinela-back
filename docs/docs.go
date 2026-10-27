@@ -1583,7 +1583,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "OPERATIVO. Lee en vivo el inventario de Proxmox VE (VMs y contenedores). Un ADMIN recibe el cluster completo; un OPERATOR recibe únicamente las instancias que tiene asignadas. ` + "`" + `id` + "`" + ` es la referencia pública opaca de la instancia (` + "`" + `inst_` + "`" + ` + 22 caracteres): es estable y es la que se usa en todas las rutas /instances/{instanceRef}; el VMID de Proxmox nunca se expone. Para quien no es ADMIN, ` + "`" + `node` + "`" + ` es un alias neutro del nodo físico (por ejemplo ` + "`" + `nodo-principal` + "`" + `), nunca el hostname real. Incluye telemetría (CPU en porcentaje 0-100, RAM en bytes y MaxRam en bytes), nivel de acceso y tarea activa. Si la instancia está apagada (stopped), cpuUsage y ramUsage serán estrictamente null. ip puede ser null; activeTask es el objeto { tareaId, action, status } de la tarea RUNNING de la instancia, o null si no tiene ninguna.",
+                "description": "OPERATIVO. Lee en vivo el inventario de Proxmox VE (VMs y contenedores). Un ADMIN recibe el cluster completo; un OPERATOR recibe únicamente las instancias que tiene asignadas. ` + "`" + `id` + "`" + ` es la referencia pública opaca de la instancia (` + "`" + `inst_` + "`" + ` + 22 caracteres): es estable y es la que se usa en todas las rutas /instances/{instanceRef}; el VMID de Proxmox nunca se expone. Para quien no es ADMIN, ` + "`" + `node` + "`" + ` es un alias neutro del nodo físico (por ejemplo ` + "`" + `nodo-principal` + "`" + `), nunca el hostname real. Incluye telemetría (CPU en porcentaje 0-100, RAM en bytes y MaxRam en bytes), nivel de acceso y tarea activa. Si la instancia está apagada (stopped), cpuUsage y ramUsage serán estrictamente null. Mientras corre un rollback de snapshot, ` + "`" + `status` + "`" + ` vale ` + "`" + `rolling_back` + "`" + ` (y activeTask.action ` + "`" + `ROLLBACK_SNAPSHOT` + "`" + `). ip puede ser null; activeTask es el objeto { tareaId, action, status } de la tarea RUNNING de la instancia, o null si no tiene ninguna.",
                 "produces": [
                     "application/json"
                 ],
@@ -1720,7 +1720,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Devuelve el estado actual (running/stopped, tipo, nodo, telemetría) de una VM o contenedor leído en vivo desde Proxmox VE. ` + "`" + `cpu` + "`" + ` es un porcentaje de 0 a 100; ` + "`" + `cpu` + "`" + ` y ` + "`" + `mem` + "`" + ` valen null si la instancia no está encendida. Para quien no es ADMIN, ` + "`" + `nodo` + "`" + ` es un alias neutro del nodo físico, nunca el hostname real.",
+                "description": "Devuelve el estado actual (running/stopped, tipo, nodo, telemetría) de una VM o contenedor leído en vivo desde Proxmox VE. ` + "`" + `cpu` + "`" + ` es un porcentaje de 0 a 100; ` + "`" + `cpu` + "`" + ` y ` + "`" + `mem` + "`" + ` valen null si la instancia no está encendida. Mientras corre un rollback de snapshot, ` + "`" + `estado` + "`" + ` vale ` + "`" + `rolling_back` + "`" + `. Para quien no es ADMIN, ` + "`" + `nodo` + "`" + ` es un alias neutro del nodo físico, nunca el hostname real.",
                 "produces": [
                     "application/json"
                 ],
@@ -2297,6 +2297,196 @@ const docTemplate = `{
                     },
                     "504": {
                         "description": "PROXMOX_TIMEOUT — el snapshot puede haberse creado",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/instances/{instanceRef}/snapshots/{snapname}": {
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "OPERATIVO. Borra el snapshot; la instancia no cambia. Requiere ADMIN o FULL_ACCESS y lleva la exclusión mutua (409 INSTANCE_BUSY sin contactar a Proxmox si hay otra operación en curso). Se registra en tareas_asincronas con accion DELETE_SNAPSHOT y responde 202 con ` + "`" + `tareaId` + "`" + `; el desenlace llega en TASK_FINISHED (accion DELETE_SNAPSHOT). Las instancias de infraestructura también lo admiten.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Snapshots"
+                ],
+                "summary": "Eliminar un snapshot",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Referencia pública de la instancia (inst_...)",
+                        "name": "instanceRef",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Nombre del snapshot",
+                        "name": "snapname",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Accepted",
+                        "schema": {
+                            "$ref": "#/definitions/http.AccionAceptadaResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "INVALID_SNAPSHOT_NAME — el nombre no cumple el formato de Proxmox",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "MISSING_TOKEN | INVALID_TOKEN | TOKEN_REVOKED",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "INSTANCE_ACCESS_DENIED — el OPERATOR no tiene FULL_ACCESS",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "RESOURCE_NOT_FOUND — referencia inválida o instancia inexistente | SNAPSHOT_NOT_FOUND — la instancia no tiene ese snapshot",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "INSTANCE_BUSY — la instancia está ejecutando otra tarea; no se contactó a Proxmox",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "TASK_TRACKING_UNAVAILABLE | PROXMOX_ERROR",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "502": {
+                        "description": "PROXMOX_UNAVAILABLE",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "INSTANCE_LOCK_UNAVAILABLE",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "504": {
+                        "description": "PROXMOX_TIMEOUT — el borrado puede haberse aplicado",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/instances/{instanceRef}/snapshots/{snapname}/rollback": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "OPERATIVO. Vuelve la instancia al estado del snapshot; Proxmox la deja apagada. Requiere ADMIN o FULL_ACCESS y lleva la exclusión mutua: si la instancia tiene una tarea RUNNING o el lock de operación está tomado responde 409 INSTANCE_BUSY sin contactar a Proxmox. Se registra en tareas_asincronas con accion ROLLBACK_SNAPSHOT y responde 202 con ` + "`" + `tareaId` + "`" + ` (el UPID de Proxmox nunca se devuelve). Mientras dura, el inventario y el detalle muestran la instancia con status ` + "`" + `rolling_back` + "`" + ` y activeTask.action ` + "`" + `ROLLBACK_SNAPSHOT` + "`" + `; el desenlace llega en TASK_FINISHED (accion ROLLBACK_SNAPSHOT). Las instancias de infraestructura también lo admiten.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Snapshots"
+                ],
+                "summary": "Revertir a un snapshot (rollback)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Referencia pública de la instancia (inst_...)",
+                        "name": "instanceRef",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Nombre del snapshot",
+                        "name": "snapname",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Accepted",
+                        "schema": {
+                            "$ref": "#/definitions/http.AccionAceptadaResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "INVALID_SNAPSHOT_NAME — el nombre no cumple el formato de Proxmox",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "MISSING_TOKEN | INVALID_TOKEN | TOKEN_REVOKED",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "INSTANCE_ACCESS_DENIED — el OPERATOR no tiene FULL_ACCESS",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "RESOURCE_NOT_FOUND — referencia inválida o instancia inexistente | SNAPSHOT_NOT_FOUND — la instancia no tiene ese snapshot",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "INSTANCE_BUSY — la instancia está ejecutando otra tarea; no se contactó a Proxmox",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "TASK_TRACKING_UNAVAILABLE | PROXMOX_ERROR",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "502": {
+                        "description": "PROXMOX_UNAVAILABLE",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "INSTANCE_LOCK_UNAVAILABLE",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "504": {
+                        "description": "PROXMOX_TIMEOUT — el rollback puede haberse aplicado",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -2966,7 +3156,9 @@ const docTemplate = `{
                         "REBOOT",
                         "DELETE",
                         "CREATE",
-                        "SNAPSHOT"
+                        "SNAPSHOT",
+                        "ROLLBACK_SNAPSHOT",
+                        "DELETE_SNAPSHOT"
                     ],
                     "example": "START"
                 },
@@ -3585,7 +3777,9 @@ const docTemplate = `{
                         "REBOOT",
                         "DELETE",
                         "CREATE",
-                        "SNAPSHOT"
+                        "SNAPSHOT",
+                        "ROLLBACK_SNAPSHOT",
+                        "DELETE_SNAPSHOT"
                     ],
                     "example": "START"
                 },
@@ -3824,7 +4018,9 @@ const docTemplate = `{
                         "REBOOT",
                         "DELETE",
                         "CREATE",
-                        "SNAPSHOT"
+                        "SNAPSHOT",
+                        "ROLLBACK_SNAPSHOT",
+                        "DELETE_SNAPSHOT"
                     ],
                     "example": "STOP"
                 },
@@ -3879,7 +4075,9 @@ const docTemplate = `{
                         "REBOOT",
                         "DELETE",
                         "CREATE",
-                        "SNAPSHOT"
+                        "SNAPSHOT",
+                        "ROLLBACK_SNAPSHOT",
+                        "DELETE_SNAPSHOT"
                     ],
                     "example": "START"
                 },

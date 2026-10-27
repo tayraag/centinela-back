@@ -361,6 +361,10 @@ func main() {
 			// cambia la instancia, y conviene tenerlo antes de tocar la infraestructura.
 			instancia.GET("/snapshots", middleware.RequireInstanceAccess(instanceRepo, ports.NivelAccesoReadOnly), snapshotHandler.ListarSnapshots)
 			instancia.POST("/snapshots", middleware.RequireInstanceAccess(instanceRepo, ports.NivelAccesoFullAccess), middleware.RequireInstanceIdle(exclusion), snapshotHandler.CrearSnapshot)
+			// Revertir y borrar: FULL_ACCESS y exclusión mutua (409 INSTANCE_BUSY sin tocar
+			// Proxmox si hay otra tarea). También sobre la infraestructura (decisión del equipo).
+			instancia.POST("/snapshots/:snapname/rollback", middleware.RequireInstanceAccess(instanceRepo, ports.NivelAccesoFullAccess), middleware.RequireInstanceIdle(exclusion), snapshotHandler.RevertirSnapshot)
+			instancia.DELETE("/snapshots/:snapname", middleware.RequireInstanceAccess(instanceRepo, ports.NivelAccesoFullAccess), middleware.RequireInstanceIdle(exclusion), snapshotHandler.EliminarSnapshot)
 		}
 		// ==========================================
 		// Swagger UI: apagada por defecto.

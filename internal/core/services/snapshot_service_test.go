@@ -44,6 +44,16 @@ func (p *proxmoxSnapshots) CrearSnapshot(_ context.Context, _, _ string, _ int, 
 	return "UPID:pve1:0001:snapshot", nil
 }
 
+func (p *proxmoxSnapshots) RevertirSnapshot(_ context.Context, _, _ string, _ int, nombre string) (string, error) {
+	p.creados = append(p.creados, "rollback:"+nombre)
+	return "UPID:pve1:0002:qmrollback", p.errCrear
+}
+
+func (p *proxmoxSnapshots) EliminarSnapshot(_ context.Context, _, _ string, _ int, nombre string) (string, error) {
+	p.creados = append(p.creados, "delete:"+nombre)
+	return "UPID:pve1:0003:qmdelsnapshot", p.errCrear
+}
+
 // seguimientoSnapshots registra lo que se le pide seguir.
 type seguimientoSnapshots struct {
 	accion, upid string
@@ -219,4 +229,94 @@ func TestSnapshots_AuditoriaYEventoDeLaTarea(t *testing.T) {
 	if ports.AccionPublicaTarea(tarea.Accion) != "SNAPSHOT" {
 		t.Errorf("activeTask.action: %q", ports.AccionPublicaTarea(tarea.Accion))
 	}
+}
+
+func TestSnapshots_RevertirYEliminar(t *testing.T) {
+	casos := []struct {
+		accion, upid string
+		orden        func(svc ports.SnapshotService) (uuid.UUID, error)
+	}{
+		{ports.AccionTareaRollbackSnapshot, "UPID:pve1:0002:qmrollback", func(svc ports.SnapshotService) (uuid.UUID, error) {
+			return svc.Revertir(context.Background(), uuid.New(), 110, "base")
+		}},
+		{ports.AccionTareaDeleteSnapshot, "UPID:pve1:0003:qmdelsnapshot", func(svc ports.SnapshotService) (uuid.UUID, error) {
+			return svc.Eliminar(context.Background(), uuid.New(), 110, "base")
+		}},
+	}
+	for _, c := range casos {
+		px, seg := &proxmoxSnapshots{snapshots: []ports.SnapshotDTO{{Nombre: "base", SnapTime: 1}}}, &seguimientoSnapshots{}
+		tareaID, err := c.orden(services.NewSnapshotService(px, seg, auditoriaNula{}))
+		if err != nil || tareaID == uuid.Nil || len(px.creados) != 1 {
+			t.Fatalf("%s: %v %v", c.accion, err, px.creados)
+		}
+		if seg.accion != c.accion || seg.upid != c.upid || seg.metadatos["snapname"] != "base" {
+			t.Errorf("%s: la tarea debe registrarse con su acción y UPID: %+v", c.accion, seg)
+		}
+	}
+}
+
+func TestSnapshots_RevertirValidaNombreYExistencia(t *testing.T) {
+	px := &proxmoxSnapshots{snapshots: []ports.SnapshotDTO{{Nombre: "base", SnapTime: 1}}}
+	svc := services.NewSnapshotService(px, &seguimientoSnapshots{}, auditoriaNula{})
+	if _, err := svc.Revertir(context.Background(), uuid.New(), 110, "snap test!"); !errors.Is(err, ports.ErrSnapshotNombreInvalido) {
+		t.Errorf("Nombre inválido: %v", err)
+	}
+	if _, err := svc.Eliminar(context.Background(), uuid.New(), 110, "otro"); !errors.Is(err, ports.ErrSnapshotNoEncontrado) {
+		t.Errorf("Inexistente: %v", err)
+	}
+	if len(px.creados) != 0 {
+		t.Errorf("No debe llegar a Proxmox: %v", px.creados)
+	}
+}
+
+// Contra el simulador: revierte al snapshot y después lo borra.
+func TestSnapshots_RevertirYEliminarContraElSimulador(t *testing.T) {
+	client := clienteSimulador(t)
+	svc := services.NewSnapshotService(client, &seguimientoSnapshots{}, auditoriaNula{})
+	nombre := "e2e_" + uuid.NewString()[:8]
+	esperarTarea := func(cumple func([]ports.SnapshotDTO) bool) []ports.SnapshotDTO {
+		t.Helper()
+		for intento := 0; intento < 40; intento++ {
+			lista, err := svc.Listar(context.Background(), 201)
+			if err == nil && cumple(lista) {
+				return lista
+			}
+			time.Sleep(250 * time.Millisecond)
+		}
+		t.Fatalf("La tarea del simulador no terminó a tiempo")
+		return nil
+	}
+	tiene := func(lista []ports.SnapshotDTO) bool {
+		for _, s := range lista {
+			if s.Nombre == nombre {
+				return true
+			}
+		}
+		return false
+	}
+	if _, err := svc.Crear(context.Background(), uuid.New(), 201, nombre, ""); err != nil {
+		t.Fatal(err)
+	}
+	esperarTarea(tiene)
+	// El simulador bloquea la instancia mientras corre una tarea: se reintenta.
+	var err error
+	for intento := 0; intento < 20; intento++ {
+		if _, err = svc.Revertir(context.Background(), uuid.New(), 201, nombre); !errors.Is(err, ports.ErrInstanciaOcupada) {
+			break
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	if err != nil {
+		t.Fatalf("Revertir: %v", err)
+	}
+	for intento := 0; intento < 40; intento++ {
+		if _, err = svc.Eliminar(context.Background(), uuid.New(), 201, nombre); !errors.Is(err, ports.ErrInstanciaOcupada) {
+			break
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	if err != nil {
+		t.Fatalf("Eliminar: %v", err)
+	}
+	esperarTarea(func(l []ports.SnapshotDTO) bool { return !tiene(l) })
 }

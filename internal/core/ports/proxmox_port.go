@@ -60,6 +60,9 @@ var ErrSnapshotNombreInvalido = errors.New("nombre de snapshot inválido")
 // ErrSnapshotExistente: la instancia ya tiene un snapshot con ese nombre.
 var ErrSnapshotExistente = errors.New("ya existe un snapshot con ese nombre")
 
+// ErrSnapshotNoEncontrado: la instancia no tiene un snapshot con ese nombre.
+var ErrSnapshotNoEncontrado = errors.New("no existe un snapshot con ese nombre")
+
 // ErrSeguimientoNoRegistrado: Proxmox aceptó la orden, pero no se pudo
 // registrar la tarea en tareas_asincronas (no hay tareaId que devolver).
 var ErrSeguimientoNoRegistrado = errors.New("no se pudo registrar el seguimiento de la tarea")
@@ -198,6 +201,14 @@ type ProxmoxPort interface {
 	// incluye la entrada sintética "current" (el estado actual, que no es un
 	// snapshot guardado).
 	ListarSnapshots(ctx context.Context, node, tipo string, vmid int) ([]SnapshotDTO, error)
+
+	// RevertirSnapshot hace POST /nodes/{node}/{tipo}/{vmid}/snapshot/{snapname}/rollback
+	// y devuelve el UPID (qmrollback / vzrollback).
+	RevertirSnapshot(ctx context.Context, node, tipo string, vmid int, snapname string) (string, error)
+
+	// EliminarSnapshot hace DELETE /nodes/{node}/{tipo}/{vmid}/snapshot/{snapname}
+	// y devuelve el UPID (qmdelsnapshot / vzdelsnapshot).
+	EliminarSnapshot(ctx context.Context, node, tipo string, vmid int, snapname string) (string, error)
 }
 
 // SnapshotDTO es un punto de restauración de una instancia.

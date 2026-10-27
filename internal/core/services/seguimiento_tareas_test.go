@@ -392,3 +392,11 @@ func (p *proxmoxTareas) CrearSnapshot(context.Context, string, string, int, stri
 func (p *proxmoxTareas) ListarSnapshots(context.Context, string, string, int) ([]ports.SnapshotDTO, error) {
 	return nil, nil
 }
+
+func (p *proxmoxTareas) RevertirSnapshot(context.Context, string, string, int, string) (string, error) {
+	return "", nil
+}
+
+func (p *proxmoxTareas) EliminarSnapshot(context.Context, string, string, int, string) (string, error) {
+	return "", nil
+}

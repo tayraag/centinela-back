@@ -1,12 +1,14 @@
 package http
 
 import (
+	"context"
 	"errors"
 	"net/http"
 
 	"el-centinela/internal/core/ports"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 // SnapshotHandler expone los puntos de restauración de una instancia (RF-06).
@@ -127,5 +129,78 @@ func (h *SnapshotHandler) CrearSnapshot(c *gin.Context) {
 		mapearErrorProxmox(c, err)
 	default:
 		c.JSON(http.StatusAccepted, SnapshotAceptadoResponse{TareaID: creado.TareaID.String(), Snapname: creado.Nombre})
+	}
+}
+
+// ==========================================
+// POST /api/instances/:instanceRef/snapshots/:snapname/rollback
+// DELETE /api/instances/:instanceRef/snapshots/:snapname
+// ==========================================
+
+// RevertirSnapshot vuelve la instancia al estado del snapshot (asíncrono).
+//
+// @Summary      Revertir a un snapshot (rollback)
+// @Description  OPERATIVO. Vuelve la instancia al estado del snapshot; Proxmox la deja apagada. Requiere ADMIN o FULL_ACCESS y lleva la exclusión mutua: si la instancia tiene una tarea RUNNING o el lock de operación está tomado responde 409 INSTANCE_BUSY sin contactar a Proxmox. Se registra en tareas_asincronas con accion ROLLBACK_SNAPSHOT y responde 202 con `tareaId` (el UPID de Proxmox nunca se devuelve). Mientras dura, el inventario y el detalle muestran la instancia con status `rolling_back` y activeTask.action `ROLLBACK_SNAPSHOT`; el desenlace llega en TASK_FINISHED (accion ROLLBACK_SNAPSHOT). Las instancias de infraestructura también lo admiten.
+// @Tags         Snapshots
+// @Produce      json
+// @Security     BearerAuth
+// @Param        instanceRef path string true "Referencia pública de la instancia (inst_...)"
+// @Param        snapname    path string true "Nombre del snapshot"
+// @Success      202 {object} AccionAceptadaResponse
+// @Failure      400 {object} ErrorResponse "INVALID_SNAPSHOT_NAME — el nombre no cumple el formato de Proxmox"
+// @Failure      401 {object} ErrorResponse "MISSING_TOKEN | INVALID_TOKEN | TOKEN_REVOKED"
+// @Failure      403 {object} ErrorResponse "INSTANCE_ACCESS_DENIED — el OPERATOR no tiene FULL_ACCESS"
+// @Failure      404 {object} ErrorResponse "RESOURCE_NOT_FOUND — referencia inválida o instancia inexistente | SNAPSHOT_NOT_FOUND — la instancia no tiene ese snapshot"
+// @Failure      409 {object} ErrorResponse "INSTANCE_BUSY — la instancia está ejecutando otra tarea; no se contactó a Proxmox"
+// @Failure      500 {object} ErrorResponse "TASK_TRACKING_UNAVAILABLE | PROXMOX_ERROR"
+// @Failure      502 {object} ErrorResponse "PROXMOX_UNAVAILABLE"
+// @Failure      503 {object} ErrorResponse "INSTANCE_LOCK_UNAVAILABLE"
+// @Failure      504 {object} ErrorResponse "PROXMOX_TIMEOUT — el rollback puede haberse aplicado"
+// @Router       /instances/{instanceRef}/snapshots/{snapname}/rollback [post]
+func (h *SnapshotHandler) RevertirSnapshot(c *gin.Context) {
+	h.ordenSobreSnapshot(c, h.service.Revertir)
+}
+
+// EliminarSnapshot borra un snapshot de la instancia (asíncrono).
+//
+// @Summary      Eliminar un snapshot
+// @Description  OPERATIVO. Borra el snapshot; la instancia no cambia. Requiere ADMIN o FULL_ACCESS y lleva la exclusión mutua (409 INSTANCE_BUSY sin contactar a Proxmox si hay otra operación en curso). Se registra en tareas_asincronas con accion DELETE_SNAPSHOT y responde 202 con `tareaId`; el desenlace llega en TASK_FINISHED (accion DELETE_SNAPSHOT). Las instancias de infraestructura también lo admiten.
+// @Tags         Snapshots
+// @Produce      json
+// @Security     BearerAuth
+// @Param        instanceRef path string true "Referencia pública de la instancia (inst_...)"
+// @Param        snapname    path string true "Nombre del snapshot"
+// @Success      202 {object} AccionAceptadaResponse
+// @Failure      400 {object} ErrorResponse "INVALID_SNAPSHOT_NAME — el nombre no cumple el formato de Proxmox"
+// @Failure      401 {object} ErrorResponse "MISSING_TOKEN | INVALID_TOKEN | TOKEN_REVOKED"
+// @Failure      403 {object} ErrorResponse "INSTANCE_ACCESS_DENIED — el OPERATOR no tiene FULL_ACCESS"
+// @Failure      404 {object} ErrorResponse "RESOURCE_NOT_FOUND — referencia inválida o instancia inexistente | SNAPSHOT_NOT_FOUND — la instancia no tiene ese snapshot"
+// @Failure      409 {object} ErrorResponse "INSTANCE_BUSY — la instancia está ejecutando otra tarea; no se contactó a Proxmox"
+// @Failure      500 {object} ErrorResponse "TASK_TRACKING_UNAVAILABLE | PROXMOX_ERROR"
+// @Failure      502 {object} ErrorResponse "PROXMOX_UNAVAILABLE"
+// @Failure      503 {object} ErrorResponse "INSTANCE_LOCK_UNAVAILABLE"
+// @Failure      504 {object} ErrorResponse "PROXMOX_TIMEOUT — el borrado puede haberse aplicado"
+// @Router       /instances/{instanceRef}/snapshots/{snapname} [delete]
+func (h *SnapshotHandler) EliminarSnapshot(c *gin.Context) {
+	h.ordenSobreSnapshot(c, h.service.Eliminar)
+}
+
+func (h *SnapshotHandler) ordenSobreSnapshot(c *gin.Context, orden func(ctx context.Context, usuarioID uuid.UUID, vmid int, nombre string) (uuid.UUID, error)) {
+	vmid, ok := extraerVmid(c)
+	if !ok {
+		return
+	}
+	tareaID, err := orden(c.Request.Context(), extraerUserID(c), vmid, c.Param("snapname"))
+	switch {
+	case errors.Is(err, ports.ErrSnapshotNombreInvalido):
+		SendError(c, http.StatusBadRequest, "INVALID_SNAPSHOT_NAME", "El nombre debe empezar con una letra y tener solo letras, números, guion y guion bajo, de 2 a 40 caracteres (no puede ser \"current\").")
+	case errors.Is(err, ports.ErrSnapshotNoEncontrado):
+		SendError(c, http.StatusNotFound, "SNAPSHOT_NOT_FOUND", "La instancia no tiene un snapshot con ese nombre.")
+	case errors.Is(err, ports.ErrSeguimientoNoRegistrado):
+		SendError(c, http.StatusInternalServerError, "TASK_TRACKING_UNAVAILABLE", "Proxmox aceptó la orden, pero no se pudo registrar su seguimiento. Verifique el estado antes de reintentar.")
+	case err != nil:
+		mapearErrorProxmox(c, err)
+	default:
+		c.JSON(http.StatusAccepted, AccionAceptadaResponse{TareaID: tareaID.String()})
 	}
 }

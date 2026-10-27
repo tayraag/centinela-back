@@ -1102,3 +1102,35 @@ func (c *Client) ListarSnapshots(ctx context.Context, node, tipo string, vmid in
 	}
 	return snapshots, nil
 }
+
+// RevertirSnapshot hace POST .../snapshot/{snapname}/rollback y devuelve el UPID.
+func (c *Client) RevertirSnapshot(ctx context.Context, node, tipo string, vmid int, snapname string) (string, error) {
+	return c.ordenSnapshot(ctx, http.MethodPost, node, tipo, vmid, snapname, "/rollback")
+}
+
+// EliminarSnapshot hace DELETE .../snapshot/{snapname} y devuelve el UPID.
+func (c *Client) EliminarSnapshot(ctx context.Context, node, tipo string, vmid int, snapname string) (string, error) {
+	return c.ordenSnapshot(ctx, http.MethodDelete, node, tipo, vmid, snapname, "")
+}
+
+// ordenSnapshot despacha una orden sobre un snapshot existente. El nombre va
+// en la ruta: se valida antes (última barrera) para que no altere el path.
+func (c *Client) ordenSnapshot(ctx context.Context, metodo, node, tipo string, vmid int, snapname, sufijo string) (string, error) {
+	tipo, err := tipoProxmox(tipo)
+	if err != nil {
+		return "", err
+	}
+	if !formatoSnapshot.MatchString(snapname) || snapname == "current" {
+		return "", fmt.Errorf("%w: nombre de snapshot %q", ports.ErrParametroInvalido, snapname)
+	}
+	path := fmt.Sprintf("/api2/json/nodes/%s/%s/%d/snapshot/%s%s", url.PathEscape(node), tipo, vmid, url.PathEscape(snapname), sufijo)
+	raw, err := c.doRequest(ctx, metodo, path, nil)
+	if err != nil {
+		return "", err
+	}
+	var res upidResponse
+	if err := json.Unmarshal(raw, &res); err != nil || strings.TrimSpace(res.Data) == "" {
+		return "", fmt.Errorf("%w: respuesta de snapshot inválida", ports.ErrProxmoxNoDisponible)
+	}
+	return res.Data, nil
+}

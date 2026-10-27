@@ -250,3 +250,49 @@ func TestCrearInstancia_RechazoDelAdaptadorEs400(t *testing.T) {
 		t.Errorf("Se esperaba 400 INVALID_REQUEST, vino %d %s", w.Code, w.Body.String())
 	}
 }
+
+// DoD: mientras corre un rollback, la instancia se muestra como rolling_back
+// en el inventario y en el detalle; las demás tareas no cambian el estado.
+func TestInstancias_EstadoTransitorioDelRollback(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	px := &mockProxmoxPort{estado: "stopped", instancias: []ports.InstanciaProxmoxDTO{
+		{Vmid: 110, Nombre: "vm", Tipo: "qemu", Nodo: "pve1", Estado: "stopped"},
+		{Vmid: 201, Nombre: "ct", Tipo: "lxc", Nodo: "pve1", Estado: "running"},
+	}}
+	tareas := &mockTareaRepository{activas: map[int]ports.ActiveTaskDTO{
+		110: {TareaID: uuid.NewString(), Action: ports.AccionTareaRollbackSnapshot, Status: ports.TareaRunning},
+		201: {TareaID: uuid.NewString(), Action: ports.AccionTareaDeleteSnapshot, Status: ports.TareaRunning},
+	}}
+	handler := adaptersHttp.NewInstanceHandler(px, &mockUserRepository{}, seguimientoNulo{}, tareas, &mockAuditService{}, inventarioNulo{}, adaptersHttp.RefsPrueba, adaptersHttp.TopologiaPrueba)
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set(middleware.ContextKeyRol, "ADMIN")
+		c.Set(middleware.ContextKeyUserID, uuid.New().String())
+	})
+	router.GET("/api/instances", handler.ListarInstancias)
+	router.GET("/api/instances/:vmid", adaptersHttp.ResolverPrueba, handler.ObtenerInstancia)
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/instances", nil))
+	var inventario []map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &inventario)
+	estados := map[string]any{}
+	for _, i := range inventario {
+		estados[i["id"].(string)] = i["status"]
+	}
+	if estados[adaptersHttp.RefInst(110)] != "rolling_back" || estados[adaptersHttp.RefInst(201)] != "running" {
+		t.Errorf("Inventario: la 110 (rollback) debe verse rolling_back y la 201 (borrado de snapshot) con su estado: %v", estados)
+	}
+
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, adaptersHttp.ConRef("/api/instances/110"), nil))
+	if !strings.Contains(w.Body.String(), `"estado":"rolling_back"`) {
+		t.Errorf("Detalle de la 110: %s", w.Body.String())
+	}
+	delete(tareas.activas, 110)
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, adaptersHttp.ConRef("/api/instances/110"), nil))
+	if !strings.Contains(w.Body.String(), `"estado":"stopped"`) {
+		t.Errorf("Al terminar vuelve el estado de Proxmox: %s", w.Body.String())
+	}
+}

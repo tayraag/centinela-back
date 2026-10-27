@@ -26,7 +26,8 @@ const ventanaRecuperacion = 3 * time.Minute
 const timeoutConsulta = 15 * time.Second
 
 // nombresAccion traduce la acción al texto del mensaje del evento.
-var nombresAccion = map[string]string{"start": "encendido", "stop": "apagado", "shutdown": "apagado ordenado", "reboot": "reinicio", "delete": "eliminación", ports.AccionTareaSnapshot: "creación del snapshot"}
+var nombresAccion = map[string]string{"start": "encendido", "stop": "apagado", "shutdown": "apagado ordenado", "reboot": "reinicio", "delete": "eliminación", ports.AccionTareaSnapshot: "creación del snapshot",
+	ports.AccionTareaRollbackSnapshot: "reversión del snapshot", ports.AccionTareaDeleteSnapshot: "eliminación del snapshot"}
 
 // mensajeTimeout es el error de una tarea que Proxmox no dio por terminada
 // dentro del límite.

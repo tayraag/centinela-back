@@ -318,3 +318,11 @@ func (m *mockProxmoxForWS) CrearSnapshot(context.Context, string, string, int, s
 func (m *mockProxmoxForWS) ListarSnapshots(context.Context, string, string, int) ([]ports.SnapshotDTO, error) {
 	return nil, nil
 }
+
+func (m *mockProxmoxForWS) RevertirSnapshot(context.Context, string, string, int, string) (string, error) {
+	return "", nil
+}
+
+func (m *mockProxmoxForWS) EliminarSnapshot(context.Context, string, string, int, string) (string, error) {
+	return "", nil
+}

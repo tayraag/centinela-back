@@ -158,7 +158,8 @@ configuran con `TOPOLOGY_NODE_ALIASES` y `TOPOLOGY_STORAGE_ALIASES`
 `GET /api/instances` devuelve un array. Cada elemento contiene siempre:
 
 - `id` (la referencia pública de la instancia, string), `name`, `type`, `node`
-  (alias del nodo si el usuario no es ADMIN) y `status`.
+  (alias del nodo si el usuario no es ADMIN) y `status` (el de Proxmox, o
+  `rolling_back` mientras corre un rollback de snapshot).
 - `ip`: cadena o `null`. Se obtiene en vivo: en las VM, con el QEMU Guest
   Agent; en los contenedores, con sus interfaces. Se informa la primera IPv4
   (sin contar loopback) o, si no hay, la primera IPv6 global. Vale `null` si la
@@ -175,7 +176,7 @@ configuran con `TOPOLOGY_NODE_ALIASES` y `TOPOLOGY_STORAGE_ALIASES`
   instancia, o `null` si no tiene ninguna. Esquema `http.ActiveTaskResponse`:
   - `tareaId`: el mismo valor que devolvió el `202` de la acción y que llega en
     el `TASK_FINISHED`.
-  - `action`: `START`, `STOP`, `SHUTDOWN`, `REBOOT`, `DELETE`, `CREATE` o `SNAPSHOT`, en mayúsculas
+  - `action`: `START`, `STOP`, `SHUTDOWN`, `REBOOT`, `DELETE`, `CREATE`, `SNAPSHOT`, `ROLLBACK_SNAPSHOT` o `DELETE_SNAPSHOT`, en mayúsculas
     como `detalles.accion` del evento.
   - `status`: siempre `RUNNING`; cuando la tarea termina, `activeTask` vuelve a
     `null`.
@@ -408,6 +409,8 @@ referencia pública de la instancia (la `id` del inventario).
 |------------------------------------|--------|--------------------------------------|-----------|
 | `/api/instances/:instanceRef/snapshots` | GET  | ADMIN, u OPERATOR con READ_ONLY o más | `200`     |
 | `/api/instances/:instanceRef/snapshots` | POST | ADMIN, u OPERATOR con FULL_ACCESS    | `202`     |
+| `/api/instances/:instanceRef/snapshots/:snapname/rollback` | POST | ADMIN, u OPERATOR con FULL_ACCESS | `202` |
+| `/api/instances/:instanceRef/snapshots/:snapname` | DELETE | ADMIN, u OPERATOR con FULL_ACCESS | `202` |
 
 **Listar.** Devuelve un array, del snapshot más nuevo al más viejo (por
 `snaptime`, en segundos UNIX). `parent` es el snapshot anterior en la cadena
@@ -450,6 +453,31 @@ protegidas de la infraestructura **sí** admiten snapshots: no las apaga ni las
 cambia, y conviene tenerlo antes de tocarlas. Si Proxmox aceptó el snapshot
 pero no se pudo registrar el seguimiento, responde
 `500 TASK_TRACKING_UNAVAILABLE`.
+
+**Revertir (rollback) y borrar.** `POST .../snapshots/:snapname/rollback`
+vuelve la instancia al estado del snapshot (Proxmox la deja apagada);
+`DELETE .../snapshots/:snapname` borra el snapshot sin tocar la instancia. Las
+dos:
+
+- Requieren ADMIN o FULL_ACCESS: un OPERATOR con READ_ONLY recibe
+  `403 INSTANCE_ACCESS_DENIED`.
+- Llevan la exclusión mutua: si la instancia tiene una tarea `RUNNING` (o el
+  lock de operación está tomado) responden `409 INSTANCE_BUSY` **sin contactar
+  a Proxmox**; de una ráfaga de pedidos simultáneos pasa uno solo.
+- Validan el nombre (`400 INVALID_SNAPSHOT_NAME`) y que el snapshot exista
+  (`404 SNAPSHOT_NOT_FOUND`) antes de llamar a Proxmox.
+- Se registran en `tareas_asincronas` con `accion` `ROLLBACK_SNAPSHOT` o
+  `DELETE_SNAPSHOT` (también son los códigos de auditoría) y responden
+  `202 { "tareaId" }`; el UPID no se devuelve.
+- El desenlace llega en `TASK_FINISHED` con esa misma `accion`
+  (`COMPLETED`, o `FAILED` con motivo `PROXMOX_ERROR` o `TIMEOUT`), y la
+  instancia queda libre para otras operaciones.
+- Las instancias de infraestructura también las admiten (decisión del equipo).
+
+Mientras corre un rollback, el inventario (`status`) y el detalle (`estado`)
+muestran la instancia como `rolling_back`, un estado transitorio que Proxmox
+no informa; `activeTask.action` vale `ROLLBACK_SNAPSHOT`. Al terminar vuelve el
+estado real.
 
 ## Catálogo de errores
 
@@ -675,7 +703,7 @@ aplican valen `null`, nunca se omiten:
 | Campo        | Tipo             | Valor                                                  |
 |--------------|------------------|--------------------------------------------------------|
 | `tareaId`    | string           | El `tareaId` del `202`                                 |
-| `accion`     | enum             | `START`, `STOP`, `SHUTDOWN`, `REBOOT`, `DELETE`, `CREATE` o `SNAPSHOT` |
+| `accion`     | enum             | `START`, `STOP`, `SHUTDOWN`, `REBOOT`, `DELETE`, `CREATE`, `SNAPSHOT`, `ROLLBACK_SNAPSHOT` o `DELETE_SNAPSHOT` |
 | `estado`     | enum             | `COMPLETED` o `FAILED`                                 |
 | `exitstatus` | string o `null`  | Lo que informó Proxmox; `null` si no la cerró          |
 | `motivo`     | enum o `null`    | `null` salvo con `estado` `FAILED`                     |

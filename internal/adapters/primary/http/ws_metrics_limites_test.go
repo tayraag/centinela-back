@@ -298,3 +298,11 @@ func (p *proxmoxWSConfigurable) CrearSnapshot(context.Context, string, string, i
 func (p *proxmoxWSConfigurable) ListarSnapshots(context.Context, string, string, int) ([]ports.SnapshotDTO, error) {
 	return nil, nil
 }
+
+func (p *proxmoxWSConfigurable) RevertirSnapshot(context.Context, string, string, int, string) (string, error) {
+	return "", nil
+}
+
+func (p *proxmoxWSConfigurable) EliminarSnapshot(context.Context, string, string, int, string) (string, error) {
+	return "", nil
+}

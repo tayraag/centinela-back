@@ -299,6 +299,16 @@ func mapearErrorProxmox(c *gin.Context, err error) {
 	}
 }
 
+// estadoVisible es el estado que ve el front: el de Proxmox, salvo mientras
+// corre un rollback, que se muestra como "rolling_back" (Proxmox no tiene ese
+// estado; la instancia queda bloqueada hasta que termina).
+func estadoVisible(estado string, tareaActiva *ports.ActiveTaskDTO) string {
+	if tareaActiva != nil && tareaActiva.Action == ports.AccionTareaRollbackSnapshot {
+		return ports.EstadoRevirtiendo
+	}
+	return estado
+}
+
 // resolverTopologia traduce los alias de nodo y storage que pueda traer la
 // creación (también el storage del templateId "storage:iso/archivo") al nombre
 // real que entiende Proxmox. Un nombre real pasa igual.
@@ -561,7 +571,7 @@ func (h *InstanceHandler) CrearInstancia(c *gin.Context) {
 // Un ADMIN ve todo el cluster; un OPERATOR solo sus instancias asignadas.
 //
 // @Summary      Listar instancias
-// @Description  OPERATIVO. Lee en vivo el inventario de Proxmox VE (VMs y contenedores). Un ADMIN recibe el cluster completo; un OPERATOR recibe únicamente las instancias que tiene asignadas. `id` es la referencia pública opaca de la instancia (`inst_` + 22 caracteres): es estable y es la que se usa en todas las rutas /instances/{instanceRef}; el VMID de Proxmox nunca se expone. Para quien no es ADMIN, `node` es un alias neutro del nodo físico (por ejemplo `nodo-principal`), nunca el hostname real. Incluye telemetría (CPU en porcentaje 0-100, RAM en bytes y MaxRam en bytes), nivel de acceso y tarea activa. Si la instancia está apagada (stopped), cpuUsage y ramUsage serán estrictamente null. ip puede ser null; activeTask es el objeto { tareaId, action, status } de la tarea RUNNING de la instancia, o null si no tiene ninguna.
+// @Description  OPERATIVO. Lee en vivo el inventario de Proxmox VE (VMs y contenedores). Un ADMIN recibe el cluster completo; un OPERATOR recibe únicamente las instancias que tiene asignadas. `id` es la referencia pública opaca de la instancia (`inst_` + 22 caracteres): es estable y es la que se usa en todas las rutas /instances/{instanceRef}; el VMID de Proxmox nunca se expone. Para quien no es ADMIN, `node` es un alias neutro del nodo físico (por ejemplo `nodo-principal`), nunca el hostname real. Incluye telemetría (CPU en porcentaje 0-100, RAM en bytes y MaxRam en bytes), nivel de acceso y tarea activa. Si la instancia está apagada (stopped), cpuUsage y ramUsage serán estrictamente null. Mientras corre un rollback de snapshot, `status` vale `rolling_back` (y activeTask.action `ROLLBACK_SNAPSHOT`). ip puede ser null; activeTask es el objeto { tareaId, action, status } de la tarea RUNNING de la instancia, o null si no tiene ninguna.
 // @Tags         Instancias Proxmox
 // @Produce      json
 // @Security     BearerAuth
@@ -671,7 +681,7 @@ func (h *InstanceHandler) ListarInstancias(c *gin.Context) {
 			Name:        inst.Nombre,
 			Type:        tipo,
 			Node:        nodo,
-			Status:      inst.Estado,
+			Status:      estadoVisible(inst.Estado, activeTask),
 			Ip:          ips[inst.Vmid],
 			CpuUsage:    cpuUsage,
 			RamUsage:    ramUsage,
@@ -691,7 +701,7 @@ func (h *InstanceHandler) ListarInstancias(c *gin.Context) {
 // ObtenerInstancia devuelve el estado actual de una instancia Proxmox.
 //
 // @Summary      Obtener instancia
-// @Description  Devuelve el estado actual (running/stopped, tipo, nodo, telemetría) de una VM o contenedor leído en vivo desde Proxmox VE. `cpu` es un porcentaje de 0 a 100; `cpu` y `mem` valen null si la instancia no está encendida. Para quien no es ADMIN, `nodo` es un alias neutro del nodo físico, nunca el hostname real.
+// @Description  Devuelve el estado actual (running/stopped, tipo, nodo, telemetría) de una VM o contenedor leído en vivo desde Proxmox VE. `cpu` es un porcentaje de 0 a 100; `cpu` y `mem` valen null si la instancia no está encendida. Mientras corre un rollback de snapshot, `estado` vale `rolling_back`. Para quien no es ADMIN, `nodo` es un alias neutro del nodo físico, nunca el hostname real.
 // @Tags         Instancias Proxmox
 // @Produce      json
 // @Security     BearerAuth
@@ -721,6 +731,14 @@ func (h *InstanceHandler) ObtenerInstancia(c *gin.Context) {
 	}
 	if rol, _ := c.Get(middleware.ContextKeyRol); rol != "ADMIN" {
 		detalle.Nodo = h.topologia.MaskNode(detalle.Nodo)
+	}
+	if h.tareas != nil {
+		// No crítico: sin la consulta queda el estado que informa Proxmox.
+		if activas, err := h.tareas.BuscarTareasActivasPorVmids(c.Request.Context(), []int{vmid}); err == nil {
+			if tarea, ok := activas[vmid]; ok {
+				detalle.Estado = estadoVisible(detalle.Estado, &tarea)
+			}
+		}
 	}
 	c.JSON(http.StatusOK, detalle)
 }

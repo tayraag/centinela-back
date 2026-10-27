@@ -11,6 +11,17 @@ import (
 // snapshot en tareas_asincronas; en TASK_FINISHED y activeTask llega como SNAPSHOT.
 const AccionTareaSnapshot = "snapshot"
 
+// Acciones de tareas_asincronas para revertir y borrar un snapshot; así llegan
+// también en TASK_FINISHED, en activeTask y en la auditoría.
+const (
+	AccionTareaRollbackSnapshot = "ROLLBACK_SNAPSHOT"
+	AccionTareaDeleteSnapshot   = "DELETE_SNAPSHOT"
+)
+
+// EstadoRevirtiendo es el status que muestran el inventario y el detalle
+// mientras corre un rollback (estado transitorio; Proxmox no lo informa).
+const EstadoRevirtiendo = "rolling_back"
+
 // LargoMaximoDescripcionSnapshot acota la descripción de un snapshot.
 const LargoMaximoDescripcionSnapshot = 255
 
@@ -34,4 +45,11 @@ type SnapshotService interface {
 	// Proxmox aceptó pero no se pudo registrar el seguimiento devuelve
 	// ErrSeguimientoNoRegistrado.
 	Crear(ctx context.Context, usuarioID uuid.UUID, vmid int, nombre, descripcion string) (*SnapshotCreado, error)
+
+	// Revertir y Eliminar validan el nombre (ErrSnapshotNombreInvalido),
+	// exigen que el snapshot exista (ErrSnapshotNoEncontrado), despachan la
+	// orden en Proxmox y registran la tarea RUNNING (ROLLBACK_SNAPSHOT /
+	// DELETE_SNAPSHOT). Devuelven el tareaId.
+	Revertir(ctx context.Context, usuarioID uuid.UUID, vmid int, nombre string) (uuid.UUID, error)
+	Eliminar(ctx context.Context, usuarioID uuid.UUID, vmid int, nombre string) (uuid.UUID, error)
 }
