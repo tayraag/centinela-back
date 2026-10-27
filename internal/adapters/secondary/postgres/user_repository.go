@@ -369,3 +369,19 @@ func (r *UserRepository) ConfirmarCambioEmail(ctx context.Context, id uuid.UUID,
 		return (&auditRepositoryImpl{db: tx}).Registrar(ctx, audit)
 	})
 }
+
+// EmailsParaAlerta devuelve los correos de los ADMIN activos y, si vmid > 0,
+// de los OPERATOR activos con FULL_ACCESS sobre esa instancia (sin repetir).
+func (r *UserRepository) EmailsParaAlerta(ctx context.Context, vmid int) ([]string, error) {
+	var emails []string
+	err := r.db.WithContext(ctx).Model(&domain.Usuario{}).
+		Where("activo AND eliminado_en IS NULL").
+		Where("rol = ? OR (rol = ? AND id IN (?))", "ADMIN", "OPERATOR",
+			r.db.Model(&domain.PermisoInstancia{}).Select("usuario_id").
+				Where("vmid_proxmox = ? AND nivel_acceso = ?", vmid, ports.NivelAccesoFullAccess)).
+		Order("email_usuario").Distinct().Pluck("email_usuario", &emails).Error
+	if err != nil {
+		return nil, fmt.Errorf("error al buscar destinatarios de la alerta: %w", err)
+	}
+	return emails, nil
+}

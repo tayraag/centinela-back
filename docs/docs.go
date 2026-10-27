@@ -3792,6 +3792,11 @@ const docTemplate = `{
                     "type": "string",
                     "example": "0192e4a1-7c9b-7123-b123-000000000001"
                 },
+                "duracionPersistencia": {
+                    "description": "solo en ALERT_TRIGGERED: cuánto duró la saturación antes de alertar",
+                    "type": "string",
+                    "example": "60s"
+                },
                 "error": {
                     "type": "string",
                     "x-nullable": true,
@@ -3843,15 +3848,20 @@ const docTemplate = `{
                     ],
                     "example": "host_saturation"
                 },
-                "umbral": {
-                    "description": "de activación en ALERT_TRIGGERED; de recuperación (80) en ALERT_RESOLVED",
+                "umbralCritico": {
+                    "description": "umbral de activación",
                     "type": "number",
                     "example": 85
                 },
-                "valor": {
+                "umbralRecuperacion": {
+                    "description": "solo en ALERT_RESOLVED",
+                    "type": "number",
+                    "example": 80
+                },
+                "valorActual": {
                     "description": "porcentaje medido",
                     "type": "number",
-                    "example": 91.5
+                    "example": 89.2
                 }
             }
         },
@@ -3861,6 +3871,7 @@ const docTemplate = `{
                 "fechaHora",
                 "id",
                 "mensaje",
+                "recursoId",
                 "recursoTipo",
                 "severidad",
                 "tipo"
@@ -3884,6 +3895,7 @@ const docTemplate = `{
                 },
                 "recursoId": {
                     "type": "string",
+                    "x-nullable": true,
                     "example": "inst_3Hk9aQ2mXv7LpR4sT1bN8c"
                 },
                 "recursoTipo": {

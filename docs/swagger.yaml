@@ -517,6 +517,11 @@ definitions:
           alerta con su resolución.
         example: 0192e4a1-7c9b-7123-b123-000000000001
         type: string
+      duracionPersistencia:
+        description: 'solo en ALERT_TRIGGERED: cuánto duró la saturación antes de
+          alertar'
+        example: 60s
+        type: string
       error:
         example: CT 201 not running
         type: string
@@ -557,13 +562,17 @@ definitions:
         - instance_down
         example: host_saturation
         type: string
-      umbral:
-        description: de activación en ALERT_TRIGGERED; de recuperación (80) en ALERT_RESOLVED
+      umbralCritico:
+        description: umbral de activación
         example: 85
         type: number
-      valor:
+      umbralRecuperacion:
+        description: solo en ALERT_RESOLVED
+        example: 80
+        type: number
+      valorActual:
         description: porcentaje medido
-        example: 91.5
+        example: 89.2
         type: number
     type: object
   http.SSEEventPayload:
@@ -583,6 +592,7 @@ definitions:
       recursoId:
         example: inst_3Hk9aQ2mXv7LpR4sT1bN8c
         type: string
+        x-nullable: true
       recursoTipo:
         enum:
         - VM
@@ -611,6 +621,7 @@ definitions:
     - fechaHora
     - id
     - mensaje
+    - recursoId
     - recursoTipo
     - severidad
     - tipo

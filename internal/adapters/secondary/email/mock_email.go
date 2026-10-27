@@ -2,6 +2,9 @@ package email
 
 import (
 	"log"
+	"strings"
+
+	"el-centinela/internal/core/ports"
 )
 
 // MockEmailService implementa ports.EmailService simulando el envío mediante logs en consola.
@@ -49,6 +52,19 @@ func (s *MockEmailService) SendMail(to, subject, body string) error {
 	log.Printf("📥 Destinatario: %s\n", to)
 	log.Printf("Asunto: %s\n", subject)
 	log.Printf("Mensaje:\n%s\n", body)
+	log.Println("==================================================")
+	return nil
+}
+
+// EnviarAlertaCritica simula el envío del correo de una alerta crítica: deja en
+// el log los destinatarios, el asunto y el cuerpo en texto plano.
+func (s *MockEmailService) EnviarAlertaCritica(destinatarios []string, alerta ports.AlertaCorreo) error {
+	asunto, texto, _ := ArmarCorreoAlerta(alerta)
+	log.Println("==================================================")
+	log.Println("📧 SIMULACIÓN DE ENVÍO DE CORREO DE ALERTA (MOCK SMTP)")
+	log.Printf("📥 Destinatarios: %s\n", strings.Join(destinatarios, ", "))
+	log.Printf("Asunto: %s\n", asunto)
+	log.Printf("Mensaje:\n%s", texto)
 	log.Println("==================================================")
 	return nil
 }

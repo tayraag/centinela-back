@@ -301,12 +301,11 @@ func TestContratoEtapa1(t *testing.T) {
 
 	const payloadDef = "http.SSEEventPayload"
 	verificarObjetoRequerido(t, definitions, payloadDef, []string{
-		"id", "tipo", "severidad", "recursoTipo", "mensaje", "fechaHora",
+		"id", "tipo", "severidad", "recursoTipo", "recursoId", "mensaje", "fechaHora",
 	})
-
-	// recursoId se omite en los eventos del HOST (no refieren a una instancia).
-	if requeridosDe(t, objeto(t, definitions, payloadDef))["recursoId"] {
-		t.Error("recursoId no debe ser obligatorio: los eventos del HOST no lo traen")
+	// recursoId va siempre: null en los eventos del HOST.
+	if nullable, ok := propiedad(t, definitions, payloadDef, "recursoId")["x-nullable"].(bool); !ok || !nullable {
+		t.Error("recursoId debe declarar x-nullable: true (null en los eventos del HOST)")
 	}
 
 	// detalles se omite cuando el evento no trae datos extra.
@@ -514,14 +513,15 @@ func TestContratoEtapa1(t *testing.T) {
 	sobreAlerta := serializar(alerta.ConRecurso(ports.RecursoHost, ""))
 	compararClaves(t, sobreAlerta, payloadDef, definitions, "sobre de alerta del host")
 	compararTodasLasClaves(t, sobreAlerta, payloadDef, definitions, "sobre de alerta del host")
-	if _, tiene := sobreAlerta["recursoId"]; tiene {
-		t.Errorf("La alerta del host no debe traer recursoId: %v", sobreAlerta)
+	if v, tiene := sobreAlerta["recursoId"]; !tiene || v != nil {
+		t.Errorf("La alerta del host debe traer recursoId: null: %v", sobreAlerta)
 	}
 
 	// Los detalles de las alertas (los que arma el evaluador de umbrales)
 	// están todos declarados en SSEDetallesEvento.
 	for _, detalles := range []map[string]any{
-		{"alertId": "0192e4a1-7c9b-7123-b123-000000000001", "type": "host_saturation", "metrica": "ram", "valor": 91.5, "umbral": 85.0, "acknowledged": false},
+		{"alertId": "0192e4a1-7c9b-7123-b123-000000000001", "type": "host_saturation", "metrica": "ram", "valorActual": 89.2, "umbralCritico": 85.0, "duracionPersistencia": "60s", "acknowledged": false},
+		{"alertId": "0192e4a1-7c9b-7123-b123-000000000001", "type": "host_saturation", "metrica": "ram", "valorActual": 70.0, "umbralCritico": 85.0, "umbralRecuperacion": 80.0, "acknowledged": false},
 		{"alertId": "0192e4a1-7c9b-7123-b123-000000000002", "type": "instance_down", "metrica": "down", "acknowledged": false},
 	} {
 		evento, _ := ports.NewRealtimeEvent(ports.EventoAlertaResuelta, ports.SeveridadInfo, "Volvió a la normalidad")

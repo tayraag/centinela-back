@@ -95,7 +95,7 @@ centinela-back/
 │   │       ├── configuracion_instancias.go # Cambio de CPU/RAM: DeltaRAM contra el nodo (CuotasService.AmpliarInstancia) y detección de hot-plug
 │   │       ├── snapshot_service.go  # Snapshots: regla de nombre de Proxmox, orden por snaptime; crear, revertir y borrar como tareas asíncronas
 │   │       ├── metricas_vivo_service.go    # Ticket y vigilancia del WebSocket de métricas (corte por logout, baja o permiso)
-│   │       ├── alert_evaluator_worker.go   # Evaluador de umbrales (RF-11): histéresis y deduplicación en Redis; ALERT_TRIGGERED/ALERT_RESOLVED
+│   │       ├── alert_evaluator_worker.go   # Evaluador de umbrales (RF-11): histéresis y deduplicación en Redis; ALERT_TRIGGERED/ALERT_RESOLVED por SSE, correo y auditoría
 │   │       └── eventos_service.go          # Despacho de eventos en tiempo real hacia Pub/Sub (HOST solo para ADMIN)
 │   │
 │   ├── adapters/
@@ -136,7 +136,7 @@ centinela-back/
 │   │       │   └── audit_repository.go  # Implementa AuditRepository sobre tabla particionada
 │   │       ├── redis/                   # Implementa KeyValueStore sobre Redis (clave-valor + Pub/Sub), ver docs/redis.md
 │   │       ├── memoria/                 # Implementa KeyValueStore en memoria (modo degradado si no hay Redis)
-│   │       ├── email/                   # Proveedor de correo (SMTP o Mock)
+│   │       ├── email/                   # Proveedor de correo (SMTP o Mock), incluido el correo de alertas críticas (alerta_correo.go)
 │   │       ├── kvtest/                  # Test de contrato común a redis/ y memoria/
 │   │       └── proxmox/                 # Adapter Proxmox VE (API Token, RRDdata, /status/current), ver su README.md
 │   │           ├── client.go            # Implementa ProxmoxPort

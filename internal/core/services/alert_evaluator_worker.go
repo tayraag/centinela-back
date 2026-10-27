@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"strconv"
+	"sync"
 	"time"
 
 	"el-centinela/internal/core/domain"
@@ -64,25 +65,35 @@ type EvaluadorAlertas struct {
 	nombreNodo string
 	intervalo  time.Duration
 	ahora      func() time.Time
+
+	destinatarios ports.DestinatariosAlertas // a quién mandar el correo de una alerta crítica
+	email         ports.EmailService
+	correos       sync.WaitGroup // correos en envío (el apagado los espera)
 }
 
 // NewEvaluadorAlertas crea el evaluador. intervalo es ALERT_POLL_INTERVAL
 // (30 s si no es positivo).
 func NewEvaluadorAlertas(nodo ports.NodoService, proxmox ports.ProxmoxPort, tareas ports.TareaRepository, kv ports.KeyValueStore,
-	eventos ports.EventosService, audit ports.AuditService, nombreNodo string, intervalo time.Duration) *EvaluadorAlertas {
+	eventos ports.EventosService, audit ports.AuditService, destinatarios ports.DestinatariosAlertas, email ports.EmailService,
+	nombreNodo string, intervalo time.Duration) *EvaluadorAlertas {
 	if intervalo <= 0 {
 		intervalo = 30 * time.Second
 	}
 	return &EvaluadorAlertas{nodo: nodo, proxmox: proxmox, tareas: tareas, kv: kv, eventos: eventos, audit: audit,
-		nombreNodo: nombreNodo, intervalo: intervalo, ahora: time.Now}
+		destinatarios: destinatarios, email: email, nombreNodo: nombreNodo, intervalo: intervalo, ahora: time.Now}
 }
 
+// EsperarCorreos espera a que terminen los correos en envío.
+func (e *EvaluadorAlertas) EsperarCorreos() { e.correos.Wait() }
+
 // Iniciar arranca el ciclo en segundo plano. Termina cuando se cancela ctx
-// (apagado ordenado de la API): no deja una evaluación a medias colgada.
+// (apagado ordenado de la API): no deja una evaluación a medias colgada y
+// espera los correos que se estén enviando antes de cerrar el canal devuelto.
 func (e *EvaluadorAlertas) Iniciar(ctx context.Context) <-chan struct{} {
 	terminado := make(chan struct{})
 	go func() {
 		defer close(terminado)
+		defer e.correos.Wait()
 		ticker := time.NewTicker(e.intervalo)
 		defer ticker.Stop()
 		log.Printf("🚨 Evaluador de alertas iniciado (cada %s)", e.intervalo)
@@ -261,7 +272,9 @@ func (e *EvaluadorAlertas) explicadaPorCentinela(ctx context.Context, vmid int) 
 }
 
 // disparar emite la alerta si no estaba activa (SET NX): publica
-// ALERT_TRIGGERED y lo registra en la auditoría.
+// ALERT_TRIGGERED en el bus (llega por SSE en el momento), la registra en la
+// auditoría con los destinatarios del correo y manda el correo en segundo
+// plano, sin demorar el ciclo.
 func (e *EvaluadorAlertas) disparar(ctx context.Context, activa string, m medicion, tipo, mensaje string) {
 	alertaID := uuid.Must(uuid.NewV7())
 	nueva, err := e.kv.SetNX(ctx, activa, alertaID.String(), ttlAlertaActiva)
@@ -272,7 +285,11 @@ func (e *EvaluadorAlertas) disparar(ctx context.Context, activa string, m medici
 	if !nueva {
 		return // ya se notificó: deduplicación
 	}
+	ahora := e.ahora()
 	detalles := detallesAlerta(alertaID.String(), tipo, m)
+	if m.metrica != metricaCaida {
+		detalles["duracionPersistencia"] = fmt.Sprintf("%ds", int((ciclosParaAlertar * e.intervalo).Seconds()))
+	}
 	evento, err := ports.NewRealtimeEvent(ports.EventoAlerta, ports.SeveridadCritical, mensaje)
 	if err == nil {
 		err = e.eventos.Publicar(ctx, evento.ConRecurso(m.recursoTipo, recursoIDEvento(m)).ConDetalles(detalles))
@@ -280,20 +297,35 @@ func (e *EvaluadorAlertas) disparar(ctx context.Context, activa string, m medici
 	if err != nil {
 		log.Printf("[ALERTAS] no se pudo publicar la alerta %s: %v", activa, err)
 	}
-	instanciaID := ""
-	if m.vmid > 0 {
-		instanciaID = m.recursoID
+
+	destinatarios, err := e.destinatarios.EmailsParaAlerta(ctx, m.vmid)
+	if err != nil {
+		log.Printf("[ALERTAS] no se pudieron obtener los destinatarios del correo de %s: %v", activa, err)
 	}
-	e.audit.Registrar(ctx, ports.RegistrarAuditoriaInput{
-		Accion: ports.AccionAlertaDisparada, InstanciaID: instanciaID, InstanciaNombre: m.nombre,
-		RecursoTipo: m.recursoTipo, RecursoID: m.recursoID, Resultado: ports.ResultadoSuccess,
-		Detalles: map[string]any{"alertId": alertaID.String(), "type": tipo, "metrica": m.metrica, "valor": m.valor, "umbral": m.umbral, "mensaje": mensaje},
-	})
+	e.registrarAuditoria(ctx, ports.AccionAlertaDisparada, m, detalles, mensaje, ahora, destinatarios)
 	log.Printf("🚨 [ALERTAS] %s", mensaje)
+	if len(destinatarios) == 0 {
+		return
+	}
+	recurso := m.nombre
+	if m.recursoTipo == ports.RecursoHost {
+		recurso = e.nombreNodo
+	}
+	correo := ports.AlertaCorreo{AlertaID: alertaID.String(), Tipo: tipo, RecursoTipo: m.recursoTipo, Recurso: recurso,
+		Metrica: nombresMetrica[m.metrica], Valor: m.valor, Umbral: m.umbral, Mensaje: mensaje, FechaHora: ahora}
+	e.correos.Add(1)
+	go func() {
+		defer e.correos.Done()
+		if err := e.email.EnviarAlertaCritica(destinatarios, correo); err != nil {
+			log.Printf("[ALERTAS] falló el envío del correo de la alerta %s: %v", correo.AlertaID, err)
+			return
+		}
+		log.Printf("📧 [ALERTAS] correo de la alerta %s enviado a %d destinatario(s)", correo.AlertaID, len(destinatarios))
+	}()
 }
 
-// resolver, si la alerta estaba activa, la borra y publica ALERT_RESOLVED con
-// el mismo alertId.
+// resolver, si la alerta estaba activa, la borra, publica ALERT_RESOLVED con
+// el mismo alertId y lo registra en la auditoría.
 func (e *EvaluadorAlertas) resolver(ctx context.Context, activa string, m medicion, tipo, mensaje string) {
 	alertaID, err := e.kv.GetDel(ctx, activa)
 	if errors.Is(err, ports.ErrClaveNoEncontrada) {
@@ -303,22 +335,50 @@ func (e *EvaluadorAlertas) resolver(ctx context.Context, activa string, m medici
 		log.Printf("[ALERTAS] no se pudo resolver %s: %v", activa, err)
 		return
 	}
+	detalles := detallesAlerta(alertaID, tipo, m)
+	if m.metrica != metricaCaida {
+		detalles["umbralRecuperacion"] = umbralRecuperacion
+	}
 	evento, err := ports.NewRealtimeEvent(ports.EventoAlertaResuelta, ports.SeveridadInfo, mensaje)
 	if err == nil {
-		detalles := detallesAlerta(alertaID, tipo, m)
-		detalles["umbral"] = umbralRecuperacion
 		err = e.eventos.Publicar(ctx, evento.ConRecurso(m.recursoTipo, recursoIDEvento(m)).ConDetalles(detalles))
 	}
 	if err != nil {
 		log.Printf("[ALERTAS] no se pudo publicar la resolución %s: %v", activa, err)
 	}
+	e.registrarAuditoria(ctx, ports.AccionAlertaResuelta, m, detalles, mensaje, e.ahora(), nil)
 	log.Printf("✅ [ALERTAS] %s", mensaje)
+}
+
+// registrarAuditoria deja la fila inmutable de la alerta o su resolución (sin
+// usuario: la genera el sistema). recurso_id es el VMID o "host".
+func (e *EvaluadorAlertas) registrarAuditoria(ctx context.Context, accion string, m medicion, detalles map[string]any, mensaje string, cuando time.Time, destinatarios []string) {
+	instanciaID, recursoID := "", "host"
+	if m.vmid > 0 {
+		instanciaID, recursoID = m.recursoID, m.recursoID
+	}
+	traza := make(map[string]any, len(detalles)+3)
+	for k, v := range detalles {
+		traza[k] = v
+	}
+	traza["mensaje"] = mensaje
+	traza["timestamp"] = cuando.UTC().Format(time.RFC3339)
+	if accion == ports.AccionAlertaDisparada {
+		if destinatarios == nil {
+			destinatarios = []string{}
+		}
+		traza["destinatarios"] = destinatarios
+	}
+	e.audit.Registrar(ctx, ports.RegistrarAuditoriaInput{
+		Accion: accion, InstanciaID: instanciaID, InstanciaNombre: m.nombre,
+		RecursoTipo: m.recursoTipo, RecursoID: recursoID, Resultado: ports.ResultadoSuccess, Detalles: traza,
+	})
 }
 
 func detallesAlerta(alertaID, tipo string, m medicion) map[string]any {
 	detalles := map[string]any{"alertId": alertaID, "type": tipo, "metrica": m.metrica, "acknowledged": false}
 	if m.metrica != metricaCaida {
-		detalles["valor"], detalles["umbral"] = m.valor, m.umbral
+		detalles["valorActual"], detalles["umbralCritico"] = m.valor, m.umbral
 	}
 	return detalles
 }
@@ -346,13 +406,13 @@ func tipoDeAlerta(m medicion) string {
 	return TipoAlertaInstancia
 }
 
-var nombresMetrica = map[string]string{"ram": "RAM", "mem": "memoria", "cpu": "CPU", "disk": "almacenamiento"}
+var nombresMetrica = map[string]string{"ram": "Memoria RAM", "mem": "memoria", "cpu": "CPU", "disk": "almacenamiento"}
 
 func mensajeSaturacion(m medicion) string {
 	if m.recursoTipo == ports.RecursoHost {
-		return fmt.Sprintf("El host superó el %.0f%% de uso de %s (%.1f%%).", m.umbral, nombresMetrica[m.metrica], m.valor)
+		return fmt.Sprintf("Saturación crítica: Uso de %s en el host al %.1f%% (límite %.0f%%)", nombresMetrica[m.metrica], m.valor, m.umbral)
 	}
-	return fmt.Sprintf("La instancia %s superó el %.0f%% de uso de %s (%.1f%%).", m.nombre, m.umbral, nombresMetrica[m.metrica], m.valor)
+	return fmt.Sprintf("Saturación crítica: Uso de %s en la instancia %s al %.1f%% (límite %.0f%%)", nombresMetrica[m.metrica], m.nombre, m.valor, m.umbral)
 }
 
 func mensajeNormalizado(m medicion) string {

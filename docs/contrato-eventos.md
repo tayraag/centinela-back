@@ -26,7 +26,7 @@ enum** en inglés MAYÚSCULA con guión bajo.
 | tipo        | string         | string    | Tipo de evento (ver enums)             |
 | severidad   | string         | string    | Nivel de severidad (ver enums)         |
 | recursoTipo | string         | string    | Tipo de recurso afectado (ver enums)   |
-| recursoId   | string         | string    | Referencia pública (`inst_...`) de la VM o LXC; se omite en HOST |
+| recursoId   | string         | string o null | Referencia pública (`inst_...`) de la VM o LXC; `null` en HOST |
 | mensaje     | string         | string    | Texto legible para el usuario          |
 | fechaHora   | time.Time      | RFC3339   | Momento en que se generó el evento     |
 | detalles    | map[string]any | object    | Datos extra opcionales (según el tipo) |
@@ -49,8 +49,8 @@ enum** en inglés MAYÚSCULA con guión bajo.
   (`nodo-principal`, `Almacenamiento Local Rápido`, ...). Ver
   `docs/contrato-etapa1.md`.
 - `recursoTipo`, `recursoId` y `detalles` se completan según el tipo de evento
-  (ver `ConRecurso` y `ConDetalles` en el código). `recursoId` y `detalles` no
-  viajan cuando no aplican: un evento del HOST no trae `recursoId`.
+  (ver `ConRecurso` y `ConDetalles` en el código). `recursoId` viaja siempre:
+  en un evento del HOST vale `null`. `detalles` se omite cuando no aplica.
 
 ## Valores permitidos
 
@@ -162,16 +162,35 @@ significa sin una tarea de esa instancia en curso ni creada en los últimos 10
 minutos (un stop, un rollback o un borrado ordenados desde El Centinela no
 alertan).
 
-- `ALERT_TRIGGERED`: severidad `CRITICAL`. Queda en la auditoría como
-  `ALERT_TRIGGERED` con resultado `SUCCESS` (sin usuario).
+- `ALERT_TRIGGERED`: severidad `CRITICAL`. Se publica en el bus en el mismo
+  ciclo en que se confirma, así que llega por SSE en menos de un segundo.
 - `ALERT_RESOLVED`: severidad `INFO`, con el mismo `alertId` de la alerta.
 - `detalles`: `alertId`, `type` (`host_saturation`, `resource_saturation` o
-  `instance_down`), `metrica`, `valor` y `umbral` (el de activación en la
-  alerta y el de recuperación, 80, en la resolución; no van en
-  `instance_down`) y `acknowledged: false`.
-- Las del host no traen `recursoId` y solo las reciben los usuarios **ADMIN**;
+  `instance_down`), `metrica`, `valorActual`, `umbralCritico` (el de
+  activación), `duracionPersistencia` (solo en la alerta: cuánto duró la
+  saturación antes de alertar, por ejemplo `"60s"`), `umbralRecuperacion`
+  (solo en la resolución: 80) y `acknowledged: false`. Los valores y umbrales
+  no van en `instance_down`.
+- Las del host traen `recursoId: null` y solo las reciben los usuarios **ADMIN**;
   las de una instancia traen su referencia pública en `recursoId` y las reciben
   el ADMIN y los OPERATOR con permiso sobre ella.
+
+**Correo.** Cada `ALERT_TRIGGERED` (todas son `CRITICAL`) se avisa también por
+correo, en segundo plano para no demorar el ciclo: a los ADMIN activos y, si
+la alerta es de una instancia, también a los OPERATOR activos con
+`FULL_ACCESS` sobre ella. Asunto `[ALERTA CRÍTICA] Saturación de Recursos en
+HOST proxmox` (o `... en VM srv-database`; en una caída, `Caída de Instancia
+en ...`); el cuerpo (texto plano y HTML) trae el recurso, la métrica, el valor
+contra el umbral, la hora en UTC y de Argentina y una recomendación. Con
+`EMAIL_PROVIDER=mock` el correo queda en el log del backend; en producción
+sale por SMTP con STARTTLS (puerto 587) o TLS (465). La resolución no manda
+correo.
+
+**Auditoría.** `ALERT_TRIGGERED` y `ALERT_RESOLVED` quedan en la tabla
+`auditoria` con resultado `SUCCESS`, sin usuario, `resource_type` `HOST`,
+`VM` o `LXC` y `resource_id` el VMID o `host`. En `detalles` van la métrica,
+los valores, el mensaje, el `timestamp` (UTC) y, en la alerta, los
+`destinatarios` del correo.
 
 ```json
 {
@@ -179,14 +198,16 @@ alertan).
   "tipo": "ALERT_TRIGGERED",
   "severidad": "CRITICAL",
   "recursoTipo": "HOST",
-  "mensaje": "El host superó el 85% de uso de RAM (91.5%).",
-  "fechaHora": "2026-10-27T10:15:00-03:00",
+  "recursoId": null,
+  "mensaje": "Saturación crítica: Uso de Memoria RAM en el host al 89.2% (límite 85%)",
+  "fechaHora": "2026-10-27T12:45:00Z",
   "detalles": {
     "alertId": "0192e4a1-7c9b-7123-b123-000000000001",
     "type": "host_saturation",
     "metrica": "ram",
-    "valor": 91.5,
-    "umbral": 85,
+    "valorActual": 89.2,
+    "umbralCritico": 85,
+    "duracionPersistencia": "60s",
     "acknowledged": false
   }
 }
@@ -205,8 +226,9 @@ alertan).
     "alertId": "0192e4a1-7c9b-7123-b123-000000000002",
     "type": "resource_saturation",
     "metrica": "cpu",
-    "valor": 42,
-    "umbral": 80,
+    "valorActual": 42,
+    "umbralCritico": 95,
+    "umbralRecuperacion": 80,
     "acknowledged": false
   }
 }

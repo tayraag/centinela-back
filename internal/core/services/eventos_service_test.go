@@ -318,7 +318,7 @@ func TestEventos_RecursoIdOpcional(t *testing.T) {
 		return m
 	}
 	host := serializar(alertaDelHost(t))
-	if _, tiene := host["recursoId"]; tiene || host["recursoTipo"] != "HOST" || host["tipo"] != "ALERT_TRIGGERED" {
+	if v, tiene := host["recursoId"]; !tiene || v != nil || host["recursoTipo"] != "HOST" || host["tipo"] != "ALERT_TRIGGERED" {
 		t.Errorf("Alerta del host: %v", host)
 	}
 	if vm := serializar(eventoDe(t, ports.RecursoVM, "110")); vm["recursoId"] != "110" {

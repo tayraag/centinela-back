@@ -103,8 +103,10 @@ type ActiveTaskResponse struct {
 // publican `TASK_FINISHED` (formas concretas en TaskSuccess y TaskFailed; el
 // servidor manda siempre las seis claves y `exitstatus`, `motivo` y `error`
 // valen null cuando no aplican) y las alertas `ALERT_TRIGGERED` /
-// `ALERT_RESOLVED` (`alertId`, `type`, `metrica`, `valor`, `umbral`,
-// `acknowledged`; `valor` y `umbral` no van en `instance_down`).
+// `ALERT_RESOLVED` (`alertId`, `type`, `metrica`, `valorActual`,
+// `umbralCritico`, `duracionPersistencia` (solo en la alerta),
+// `umbralRecuperacion` (solo en la resolución) y `acknowledged`; los valores y
+// umbrales no van en `instance_down`).
 type SSEDetallesEvento struct {
 	TareaID    string  `json:"tareaId,omitempty" example:"3f2504e0-4f89-11d3-9a0c-0305e82c3301"`
 	Accion     string  `json:"accion,omitempty" enums:"START,STOP,SHUTDOWN,REBOOT,DELETE,CREATE,SNAPSHOT,ROLLBACK_SNAPSHOT,DELETE_SNAPSHOT" example:"START"`
@@ -114,12 +116,14 @@ type SSEDetallesEvento struct {
 	Error      *string `json:"error,omitempty" extensions:"x-nullable" example:"CT 201 not running"`
 	// Alertas (ALERT_TRIGGERED y ALERT_RESOLVED). El mismo alertId une la
 	// alerta con su resolución.
-	AlertID      string   `json:"alertId,omitempty" example:"0192e4a1-7c9b-7123-b123-000000000001"`
-	Type         string   `json:"type,omitempty" enums:"host_saturation,resource_saturation,instance_down" example:"host_saturation"`
-	Metrica      string   `json:"metrica,omitempty" enums:"ram,cpu,disk,mem,down" example:"ram"`
-	Valor        *float64 `json:"valor,omitempty" example:"91.5"` // porcentaje medido
-	Umbral       *float64 `json:"umbral,omitempty" example:"85"`  // de activación en ALERT_TRIGGERED; de recuperación (80) en ALERT_RESOLVED
-	Acknowledged *bool    `json:"acknowledged,omitempty" example:"false"`
+	AlertID              string   `json:"alertId,omitempty" example:"0192e4a1-7c9b-7123-b123-000000000001"`
+	Type                 string   `json:"type,omitempty" enums:"host_saturation,resource_saturation,instance_down" example:"host_saturation"`
+	Metrica              string   `json:"metrica,omitempty" enums:"ram,cpu,disk,mem,down" example:"ram"`
+	ValorActual          *float64 `json:"valorActual,omitempty" example:"89.2"`         // porcentaje medido
+	UmbralCritico        *float64 `json:"umbralCritico,omitempty" example:"85"`         // umbral de activación
+	UmbralRecuperacion   *float64 `json:"umbralRecuperacion,omitempty" example:"80"`    // solo en ALERT_RESOLVED
+	DuracionPersistencia string   `json:"duracionPersistencia,omitempty" example:"60s"` // solo en ALERT_TRIGGERED: cuánto duró la saturación antes de alertar
+	Acknowledged         *bool    `json:"acknowledged,omitempty" example:"false"`
 }
 
 // SSEEventPayload es el JSON de cada línea `data:` del stream `GET /api/events`.
@@ -127,7 +131,7 @@ type SSEDetallesEvento struct {
 // El mismo `id` viaja también en la línea `id:` del frame SSE, para que el
 // cliente pueda deduplicar. `detalles` se omite cuando el evento no trae datos
 // extra. En VM y LXC, `recursoId` es la referencia pública de la instancia
-// (la misma `id` del inventario), nunca el VMID. Se omite en los eventos del HOST (el servidor físico), que
+// (la misma `id` del inventario), nunca el VMID. Vale null en los eventos del HOST (el servidor físico), que
 // no refieren a una instancia: esos eventos, como ALERT_TRIGGERED, solo llegan
 // a usuarios ADMIN.
 type SSEEventPayload struct {
@@ -135,7 +139,7 @@ type SSEEventPayload struct {
 	Tipo        string             `json:"tipo" binding:"required" enums:"INSTANCE_STATE_CHANGED,INSTANCE_CREATED,RESOURCE_SATURATION,TASK_FINISHED,ALERT_TRIGGERED,ALERT_RESOLVED" example:"TASK_FINISHED"`
 	Severidad   string             `json:"severidad" binding:"required" enums:"INFO,WARNING,CRITICAL" example:"INFO"`
 	RecursoTipo string             `json:"recursoTipo" binding:"required" enums:"VM,LXC,HOST" example:"VM"`
-	RecursoID   string             `json:"recursoId,omitempty" example:"inst_3Hk9aQ2mXv7LpR4sT1bN8c"`
+	RecursoID   *string            `json:"recursoId" binding:"required" extensions:"x-nullable" example:"inst_3Hk9aQ2mXv7LpR4sT1bN8c"`
 	Mensaje     string             `json:"mensaje" binding:"required" example:"La tarea de encendido finalizó correctamente"`
 	FechaHora   string             `json:"fechaHora" binding:"required" format:"date-time" example:"2026-09-30T11:24:03-03:00"`
 	Detalles    *SSEDetallesEvento `json:"detalles,omitempty"`

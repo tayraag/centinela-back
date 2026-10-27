@@ -5,6 +5,7 @@
 package ports
 
 import (
+	"encoding/json"
 	"fmt"
 	"slices"
 	"strings"
@@ -92,7 +93,7 @@ type RealtimeEvent struct {
 	Tipo        string         `json:"tipo"`
 	Severidad   string         `json:"severidad"`
 	RecursoTipo string         `json:"recursoTipo"`
-	RecursoID   string         `json:"recursoId,omitempty"` // VMID en VM y LXC; se omite en HOST
+	RecursoID   string         `json:"recursoId,omitempty"` // VMID en VM y LXC; null en HOST (ver MarshalJSON)
 	Mensaje     string         `json:"mensaje"`
 	FechaHora   time.Time      `json:"fechaHora"`
 	Detalles    map[string]any `json:"detalles,omitempty"`
@@ -129,8 +130,22 @@ func NewRealtimeEvent(tipo, severidad, mensaje string) (RealtimeEvent, error) {
 	}, nil
 }
 
+// MarshalJSON manda siempre la clave recursoId: con el recurso, o null cuando
+// el evento no refiere a una instancia (HOST).
+func (e RealtimeEvent) MarshalJSON() ([]byte, error) {
+	type sinMetodos RealtimeEvent
+	var recurso *string
+	if e.RecursoID != "" {
+		recurso = &e.RecursoID
+	}
+	return json.Marshal(struct {
+		sinMetodos
+		RecursoID *string `json:"recursoId"`
+	}{sinMetodos(e), recurso})
+}
+
 // ConRecurso devuelve una copia del evento con el recurso afectado completado.
-// Para un evento del host: ConRecurso(RecursoHost, "") (sin recursoId).
+// Para un evento del host: ConRecurso(RecursoHost, "") (recursoId null).
 func (e RealtimeEvent) ConRecurso(tipoRecurso, recursoID string) RealtimeEvent {
 	e.RecursoTipo = tipoRecurso
 	e.RecursoID = recursoID

@@ -198,8 +198,10 @@ func main() {
 	// Evaluador de alertas (RF-11): umbrales del host y de las instancias con
 	// histéresis y deduplicación en Redis; publica ALERT_TRIGGERED/ALERT_RESOLVED.
 	// Se detiene con ctx (SIGINT/SIGTERM).
-	services.NewEvaluadorAlertas(nodoService, proxmoxClient, tareaRepo, kvStore, eventosService, auditService,
-		nodoNombre, duracionDeEntorno("ALERT_POLL_INTERVAL", 30*time.Second)).Iniciar(ctx)
+	// Las alertas CRITICAL se avisan además por correo a los ADMIN (y a los
+	// OPERATOR con FULL_ACCESS sobre la instancia afectada).
+	finAlertas := services.NewEvaluadorAlertas(nodoService, proxmoxClient, tareaRepo, kvStore, eventosService, auditService,
+		userRepo, emailService, nodoNombre, duracionDeEntorno("ALERT_POLL_INTERVAL", 30*time.Second)).Iniciar(ctx)
 	wsMetricsHandler := httpHandlers.NewMetricsWSHandler(proxmoxClient, services.NewMetricasVivoService(kvStore, authRepo, instanceRepo, 0),
 		refsInstancia, nodoNombre, middleware.OrigenesPermitidos(), httpHandlers.LimitesWSPorDefecto)
 
@@ -430,6 +432,13 @@ func main() {
 
 	if err := seguimientoTareas.Esperar(shutdownCtx); err != nil {
 		log.Printf("⚠️  El seguimiento de tareas no terminó a tiempo: %v", err)
+	}
+
+	// El evaluador de alertas espera los correos que estén en envío.
+	select {
+	case <-finAlertas:
+	case <-shutdownCtx.Done():
+		log.Println("⚠️  El evaluador de alertas no terminó de enviar los correos a tiempo")
 	}
 }
 

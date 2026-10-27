@@ -1,10 +1,13 @@
 package email
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
 	"strings"
+
+	"el-centinela/internal/core/ports"
 
 	gomail "github.com/go-mail/mail/v2"
 )
@@ -131,6 +134,19 @@ func (s *SMTPEmailService) EnviarCodigoRecuperacion(emailDestino, codigo string)
 }
 
 // SendMail envía un correo genérico de texto plano. Satisface ports.EmailService.
+// EnviarAlertaCritica manda un correo por destinatario (cada uno ve solo su
+// dirección) y junta los errores de los que fallaron.
+func (s *SMTPEmailService) EnviarAlertaCritica(destinatarios []string, alerta ports.AlertaCorreo) error {
+	asunto, texto, cuerpoHTML := ArmarCorreoAlerta(alerta)
+	var errs []error
+	for _, destino := range destinatarios {
+		if err := s.sendMail(destino, asunto, texto, cuerpoHTML); err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", destino, err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
 func (s *SMTPEmailService) SendMail(to, subject, body string) error {
 	return s.sendMail(to, subject, body, "")
 }

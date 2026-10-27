@@ -685,7 +685,7 @@ El `data:` de cada evento es el esquema `http.SSEEventPayload`:
 - `recursoTipo` admite `VM`, `LXC` y `HOST` (el servidor físico; reemplaza al
   antiguo `NODE`).
 - `recursoId` es la referencia pública de la instancia (`inst_...`, la misma `id`
-  del inventario) en los eventos de VM y LXC; se omite en los del `HOST`. Si
+  del inventario) en los eventos de VM y LXC; vale `null` en los del `HOST`. Si
   `detalles.error` o `detalles.exitstatus` traen un texto de Proxmox que nombra
   el VMID ("CT 201 not running"), el número se reemplaza por la referencia.
 - Los eventos de `HOST`, como las alertas `ALERT_TRIGGERED`, solo llegan a
