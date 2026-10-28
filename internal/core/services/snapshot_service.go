@@ -83,7 +83,7 @@ func (s *snapshotService) Crear(ctx context.Context, usuarioID uuid.UUID, vmid i
 	if err != nil {
 		s.audit.Registrar(ctx, ports.RegistrarAuditoriaInput{
 			UsuarioID: usuarioID, Accion: ports.AccionCrearSnapshot, InstanciaID: strconv.Itoa(vmid),
-			InstanciaNombre: inst.Nombre, Resultado: ports.ResultadoFalla,
+			InstanciaNombre: inst.Nombre, RecursoTipo: recursoDeInstancia(inst.Tipo), RecursoID: strconv.Itoa(vmid), Resultado: ports.ResultadoFailed,
 			Detalles: map[string]any{"snapname": nombre, "resource_type": inst.Tipo, "error": err.Error()},
 		})
 		return nil, err
@@ -132,8 +132,8 @@ func (s *snapshotService) ordenSobreSnapshot(ctx context.Context, usuarioID uuid
 	upid, err := despachar(ctx, inst.Nodo, inst.Tipo, vmid, nombre)
 	if err != nil {
 		s.audit.Registrar(ctx, ports.RegistrarAuditoriaInput{
-			UsuarioID: usuarioID, Accion: accion, InstanciaID: strconv.Itoa(vmid),
-			InstanciaNombre: inst.Nombre, Resultado: ports.ResultadoFalla,
+			UsuarioID: usuarioID, Accion: map[string]string{ports.AccionTareaRollbackSnapshot: ports.AccionRevertirSnapshot, ports.AccionTareaDeleteSnapshot: ports.AccionEliminarSnapshot}[accion], InstanciaID: strconv.Itoa(vmid),
+			InstanciaNombre: inst.Nombre, RecursoTipo: recursoDeInstancia(inst.Tipo), RecursoID: strconv.Itoa(vmid), Resultado: ports.ResultadoFailed,
 			Detalles: map[string]any{"snapname": nombre, "resource_type": inst.Tipo, "error": err.Error()},
 		})
 		return uuid.Nil, err

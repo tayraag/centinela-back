@@ -44,18 +44,32 @@ func (refsNulas) DesofuscarVMID(string) (int, error) { return 0, errSinReferenci
 
 var errSinReferencias = errors.New("sin traductor de referencias de instancia")
 
-// filtroInterno traduce el filtro instanciaId (referencia pública) al VMID que
-// guarda la tabla. false si la referencia no es válida: no hay registros que
-// mostrar (un VMID numérico tampoco se acepta como filtro).
+// filtroInterno traduce instanciaId y recursoId de VM/LXC al VMID persistido.
+// Una referencia inválida con tipo VM/LXC devuelve vacío sin consultar. Los
+// identificadores de HOST y USER se conservan sin traducir.
 func (s *auditServiceImpl) filtroInterno(filtros ports.FiltrosAuditoria) (ports.FiltrosAuditoria, bool) {
-	if filtros.InstanciaID == "" {
-		return filtros, true
+	if filtros.InstanciaID != "" {
+		vmid, err := s.refs.DesofuscarVMID(filtros.InstanciaID)
+		if err != nil {
+			return filtros, false
+		}
+		filtros.InstanciaID = strconv.Itoa(vmid)
 	}
-	vmid, err := s.refs.DesofuscarVMID(filtros.InstanciaID)
-	if err != nil {
-		return filtros, false
+	if filtros.RecursoID != "" {
+		switch filtros.RecursoTipo {
+		case ports.RecursoVM, ports.RecursoLXC:
+			vmid, err := s.refs.DesofuscarVMID(filtros.RecursoID)
+			if err != nil {
+				return filtros, false
+			}
+			filtros.RecursoID = strconv.Itoa(vmid)
+		case "":
+			// Sin tipo, una referencia de instancia válida también es inequívoca.
+			if vmid, err := s.refs.DesofuscarVMID(filtros.RecursoID); err == nil {
+				filtros.RecursoID = strconv.Itoa(vmid)
+			}
+		}
 	}
-	filtros.InstanciaID = strconv.Itoa(vmid)
 	return filtros, true
 }
 
@@ -110,6 +124,17 @@ func (s *auditServiceImpl) Registrar(ctx context.Context, input ports.RegistrarA
 // RegistrarEstricto confirma la escritura de auditoría al llamador. A diferencia
 // de Registrar, no oculta los errores de persistencia.
 func (s *auditServiceImpl) RegistrarEstricto(ctx context.Context, input ports.RegistrarAuditoriaInput) error {
+	if len(input.Detalles) > 0 {
+		seguros, err := ports.DetallesAuditoriaSeguros(input.Detalles)
+		if err != nil {
+			return fmt.Errorf("detalles de auditoría inválidos: %w", err)
+		}
+		var detalles map[string]any
+		if err := json.Unmarshal(seguros, &detalles); err != nil {
+			return err
+		}
+		input.Detalles = detalles
+	}
 	if err := s.repo.Registrar(ctx, input); err != nil {
 		return fmt.Errorf("no se pudo persistir la auditoría %s: %w", input.Accion, err)
 	}
@@ -238,7 +263,9 @@ func (s *auditServiceImpl) PrepararAuditoriaTarea(t *domain.TareaAsincrona, cier
 	acciones := map[string]string{
 		"start": ports.AccionIniciarVM, "stop": ports.AccionDetenerVM,
 		"shutdown": ports.AccionApagarVM, "reboot": ports.AccionReiniciarVM, "delete": ports.AccionEliminarVM,
-		ports.AccionTareaSnapshot: ports.AccionCrearSnapshot,
+		ports.AccionTareaSnapshot:                          ports.AccionCrearSnapshot,
+		strings.ToLower(ports.AccionTareaRollbackSnapshot): ports.AccionRevertirSnapshot,
+		strings.ToLower(ports.AccionTareaDeleteSnapshot):   ports.AccionEliminarSnapshot,
 	}
 	accion := acciones[strings.ToLower(t.Accion)]
 	recursoTipo, esCreacion := ports.TipoRecursoCreacion(t.Accion)
@@ -308,8 +335,16 @@ func (s *auditServiceImpl) PrepararAuditoriaTarea(t *domain.TareaAsincrona, cier
 			detalles["error"] = err
 		}
 	}
+	// Proxmox usa qemu/lxc; otros productores pueden enviar VM/LXC.
+	// Sin metadatos no se presupone que el recurso sea una máquina virtual.
+	switch strings.ToLower(fmt.Sprint(meta["resource_type"])) {
+	case "qemu", "vm":
+		recursoTipo = ports.RecursoVM
+	case "lxc":
+		recursoTipo = ports.RecursoLXC
+	}
 	return ports.RegistrarAuditoriaInput{
 		UsuarioID: t.UsuarioID, Accion: accion, InstanciaID: t.InstanciaID,
-		InstanciaNombre: nombre, Upid: t.UpidProxmox, Resultado: resultado, Detalles: detalles,
+		InstanciaNombre: nombre, RecursoTipo: recursoTipo, RecursoID: t.InstanciaID, Upid: t.UpidProxmox, Resultado: resultado, Detalles: detalles,
 	}
 }

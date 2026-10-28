@@ -3,6 +3,7 @@ package ports
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"time"
 
 	"el-centinela/internal/core/domain"
@@ -16,8 +17,10 @@ import (
 
 // FiltrosAuditoria define los parámetros opcionales para filtrar el log de auditoría.
 type FiltrosAuditoria struct {
-	UsuarioID *uuid.UUID // Filtrar por usuario específico
-	Accion    string     // Ej: "LOGIN", "CREAR_USUARIO", "INICIAR_VM"
+	RecursoTipo string
+	RecursoID   string
+	UsuarioID   *uuid.UUID // Filtrar por usuario específico
+	Accion      string     // Ej: "LOGIN", "CREAR_USUARIO", "INICIAR_VM"
 	// ExcluirAcciones deja afuera del listado las acciones indicadas. Se usa para
 	// que el feed del Dashboard no traiga el ruido del canal de eventos
 	// (EVENTOS_CONEXION / EVENTOS_CIERRE) sin quitarlo de la vista completa.
@@ -117,9 +120,11 @@ const (
 	AccionSuspenderVM    = "SUSPENDER_VM"
 	AccionResumeVM       = "REANUDAR_VM"
 	// AccionConfigurarInstancia: cambio de CPU o RAM (PUT /api/instances/:instanceRef/config).
-	AccionConfigurarInstancia = "CONFIG_INSTANCE"
+	AccionConfigurarInstancia = "CONFIG_UPDATED"
 	// AccionCrearSnapshot: creación de un snapshot (POST /api/instances/:instanceRef/snapshots).
-	AccionCrearSnapshot = "CREAR_SNAPSHOT"
+	AccionCrearSnapshot    = "SNAPSHOT_CREATE"
+	AccionRevertirSnapshot = "SNAPSHOT_ROLLBACK"
+	AccionEliminarSnapshot = "SNAPSHOT_DELETE"
 )
 
 // Resultados existentes de autenticación, usuarios y otras operaciones.
@@ -185,4 +190,42 @@ type AuditService interface {
 
 	// ExportarJSON construye y devuelve el archivo JSON como bytes.
 	ExportarJSON(ctx context.Context, orgID uuid.UUID, filtros FiltrosAuditoria) ([]byte, error)
+}
+
+// DetallesAuditoriaSeguros normaliza cualquier valor serializable a JSON antes
+// de recorrerlo. Incluye structs, RawMessage, mapas tipados y arrays sin mutar
+// los metadatos del llamador. Un valor no serializable impide la escritura.
+func DetallesAuditoriaSeguros(detalles map[string]any) ([]byte, error) {
+	raw, err := json.Marshal(detalles)
+	if err != nil {
+		return nil, err
+	}
+	var valor any
+	if err := json.Unmarshal(raw, &valor); err != nil {
+		return nil, err
+	}
+	var redactar func(any)
+	redactar = func(v any) {
+		switch x := v.(type) {
+		case map[string]any:
+			for k, sub := range x {
+				clave := strings.ToLower(strings.NewReplacer("_", "", "-", "", " ", "").Replace(k))
+				sensible := false
+				for _, patron := range []string{"password", "contras", "secret", "token", "authorization", "cookie", "apikey", "privatekey", "credential", "totp", "recoverycode", "codigorecuperacion"} {
+					sensible = sensible || strings.Contains(clave, patron)
+				}
+				if sensible {
+					x[k] = "[REDACTED]"
+				} else {
+					redactar(sub)
+				}
+			}
+		case []any:
+			for _, sub := range x {
+				redactar(sub)
+			}
+		}
+	}
+	redactar(valor)
+	return json.Marshal(valor)
 }

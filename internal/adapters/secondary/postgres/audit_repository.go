@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"time"
 
 	"el-centinela/internal/core/domain"
@@ -29,10 +30,17 @@ func NewAuditRepository(db *gorm.DB) ports.AuditRepository {
 
 // Registrar inserta un nuevo registro de auditoría (solo INSERT, nunca UPDATE/DELETE).
 func (r *auditRepositoryImpl) Registrar(ctx context.Context, input ports.RegistrarAuditoriaInput) error {
+	if input.UsuarioID == uuid.Nil && (input.Accion == ports.AccionAlertaDisparada || input.Accion == ports.AccionAlertaResuelta) {
+		return r.registrarAlertaSistema(ctx, input)
+	}
+	return r.registrarConAlcance(ctx, input, nil)
+}
+
+func (r *auditRepositoryImpl) registrarConAlcance(ctx context.Context, input ports.RegistrarAuditoriaInput, orgID *uuid.UUID) error {
 	// Serializar detalles adicionales a JSON
 	var detallesPtr *string
 	if len(input.Detalles) > 0 {
-		b, err := json.Marshal(input.Detalles)
+		b, err := ports.DetallesAuditoriaSeguros(input.Detalles)
 		if err != nil {
 			return fmt.Errorf("error al serializar detalles de auditoría: %w", err)
 		}
@@ -46,6 +54,7 @@ func (r *auditRepositoryImpl) Registrar(ctx context.Context, input ports.Registr
 	}
 
 	registro := domain.Auditoria{
+		OrganizacionID:  orgID,
 		UsuarioID:       usuarioIDPtr,
 		Accion:          input.Accion,
 		InstanciaID:     input.InstanciaID,
@@ -61,7 +70,10 @@ func (r *auditRepositoryImpl) Registrar(ctx context.Context, input ports.Registr
 	query := r.db.WithContext(ctx)
 	// Compatibilidad durante un rolling deploy: los eventos sin UPID pueden
 	// seguir insertándose antes de que la instancia nueva ejecute la migración.
-	omitir := make([]string, 0, 3)
+	omitir := make([]string, 0, 4)
+	if orgID == nil {
+		omitir = append(omitir, "OrganizacionID")
+	}
 	if input.Upid == "" {
 		omitir = append(omitir, "Upid")
 	}
@@ -89,12 +101,11 @@ func (r *auditRepositoryImpl) Registrar(ctx context.Context, input ports.Registr
 func (r *auditRepositoryImpl) Listar(ctx context.Context, orgID uuid.UUID, filtros ports.FiltrosAuditoria, opciones ports.OpcionesAuditoria) (*ports.PaginaAuditoria, error) {
 	query := r.db.WithContext(ctx).
 		Table("auditoria a").
-		Select("a.*, u.nombre_completo").
+		Select("a.*, CASE WHEN a.usuario_id IS NULL THEN '[sistema]' ELSE u.nombre_completo END AS nombre_completo").
 		Joins("LEFT JOIN usuarios u ON u.id = a.usuario_id").
-		// Solo los registros de la propia organización. Los que quedaron sin usuario
-		// (usuario eliminado) no tienen organización a la que atribuirse: se excluyen
-		// en vez de mostrarse en todas, que era lo que pasaba antes.
-		Where("u.organizacion_id = ?", orgID)
+		// El alcance explícito autoriza los eventos de sistema. Los registros
+		// históricos con actor conservan la atribución anterior por usuario.
+		Where("(a.organizacion_id = ? OR (a.organizacion_id IS NULL AND u.organizacion_id = ?))", orgID, orgID)
 
 	// Aplicar filtros opcionales
 	query = aplicarFiltros(query, filtros)
@@ -115,7 +126,11 @@ func (r *auditRepositoryImpl) Listar(ctx context.Context, orgID uuid.UUID, filtr
 	if !ok {
 		col = "a.fecha_hora"
 	}
-	orden := col + " " + opciones.Direccion
+	direccion := "desc"
+	if opciones.Direccion == "asc" {
+		direccion = "asc"
+	}
+	orden := col + " " + direccion + ", a.id " + direccion
 
 	offset := (opciones.Pagina - 1) * opciones.TamanoPag
 
@@ -169,12 +184,11 @@ func (r *auditRepositoryImpl) Listar(ctx context.Context, orgID uuid.UUID, filtr
 func (r *auditRepositoryImpl) ExportarRegistros(ctx context.Context, orgID uuid.UUID, filtros ports.FiltrosAuditoria) ([]ports.AuditoriaDTO, error) {
 	query := r.db.WithContext(ctx).
 		Table("auditoria a").
-		Select("a.*, u.nombre_completo").
+		Select("a.*, CASE WHEN a.usuario_id IS NULL THEN '[sistema]' ELSE u.nombre_completo END AS nombre_completo").
 		Joins("LEFT JOIN usuarios u ON u.id = a.usuario_id").
-		// Solo los registros de la propia organización. Los que quedaron sin usuario
-		// (usuario eliminado) no tienen organización a la que atribuirse: se excluyen
-		// en vez de mostrarse en todas, que era lo que pasaba antes.
-		Where("u.organizacion_id = ?", orgID)
+		// El alcance explícito autoriza los eventos de sistema. Los registros
+		// históricos con actor conservan la atribución anterior por usuario.
+		Where("(a.organizacion_id = ? OR (a.organizacion_id IS NULL AND u.organizacion_id = ?))", orgID, orgID)
 
 	query = aplicarFiltros(query, filtros)
 
@@ -220,6 +234,23 @@ func (r *auditRepositoryImpl) ExportarRegistros(ctx context.Context, orgID uuid.
 
 // aplicarFiltros agrega cláusulas WHERE dinámicas a la query según los filtros presentes.
 func aplicarFiltros(query *gorm.DB, filtros ports.FiltrosAuditoria) *gorm.DB {
+	// Predicado directo sobre la clave de partición: PostgreSQL puede excluir
+	// particiones incluso con parámetros preparados. Nunca castear fecha_hora.
+	if filtros.Desde == nil {
+		ahora := time.Now().UTC()
+		desde := time.Date(ahora.Year(), ((ahora.Month()-1)/3)*3+1, 1, 0, 0, 0, 0, time.UTC)
+		if filtros.Hasta != nil && filtros.Hasta.Before(desde) {
+			desde = filtros.Hasta.AddDate(-1, 0, 0)
+		}
+		filtros.Desde = &desde
+	}
+	if filtros.RecursoTipo != "" {
+		query = query.Where("a.resource_type = ?", filtros.RecursoTipo)
+	}
+	if filtros.RecursoID != "" {
+		query = query.Where("a.resource_id = ?", filtros.RecursoID)
+	}
+
 	if filtros.UsuarioID != nil {
 		query = query.Where("a.usuario_id = ?", filtros.UsuarioID)
 	}
@@ -239,9 +270,62 @@ func aplicarFiltros(query *gorm.DB, filtros ports.FiltrosAuditoria) *gorm.DB {
 		query = query.Where("a.fecha_hora >= ?", filtros.Desde)
 	}
 	if filtros.Hasta != nil {
-		// Incluir todo el día "hasta"
-		hasta := filtros.Hasta.Add(24*time.Hour - time.Second)
-		query = query.Where("a.fecha_hora <= ?", hasta)
+		query = query.Where("a.fecha_hora <= ?", filtros.Hasta)
 	}
 	return query
+}
+
+// registrarAlertaSistema congela el alcance con la política vigente del correo:
+// ADMIN activos y operadores FULL_ACCESS de la instancia. Cada organización
+// recibe una fila y exclusivamente sus propios destinatarios. Todo es atómico.
+func (r *auditRepositoryImpl) registrarAlertaSistema(ctx context.Context, input ports.RegistrarAuditoriaInput) error {
+	vmid := 0
+	switch input.RecursoTipo {
+	case ports.RecursoVM, ports.RecursoLXC:
+		var err error
+		vmid, err = strconv.Atoi(input.RecursoID)
+		if err != nil || vmid <= 0 {
+			return fmt.Errorf("recurso de alerta inválido")
+		}
+	case ports.RecursoHost:
+	default:
+		return fmt.Errorf("tipo de recurso de alerta inválido")
+	}
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		type destinatario struct {
+			OrganizacionID uuid.UUID
+			EmailUsuario   string
+		}
+		var usuarios []destinatario
+		permisos := tx.Model(&domain.PermisoInstancia{}).Select("usuario_id").Where("vmid_proxmox = ? AND nivel_acceso = ?", vmid, ports.NivelAccesoFullAccess)
+		if err := tx.Model(&domain.Usuario{}).Select("organizacion_id, email_usuario").
+			Where("activo AND eliminado_en IS NULL").
+			Where("rol = ? OR (rol = ? AND ? > 0 AND id IN (?))", "ADMIN", "OPERATOR", vmid, permisos).
+			Order("email_usuario").Find(&usuarios).Error; err != nil {
+			return fmt.Errorf("no se pudo resolver alcance de alerta: %w", err)
+		}
+		audiencias := map[uuid.UUID][]string{}
+		for _, u := range usuarios {
+			audiencias[u.OrganizacionID] = append(audiencias[u.OrganizacionID], u.EmailUsuario)
+		}
+		repo := &auditRepositoryImpl{db: tx}
+		if len(audiencias) == 0 {
+			// Persistir sin hacerlo global cuando no hay una audiencia autorizada.
+			return repo.registrarConAlcance(ctx, input, nil)
+		}
+		for orgID, emails := range audiencias {
+			scoped := input
+			scoped.Detalles = make(map[string]any, len(input.Detalles))
+			for k, v := range input.Detalles {
+				scoped.Detalles[k] = v
+			}
+			if input.Accion == ports.AccionAlertaDisparada {
+				scoped.Detalles["destinatarios"] = emails
+			}
+			if err := repo.registrarConAlcance(ctx, scoped, &orgID); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }

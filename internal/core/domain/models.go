@@ -100,6 +100,9 @@ type PermisoInstancia struct {
 // ==========================================
 
 type Auditoria struct {
+	// Alcance persistido de los eventos de sistema sin usuario actor.
+	OrganizacionID *uuid.UUID `gorm:"column:organizacion_id;type:uuid" json:"-"`
+
 	ID        uuid.UUID  `gorm:"type:uuid;primaryKey;default:uuid_generate_v7()" json:"id"`
 	UsuarioID *uuid.UUID `gorm:"type:uuid;index:idx_auditoria_usuario_fecha" json:"usuarioId"` // Puntero: NULL en eventos sin actor. FK ON DELETE RESTRICT: un usuario con auditoría no se puede borrar físicamente (se elimina lógicamente con eliminado_en)
 

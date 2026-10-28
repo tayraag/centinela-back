@@ -273,6 +273,10 @@ func migrarAuditoriaParticionada(db *gorm.DB) error {
 		return fmt.Errorf("error al agregar resource_id a auditoria: %w", err)
 	}
 
+	if err := db.Exec(`ALTER TABLE auditoria ADD COLUMN IF NOT EXISTS organizacion_id UUID`).Error; err != nil {
+		return fmt.Errorf("error al agregar alcance organizacional de auditoría: %w", err)
+	}
+
 	// 2. Crear particiones trimestrales e idempotentes.
 	if err := crearParticionesAuditoria(db); err != nil {
 		return err
@@ -297,6 +301,10 @@ func migrarAuditoriaParticionada(db *gorm.DB) error {
 			nombre: "idx_auditoria_query",
 			sql: `CREATE INDEX IF NOT EXISTS idx_auditoria_query
 				  ON auditoria (fecha_hora DESC, usuario_id, accion)`,
+		},
+		{
+			nombre: "idx_auditoria_org_fecha",
+			sql:    `CREATE INDEX IF NOT EXISTS idx_auditoria_org_fecha ON auditoria (organizacion_id, fecha_hora DESC)`,
 		},
 	}
 	for _, idx := range indices {
