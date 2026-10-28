@@ -439,7 +439,7 @@ sin guardar la RAM.
 
 La creación es asíncrona, como las acciones de energía: se registra la tarea
 `RUNNING` en `tareas_asincronas` con su auditoría `PENDIENTE`
-(`CREAR_SNAPSHOT`) y se responde `202` con el `tareaId`, que también llega en
+(`SNAPSHOT_CREATE`) y se responde `202` con el `tareaId`, que también llega en
 el `TASK_FINISHED` (`accion: "SNAPSHOT"`). El UPID de Proxmox no se devuelve.
 
 ```json
@@ -467,7 +467,8 @@ dos:
 - Validan el nombre (`400 INVALID_SNAPSHOT_NAME`) y que el snapshot exista
   (`404 SNAPSHOT_NOT_FOUND`) antes de llamar a Proxmox.
 - Se registran en `tareas_asincronas` con `accion` `ROLLBACK_SNAPSHOT` o
-  `DELETE_SNAPSHOT` (también son los códigos de auditoría) y responden
+  `DELETE_SNAPSHOT`; la auditoría usa `SNAPSHOT_ROLLBACK` y
+  `SNAPSHOT_DELETE`, respectivamente. Responden
   `202 { "tareaId" }`; el UPID no se devuelve.
 - El desenlace llega en `TASK_FINISHED` con esa misma `accion`
   (`COMPLETED`, o `FAILED` con motivo `PROXMOX_ERROR` o `TIMEOUT`), y la
@@ -774,3 +775,14 @@ Esta etapa fija las lecturas de estado e inventario, las acciones aceptadas
 (incluido el borrado) con su catálogo completo de errores y el canal de eventos en tiempo real: payload,
 autenticación por ticket y framing. El detalle interno del canal sigue en
 `contrato-eventos.md` y `eventos-tiempo-real.md`, que esta etapa no reemplaza.
+
+
+## Auditoría administrativa RF-08
+
+Contrato implementado: `GET /api/admin/audit` y `/api/admin/audit/export`, solo ADMIN. Filtros `desde/hasta` (RFC3339 o fecha ISO), `usuarioId`, `accion`, `recursoTipo`, `recursoId`, `resultado`, y en el listado `page/limit` (1/25; máximo 100). Se mantienen `instanciaId`, `pagina/tamano`, `excluirAccion` y el ordenamiento anterior. Las referencias VM/LXC son públicas y se traducen internamente también al filtrar `recursoId`.
+
+El listado devuelve `items,total,page,pagina,limit,totalPages`; los items agregan `usuarioNombre,recursoTipo,recursoId,detalle` a los nombres anteriores. Los detalles son objetos JSON. Exportar no pagina, conserva el DTO anterior y limita a 100000 filas; acepta `formato=json` o CSV predeterminado. Sin `desde` se usa el trimestre actual UTC, o el año anterior a `hasta` si ese límite es histórico.
+
+Acciones nuevas: `SNAPSHOT_CREATE`, `SNAPSHOT_ROLLBACK`, `SNAPSHOT_DELETE` y `CONFIG_UPDATED` (antes CONFIG_INSTANCE). `ALERT_TRIGGERED` ya se registra automáticamente. Los códigos de tareas y eventos no cambian. Las alertas nuevas sin usuario se atribuyen mediante `auditoria.organizacion_id` a las organizaciones autorizadas por la política existente de correo. Cada organización recibe su propia fila con destinatarios separados. El listado y la exportación las incluyen con `usuarioId=null` y nombre `[sistema]`; las históricas sin alcance siguen excluidas. La migración de arranque agrega la columna y el índice de organización/fecha.
+
+Parámetros, ejemplos y recorrido completo de prueba por Swagger en la sección 10 de `Diseño de endpoints para front.md`. La exclusión de particiones y el objetivo de 150 ms se verifican en PostgreSQL; Swagger no acredita esos criterios.

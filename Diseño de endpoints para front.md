@@ -1517,69 +1517,82 @@ no envía la orden a Proxmox y responde **HTTP 503 Service Unavailable**:
 
 &nbsp;
 
-#### 10\. Auditoría
+#### 10. Auditoría (RF-08, contrato implementado)
 
-Para la seguridad de esto se requiere autenticación mediante JWT y validación del permiso para visualizar auditoría (exclusivo para administradores o roles con acceso autorizado).&nbsp;
+`GET /api/admin/audit` y `GET /api/admin/audit/export` requieren un access token válido y rol **ADMIN**. OPERATOR recibe `403`; sin token válido, `401`.
 
-Mediante query parameters:
+```http
+GET /api/admin/audit?desde=2026-10-01&hasta=2026-10-20&accion=SNAPSHOT_CREATE&recursoTipo=VM&recursoId=inst_3Hk9aQ2mXv7LpR4sT1bN8c&resultado=SUCCESS&page=1&limit=25
+```
 
-**GET /api/admin/audit?page=1\&limit=10\&from=2024-05-01\&to=2024-05-08\&result=SUCCESS**
+| Parámetro | Contrato |
+|---|---|
+| `desde`, `hasta` | RFC3339 con zona o `YYYY-MM-DD`. Fecha sola en UTC; `hasta` incluye el día completo. Con hora se respeta ese instante. `desde > hasta` devuelve 400. |
+| `usuarioId` | UUID del actor. Un UUID inválido devuelve 400. |
+| `accion` | Código exacto de la acción, por ejemplo `SNAPSHOT_CREATE`, `SNAPSHOT_ROLLBACK`, `SNAPSHOT_DELETE`, `CONFIG_UPDATED` o `LOGIN`. No se restringe a un enum cerrado. |
+| `recursoTipo` | `VM`, `LXC`, `HOST`, `USER`. Otro valor devuelve 400. |
+| `recursoId` | Para VM/LXC, referencia pública `inst_...` del inventario, que el servicio traduce al VMID interno. Para HOST/USER, su propio identificador. |
+| `instanciaId` | Filtro anterior por referencia pública; sigue admitido. |
+| `resultado` | `SUCCESS`, `FAILED`, `PENDIENTE`; conserva `EXITO` y `FALLA` históricos. Otro valor devuelve 400. |
+| `page`, `limit` | Predeterminados 1 y 25; enteros positivos; `limit > 100` se recorta a 100. |
+| `pagina`, `tamano` | Alias anteriores, con los mismos límites. `page` y `limit` prevalecen si también se envían. |
+| `ordenarPor`, `direccion` | `fechaHora`, `accion` o `resultado`; `asc` o `desc`. Predeterminados `fechaHora desc`, con ID como desempate. |
+| `excluirAccion` | Valores repetidos o separados por coma. |
 
-> **OPERATIVO ETAPA-1 (código actual): los params reales son en español: `GET /api/admin/audit?accion=INICIAR_VM&resultado=SUCCESS&usuarioId=<uuid>&instanciaId=inst_3Hk9aQ2mXv7LpR4sT1bN8c&desde=2024-05-01&hasta=2024-05-08&pagina=1&tamano=50&ordenarPor=fechaHora&direccion=desc`. `page/limit/from/to/result` del ejemplo no existen en código. `GET /api/admin/audit/export` acepta los mismos filtros + `?formato=csv|json` (default `csv`, cualquier valor no-`json` devuelve CSV como adjunto). Respuesta real `200 {total, pagina, items:[{id, usuarioId, nombreUsuario, fechaHora, accion, instanciaId, instanciaNombre, resultado, detalles}]}` (`detalles` string JSON). `instanciaId` (y `resourceId` en VM/LXC) es la referencia pública `inst_...`, también en el filtro y en la exportación; los VMID que la auditoría guarda dentro de `detalles` (purga y asignación de permisos, textos de error de Proxmox) se devuelven reemplazados por la referencia. Un filtro `instanciaId` inválido o numérico devuelve una lista vacía. No incluye `{statistics, pagination, events}` del ejemplo siguiente, que queda como diseño futuro.
+Sin `desde`, la consulta comienza en el trimestre actual UTC. Si `hasta` es anterior a ese trimestre y no hay `desde`, comienza un año antes de `hasta`. Listado y exportación usan condiciones directas sobre `fecha_hora`, que permiten partition pruning. `from`, `to` y `result` no son filtros implementados.
 
-- GET /api/admin/audit: Es la ruta base del endpoint encargada de consultar y devolver los registros de auditoría almacenados en la base de datos.
-- GET /api/admin/audit/export: Exporta el log de auditoría completo según los filtros (descarga CSV).
-- page=1: Indica el número de la página actual que se está solicitando (útil para la paginación de la tabla).
-- limit=10: Define la cantidad máxima de registros que el backend debe devolver por cada página (en este caso, 10 elementos por vista).
-- from=2024-05-01 y to=2024-05-08: Son los parámetros que aplican el filtro temporal, limitando la búsqueda de eventos únicamente a los ocurridos dentro de ese rango de fechas (desde el 1 de mayo hasta el 8 de mayo de 2024).
-- result=SUCCESS: Filtra los registros para mostrar exclusivamente aquellas acciones cuyo resultado haya sido exitoso.
-
-&nbsp;
-
-**Respuesta Exitosa (200 OK):**&nbsp;
+**Respuesta de listado:**
 
 ```json
 {
-  "statistics": {
-    "totalEvents": 126,
-    "successful": {
-      "count": 78,
-      "percentage": 61.9
-    },
-    "warnings": {
-      "count": 8,
-      "percentage": 6.3
-    },
-    "failed": {
-      "count": 40,
-      "percentage": 31.7
-    }
-  },
-  "pagination": {
-    "currentPage": 1,
-    "pageSize": 10,
-    "totalItems": 126,
-    "totalPages": 13
-  },
-  "events": [
+  "items": [
     {
-      "id": "audit-uuid-001",
-      "timestamp": "2024-05-08T18:04:21Z",
-      "userId": "user-uuid-admin",
-      "user": "AD Admin",
-      "action": "Inició instancia",
-      "resourceId": "101",
-      "resourceName": "Ubuntu Server",
-      "resourceType": "VM",
-      "node": "pve01",
-      "result": "SUCCESS",
-      "sourceIp": "192.168.1.45",
-      "details": "Iniciado correctamente desde el panel de control.",
-      "errorMessage": null
+      "id": "0192e4a1-4f89-7e23-9a0c-0305e82c3301",
+      "fechaHora": "2026-10-20T10:00:00Z",
+      "usuarioId": "f88f137c-9284-4fb9-ad18-821ebc8c3333",
+      "usuarioNombre": "Administrador",
+      "accion": "SNAPSHOT_CREATE",
+      "recursoTipo": "VM",
+      "recursoId": "inst_3Hk9aQ2mXv7LpR4sT1bN8c",
+      "resultado": "SUCCESS",
+      "detalle": {"snapname": "rf08_prueba", "duracionSegundos": 4}
     }
-  ]
+  ],
+  "total": 1420,
+  "page": 1,
+  "pagina": 1,
+  "limit": 25,
+  "totalPages": 57
 }
 ```
+
+Cada item conserva además los campos anteriores `nombreUsuario`, `resourceType`, `resourceId`, `detalles`, `instanciaId` e `instanciaNombre` cuando corresponden. `detalle` y `detalles` son objetos JSON, no strings que el frontend deba parsear. El nombre del usuario procede de su nombre completo. Una referencia inválida para VM/LXC devuelve una lista vacía. No se devuelven VMIDs ni UPIDs. No hay `statistics`, `pagination` ni `events` en esta respuesta.
+
+**Exportación:** `GET /api/admin/audit/export` acepta los filtros de datos anteriores y `formato=json` o `formato=csv`. No pagina: exporta hasta 100000 filas. El predeterminado es CSV; cualquier valor distinto de `json` produce CSV. Devuelve un archivo adjunto. JSON conserva el DTO anterior (`nombreUsuario`, `resourceType`, `resourceId`, `detalles`); los alias nuevos del listado no se agregan a los archivos exportados.
+
+**Registro automático:** snapshots generan `SNAPSHOT_CREATE`, `SNAPSHOT_ROLLBACK` o `SNAPSHOT_DELETE`, con despacho `PENDIENTE` y desenlace `SUCCESS`/`FAILED`. Cambios de cores/RAM usan `CONFIG_UPDATED`. Los códigos de las tareas/SSE siguen siendo `SNAPSHOT`, `ROLLBACK_SNAPSHOT` y `DELETE_SNAPSHOT`. Los datos sensibles bajo claves reconocidas se sustituyen por `[REDACTED]` antes del INSERT. El historial anterior no se renombra ni se reescribe.
+
+**Alcance de los eventos de sistema:** `auditoria.organizacion_id` guarda la atribución de las alertas sin usuario. Se usa la política existente de correo: ADMIN activos y, para instancias, operadores activos FULL_ACCESS. Se inserta una fila por organización autorizada, con destinatarios exclusivos de esa organización, en una única transacción. No se inventa un usuario: `usuarioId` es null y el nombre es `[sistema]`. Listado y exportación aceptan el alcance explícito o, para registros anteriores con usuario, su organización mediante el JOIN. Los registros históricos sin usuario ni alcance siguen excluidos; tampoco se hace global un evento nuevo sin audiencia. El alcance histórico no cambia al retirar un permiso actual. La migración idempotente de arranque agrega la columna y el índice `(organizacion_id, fecha_hora DESC)`; hace falta reiniciar la API actualizada para aplicarla.
+
+#### 10.1 Verificación manual desde Swagger
+
+Usar una VM y un LXC de prueba o el simulador documentado en `docs/simulador-proxmox.md`. Rollback revierte datos y deja la instancia apagada; borrar un snapshot elimina ese punto de restauración. Guardar la configuración original antes de cambiar recursos.
+
+1. Habilitar `ENABLE_SWAGGER=true` en el entorno local y reiniciar la API. Abrir `http://localhost:8080/swagger/index.html`. Necesita API, PostgreSQL, Redis y acceso a Proxmox o su simulador. Tener cuentas ADMIN y OPERATOR activas, 2FA y contraseña definitiva. Swagger apagado devuelve 404.
+2. Abrir `POST /auth/login`, pulsar **Try it out**, ingresar `{"email":"<correo-admin>","password":"<clave>"}` y pulsar **Execute**. Copiar `jwtTemporal`. Pulsar **Authorize** y, en **BearerPreAuth**, ingresar `Bearer <jwtTemporal>`, confirmar y cerrar. Si `totpVinculado=false`, ejecutar `GET /auth/2fa/qr` y vincular `secretoManual` en un autenticador. Ejecutar `POST /auth/2fa/verify` con `{"codigo":"<seis dígitos actuales>"}`. En **Authorize**, completar **BearerAuth** con `Bearer <accessToken>`. **BearerPreAuth** es exclusivo del flujo 2FA; **BearerAuth** se usa para auditoría e instancias. No reutilizar el mismo período TOTP si ya fue consumido.
+3. Ejecutar `GET /instances` con ADMIN y copiar la `id` pública de una VM y un LXC de prueba. No usar el VMID ni inventar referencias. Obtener el UUID del usuario desde `GET /account/profile` si se probará `usuarioId`.
+4. En `GET /admin/audit`, pulsar **Try it out**, dejar filtros opcionales vacíos y **Execute**. Esperar 200, `items`, `total`, `page=1`, `limit=25`, `totalPages`. Sin fechas solo se consulta el trimestre actual. Usar fechas del día de la prueba para operaciones nuevas; octubre 1–20 no incluirá una operación del 27.
+5. En `POST /instances/{instanceRef}/snapshots`, completar la referencia y `{"snapname":"rf08_prueba","description":"Prueba RF08"}`. **Execute** debe devolver 202 y `tareaId`. Reconsultar auditoría con `accion=SNAPSHOT_CREATE`, `recursoTipo=VM` o `LXC` y `recursoId=<referencia>`. Esperar `PENDIENTE` y luego `SUCCESS` o `FAILED`; el desenlace puede tardar varios segundos. Repetir sobre la otra clase de instancia. Cada prueba necesita un nombre que todavía no exista.
+6. Cuando finalice la tarea, ejecutar `POST /instances/{instanceRef}/snapshots/{snapname}/rollback` sobre el snapshot creado. Esperar 202 y luego consultar `accion=SNAPSHOT_ROLLBACK`. Esperar el desenlace antes de continuar; durante el seguimiento otra operación puede devolver 409 `INSTANCE_BUSY`.
+7. Ejecutar `DELETE /instances/{instanceRef}/snapshots/{snapname}` y después consultar `accion=SNAPSHOT_DELETE`. Esperar 202 y el desenlace auditado. El endpoint no elimina la VM/LXC.
+8. En `PUT /instances/{instanceRef}/config`, enviar cores/RAM válidos dentro de las cuotas del entorno, por ejemplo `{"cores":2,"ramMb":2048}` si son apropiados para esa instancia. Esperar 200 y revisar `requiresReboot`. Consultar `accion=CONFIG_UPDATED` y `recursoId=<misma referencia>`; revisar valores anteriores/nuevos y resultado. Restaurar los valores originales al terminar. Una cuota excedida puede devolver 409 y generar `FAILED`; una validación HTTP temprana no garantiza una fila de auditoría.
+9. Copiar un `recursoId` devuelto en un item. Volver a consultar con ese valor, tipo, acción, UUID del actor, `resultado=SUCCESS` y fechas de la prueba. Debe encontrar el mismo registro si todos los filtros coinciden. No usar `PENDIENTE` para configuración, que no sigue el ciclo de snapshots.
+10. Probar `limit=1` y `page=1`, luego `page=2` si hay suficientes eventos. El total debe conservarse sin cambios concurrentes. Probar `limit=101`: la respuesta indica `limit=100`.
+11. Probar por separado `usuarioId=incorrecto`, `desde=ayer` y `desde=2026-10-21` junto con `hasta=2026-10-20`: cada petición enviada devuelve 400 `INVALID_QUERY`. Los enums de `recursoTipo`/`resultado` y los mínimos de paginación pueden ser rechazados por la propia UI antes de enviar; en ese caso no se comprobó un HTTP 400 del backend. Las pruebas automatizadas cubren también esos valores inválidos.
+12. Abrir `GET /admin/audit/export`, copiar los mismos filtros y ejecutar primero con `formato=json` y luego `csv`. Swagger muestra el cuerpo o el enlace de descarga según el navegador. Los IDs deben ser referencias públicas y los registros deben coincidir con los filtros; la exportación no se limita al tamaño de página.
+13. Cambiar de cuenta: usar **Authorize → Logout**, repetir login/2FA con OPERATOR y autorizar su `accessToken`. Ejecutar `GET /admin/audit` y `GET /admin/audit/export`: ambos deben devolver 403 aunque el operador tenga `FULL_ACCESS` sobre una instancia. Para comprobar 401, quitar la autorización y, si Swagger conserva cookies de otra cuenta, usar una sesión privada del navegador.
+14. Un OPERATOR con FULL_ACCESS puede ejecutar snapshots y configuración en la instancia asignada; uno con READ_ONLY debe recibir 403 en esas escrituras. Para revisar los eventos generados por el operador, volver a autorizarse como ADMIN y filtrar por su UUID.
+15. Para una alerta nueva emitida por el evaluador, volver a ADMIN y consultar `accion=ALERT_TRIGGERED`, sin `usuarioId` (el actor es el sistema). Para host usar `recursoTipo=HOST` y `recursoId=host`; para una instancia, VM/LXC y su referencia pública. Debe aparecer con `usuarioId=null`, nombre `[sistema]` y solo destinatarios de la organización autorizada. También se puede exportar con esos filtros. La alerta requiere las condiciones reales del evaluador: no existe un endpoint para insertar auditoría ni para forzar una alerta. Las históricas sin alcance no aparecerán. Sanitización e inmutabilidad se verifican con pruebas automatizadas, sin enviar secretos reales. Swagger tampoco demuestra partition pruning ni el objetivo DB de 150 ms: requieren EXPLAIN ANALYZE y pruebas de volumen en PostgreSQL. El tiempo que muestra Swagger incluye HTTP, serialización y otros costos.
 
 #### 11.1 Gestión de usuarios (Estadísticas de Usuarios)
 

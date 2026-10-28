@@ -248,7 +248,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Devuelve el log de auditoría de la organización con soporte de filtros, paginación y ordenamiento. Solo accesible por ADMIN.",
+                "description": "Solo ADMIN; OPERATOR recibe 403. Devuelve eventos de la organización, incluidos ALERT_TRIGGERED/ALERT_RESOLVED sin actor con alcance persistido. El actor de sistema aparece como [sistema], con usuarioId null. Las alertas históricas sin alcance siguen excluidas.\nSin desde se consulta desde el inicio del trimestre actual UTC; si hasta es anterior, se toma un año antes de hasta. hasta con fecha sola incluye todo ese día; RFC3339 conserva el instante exacto. Los filtros inválidos devuelven 400 INVALID_QUERY.\nrecursoId de VM/LXC e instanciaId usan la referencia pública inst_... del inventario, nunca el VMID. Una referencia inválida para VM/LXC devuelve vacío. Se conservan aliases pagina/tamano y los campos anteriores de cada item; page/limit prevalecen sobre sus aliases.",
                 "produces": [
                     "application/json"
                 ],
@@ -265,13 +265,13 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Filtrar por tipo de acción (ej: LOGIN, CREATE_INSTANCE, CONFIG_INSTANCE)",
+                        "description": "Filtrar por tipo de acción (ej: LOGIN, SNAPSHOT_CREATE, SNAPSHOT_ROLLBACK, SNAPSHOT_DELETE, ALERT_TRIGGERED, CONFIG_UPDATED)",
                         "name": "accion",
                         "in": "query"
                     },
                     {
                         "type": "string",
-                        "description": "Filtrar por ID de instancia Proxmox",
+                        "description": "Referencia pública inst_... de la instancia",
                         "name": "instanciaId",
                         "in": "query"
                     },
@@ -283,25 +283,61 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Fecha desde (YYYY-MM-DD)",
+                        "description": "Fecha desde (RFC3339 o YYYY-MM-DD)",
                         "name": "desde",
                         "in": "query"
                     },
                     {
                         "type": "string",
-                        "description": "Fecha hasta (YYYY-MM-DD)",
+                        "description": "Fecha hasta (RFC3339 o YYYY-MM-DD)",
                         "name": "hasta",
                         "in": "query"
                     },
                     {
+                        "enum": [
+                            "VM",
+                            "LXC",
+                            "HOST",
+                            "USER"
+                        ],
+                        "type": "string",
+                        "description": "Tipo del recurso",
+                        "name": "recursoTipo",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Referencia pública inst_... para VM/LXC; identificador propio para HOST/USER",
+                        "name": "recursoId",
+                        "in": "query"
+                    },
+                    {
+                        "minimum": 1,
                         "type": "integer",
-                        "description": "Número de página (default 1)",
+                        "default": 1,
+                        "description": "Página solicitada",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "minimum": 1,
+                        "type": "integer",
+                        "default": 25,
+                        "description": "Tamaño de página; valores mayores a 100 se recortan a 100",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "minimum": 1,
+                        "type": "integer",
+                        "description": "Alias anterior de page; omitir si usa page",
                         "name": "pagina",
                         "in": "query"
                     },
                     {
+                        "minimum": 1,
                         "type": "integer",
-                        "description": "Registros por página (default 50, máx 200)",
+                        "description": "Alias anterior de limit; mismo máximo de 100",
                         "name": "tamano",
                         "in": "query"
                     },
@@ -316,13 +352,29 @@ const docTemplate = `{
                         "description": "Dirección: desc (default) o asc",
                         "name": "direccion",
                         "in": "query"
+                    },
+                    {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        },
+                        "collectionFormat": "multi",
+                        "description": "Acciones a excluir; repetibles o separadas por coma",
+                        "name": "excluirAccion",
+                        "in": "query"
                     }
                 ],
                 "responses": {
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/ports.PaginaAuditoria"
+                            "$ref": "#/definitions/http.PaginaAuditoriaResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "INVALID_QUERY",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
                         }
                     },
                     "401": {
@@ -353,7 +405,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Exporta el log de auditoría de la organización. Aplica los mismos filtros que el listado. Retorna el archivo como adjunto descargable. Solo accesible por ADMIN.",
+                "description": "Solo ADMIN; OPERATOR recibe 403. Exporta hasta 100000 registros con los filtros y rango temporal del listado, sin paginación. formato=json devuelve JSON; cualquier otro valor devuelve CSV. Incluye alertas de sistema con alcance de la organización; las históricas sin alcance quedan fuera. Los identificadores de VM/LXC se exportan como referencias públicas y detalles es un objeto JSON.",
                 "produces": [
                     "text/csv",
                     "application/json"
@@ -377,7 +429,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Filtrar por ID de instancia",
+                        "description": "Referencia pública inst_... de instancia",
                         "name": "instanciaId",
                         "in": "query"
                     },
@@ -389,19 +441,48 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Fecha desde (YYYY-MM-DD)",
+                        "description": "Fecha desde (RFC3339 o YYYY-MM-DD)",
                         "name": "desde",
                         "in": "query"
                     },
                     {
                         "type": "string",
-                        "description": "Fecha hasta (YYYY-MM-DD)",
+                        "description": "Fecha hasta (RFC3339 o YYYY-MM-DD)",
                         "name": "hasta",
                         "in": "query"
                     },
                     {
+                        "enum": [
+                            "VM",
+                            "LXC",
+                            "HOST",
+                            "USER"
+                        ],
                         "type": "string",
-                        "description": "Formato de exportación: csv (default) o json",
+                        "description": "Tipo del recurso",
+                        "name": "recursoTipo",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Referencia pública para VM/LXC; identificador propio para HOST/USER",
+                        "name": "recursoId",
+                        "in": "query"
+                    },
+                    {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        },
+                        "collectionFormat": "multi",
+                        "description": "Acciones a excluir",
+                        "name": "excluirAccion",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "default": "csv",
+                        "description": "Formato de descarga; cualquier valor distinto de json produce CSV",
                         "name": "formato",
                         "in": "query"
                     }
@@ -411,6 +492,12 @@ const docTemplate = `{
                         "description": "Archivo CSV o JSON descargable",
                         "schema": {
                             "type": "file"
+                        }
+                    },
+                    "400": {
+                        "description": "INVALID_QUERY",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
                         }
                     },
                     "401": {
@@ -1870,7 +1957,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "ADMIN o FULL_ACCESS sobre la instancia. Cambia ` + "`" + `cores` + "`" + ` y/o ` + "`" + `ramMb` + "`" + ` (al menos uno, enteros positivos; ` + "`" + `ramMb` + "`" + ` mínimo 16). Los incrementos se validan contra el margen del nodo (RAM con 15% de headroom y vCPU), comparando con lo que la instancia ya tiene asignado (DeltaRAM): si no alcanza responde 409 RESOURCE_QUOTA_EXCEEDED sin escribir en Proxmox. Las reducciones no se validan. Si la instancia está apagada el cambio queda aplicado (` + "`" + `requiresReboot: false` + "`" + `). Si está encendida y Proxmox lo dejó pendiente porque la instancia no admite hot-plug (lo habitual en VMs QEMU), responde ` + "`" + `requiresReboot: true` + "`" + `: se aplica al reiniciarla. En LXC, CPU y RAM se aplican en caliente. Pasa por la guarda de exclusión mutua (409 INSTANCE_BUSY si la instancia tiene otra operación en curso).",
+                "description": "ADMIN o FULL_ACCESS sobre la instancia. Cambia ` + "`" + `cores` + "`" + ` y/o ` + "`" + `ramMb` + "`" + ` (al menos uno, enteros positivos; ` + "`" + `ramMb` + "`" + ` mínimo 16). Los incrementos se validan contra el margen del nodo (RAM con 15% de headroom y vCPU), comparando con lo que la instancia ya tiene asignado (DeltaRAM): si no alcanza responde 409 RESOURCE_QUOTA_EXCEEDED sin escribir en Proxmox. Las reducciones no se validan. Si la instancia está apagada el cambio queda aplicado (` + "`" + `requiresReboot: false` + "`" + `). Si está encendida y Proxmox lo dejó pendiente porque la instancia no admite hot-plug (lo habitual en VMs QEMU), responde ` + "`" + `requiresReboot: true` + "`" + `: se aplica al reiniciarla. En LXC, CPU y RAM se aplican en caliente. Pasa por la guarda de exclusión mutua (409 INSTANCE_BUSY si la instancia tiene otra operación en curso).\nAuditoría RF-08: CONFIG_UPDATED con resultado SUCCESS/FAILED y valores anteriores/nuevos cuando están disponibles.",
                 "consumes": [
                     "application/json"
                 ],
@@ -2211,7 +2298,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "OPERATIVO. Crea un punto de restauración (sin guardar la RAM). Requiere ADMIN o FULL_ACCESS. ` + "`" + `snapname` + "`" + ` debe empezar con letra y tener solo letras, números, ` + "`" + `_` + "`" + ` y ` + "`" + `-` + "`" + `, de 2 a 40 caracteres (no puede ser ` + "`" + `current` + "`" + `); si no, 400 INVALID_SNAPSHOT_NAME sin contactar a Proxmox. ` + "`" + `description` + "`" + ` es opcional, hasta 255 caracteres. La operación es asíncrona: responde 202 con ` + "`" + `tareaId` + "`" + ` (el mismo que llega en TASK_FINISHED con ` + "`" + `accion: \"SNAPSHOT\"` + "`" + `) y ` + "`" + `snapname` + "`" + `; el UPID de Proxmox nunca se devuelve. Las instancias de infraestructura también admiten snapshots. Lleva la exclusión mutua: con otra operación en curso responde 409 INSTANCE_BUSY.",
+                "description": "OPERATIVO. Crea un punto de restauración (sin guardar la RAM). Requiere ADMIN o FULL_ACCESS. ` + "`" + `snapname` + "`" + ` debe empezar con letra y tener solo letras, números, ` + "`" + `_` + "`" + ` y ` + "`" + `-` + "`" + `, de 2 a 40 caracteres (no puede ser ` + "`" + `current` + "`" + `); si no, 400 INVALID_SNAPSHOT_NAME sin contactar a Proxmox. ` + "`" + `description` + "`" + ` es opcional, hasta 255 caracteres. La operación es asíncrona: responde 202 con ` + "`" + `tareaId` + "`" + ` (el mismo que llega en TASK_FINISHED con ` + "`" + `accion: \"SNAPSHOT\"` + "`" + `) y ` + "`" + `snapname` + "`" + `; el UPID de Proxmox nunca se devuelve. Las instancias de infraestructura también admiten snapshots. Lleva la exclusión mutua: con otra operación en curso responde 409 INSTANCE_BUSY.\nAuditoría RF-08: SNAPSHOT_CREATE, con despacho PENDIENTE y desenlace SUCCESS/FAILED.",
                 "consumes": [
                     "application/json"
                 ],
@@ -2311,7 +2398,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "OPERATIVO. Borra el snapshot; la instancia no cambia. Requiere ADMIN o FULL_ACCESS y lleva la exclusión mutua (409 INSTANCE_BUSY sin contactar a Proxmox si hay otra operación en curso). Se registra en tareas_asincronas con accion DELETE_SNAPSHOT y responde 202 con ` + "`" + `tareaId` + "`" + `; el desenlace llega en TASK_FINISHED (accion DELETE_SNAPSHOT). Las instancias de infraestructura también lo admiten.",
+                "description": "OPERATIVO. Borra el snapshot; la instancia no cambia. Requiere ADMIN o FULL_ACCESS y lleva la exclusión mutua (409 INSTANCE_BUSY sin contactar a Proxmox si hay otra operación en curso). Se registra en tareas_asincronas con accion DELETE_SNAPSHOT y responde 202 con ` + "`" + `tareaId` + "`" + `; el desenlace llega en TASK_FINISHED (accion DELETE_SNAPSHOT). Las instancias de infraestructura también lo admiten.\nAuditoría RF-08: SNAPSHOT_DELETE, con despacho PENDIENTE y desenlace SUCCESS/FAILED.",
                 "produces": [
                     "application/json"
                 ],
@@ -2406,7 +2493,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "OPERATIVO. Vuelve la instancia al estado del snapshot; Proxmox la deja apagada. Requiere ADMIN o FULL_ACCESS y lleva la exclusión mutua: si la instancia tiene una tarea RUNNING o el lock de operación está tomado responde 409 INSTANCE_BUSY sin contactar a Proxmox. Se registra en tareas_asincronas con accion ROLLBACK_SNAPSHOT y responde 202 con ` + "`" + `tareaId` + "`" + ` (el UPID de Proxmox nunca se devuelve). Mientras dura, el inventario y el detalle muestran la instancia con status ` + "`" + `rolling_back` + "`" + ` y activeTask.action ` + "`" + `ROLLBACK_SNAPSHOT` + "`" + `; el desenlace llega en TASK_FINISHED (accion ROLLBACK_SNAPSHOT). Las instancias de infraestructura también lo admiten.",
+                "description": "Auditoría RF-08: SNAPSHOT_ROLLBACK, con despacho PENDIENTE y desenlace SUCCESS/FAILED.\nOPERATIVO. Vuelve la instancia al estado del snapshot; Proxmox la deja apagada. Requiere ADMIN o FULL_ACCESS y lleva la exclusión mutua: si la instancia tiene una tarea RUNNING o el lock de operación está tomado responde 409 INSTANCE_BUSY sin contactar a Proxmox. Se registra en tareas_asincronas con accion ROLLBACK_SNAPSHOT y responde 202 con ` + "`" + `tareaId` + "`" + ` (el UPID de Proxmox nunca se devuelve). Mientras dura, el inventario y el detalle muestran la instancia con status ` + "`" + `rolling_back` + "`" + ` y activeTask.action ` + "`" + `ROLLBACK_SNAPSHOT` + "`" + `; el desenlace llega en TASK_FINISHED (accion ROLLBACK_SNAPSHOT). Las instancias de infraestructura también lo admiten.",
                 "produces": [
                     "application/json"
                 ],
@@ -3600,6 +3687,58 @@ const docTemplate = `{
                 }
             }
         },
+        "http.ItemAuditoriaResponse": {
+            "type": "object",
+            "properties": {
+                "accion": {
+                    "type": "string"
+                },
+                "detalle": {
+                    "type": "object"
+                },
+                "detalles": {
+                    "type": "object"
+                },
+                "fechaHora": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "instanciaId": {
+                    "type": "string"
+                },
+                "instanciaNombre": {
+                    "type": "string"
+                },
+                "nombreUsuario": {
+                    "description": "Nombre completo (JOIN con usuarios, o \"[usuario eliminado]\")",
+                    "type": "string"
+                },
+                "recursoId": {
+                    "type": "string"
+                },
+                "recursoTipo": {
+                    "type": "string"
+                },
+                "resourceId": {
+                    "type": "string"
+                },
+                "resourceType": {
+                    "type": "string"
+                },
+                "resultado": {
+                    "type": "string"
+                },
+                "usuarioId": {
+                    "description": "Puntero: puede ser null si el usuario fue eliminado",
+                    "type": "string"
+                },
+                "usuarioNombre": {
+                    "type": "string"
+                }
+            }
+        },
         "http.LoginRequest": {
             "type": "object",
             "required": [
@@ -3660,6 +3799,37 @@ const docTemplate = `{
                     "type": "number",
                     "minimum": 0,
                     "example": 42.25
+                }
+            }
+        },
+        "http.PaginaAuditoriaResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/http.ItemAuditoriaResponse"
+                    }
+                },
+                "limit": {
+                    "type": "integer",
+                    "example": 25
+                },
+                "page": {
+                    "type": "integer",
+                    "example": 1
+                },
+                "pagina": {
+                    "type": "integer",
+                    "example": 1
+                },
+                "total": {
+                    "type": "integer",
+                    "example": 1420
+                },
+                "totalPages": {
+                    "type": "integer",
+                    "example": 57
                 }
             }
         },
@@ -4399,46 +4569,6 @@ const docTemplate = `{
                 }
             }
         },
-        "ports.AuditoriaDTO": {
-            "type": "object",
-            "properties": {
-                "accion": {
-                    "type": "string"
-                },
-                "detalles": {
-                    "type": "object"
-                },
-                "fechaHora": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "instanciaId": {
-                    "type": "string"
-                },
-                "instanciaNombre": {
-                    "type": "string"
-                },
-                "nombreUsuario": {
-                    "description": "Nombre completo (JOIN con usuarios, o \"[usuario eliminado]\")",
-                    "type": "string"
-                },
-                "resourceId": {
-                    "type": "string"
-                },
-                "resourceType": {
-                    "type": "string"
-                },
-                "resultado": {
-                    "type": "string"
-                },
-                "usuarioId": {
-                    "description": "Puntero: puede ser null si el usuario fue eliminado",
-                    "type": "string"
-                }
-            }
-        },
         "ports.CambiarContrasenaInput": {
             "type": "object",
             "required": [
@@ -4527,26 +4657,6 @@ const docTemplate = `{
                 },
                 "totpVinculado": {
                     "type": "boolean"
-                }
-            }
-        },
-        "ports.PaginaAuditoria": {
-            "type": "object",
-            "properties": {
-                "items": {
-                    "description": "Registros de esta página",
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/ports.AuditoriaDTO"
-                    }
-                },
-                "pagina": {
-                    "description": "Página actual",
-                    "type": "integer"
-                },
-                "total": {
-                    "description": "Total de registros que coinciden con los filtros",
-                    "type": "integer"
                 }
             }
         },

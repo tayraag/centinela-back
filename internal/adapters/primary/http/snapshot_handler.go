@@ -104,6 +104,7 @@ func (h *SnapshotHandler) ListarSnapshots(c *gin.Context) {
 // @Failure      502 {object} ErrorResponse "PROXMOX_UNAVAILABLE"
 // @Failure      503 {object} ErrorResponse "INSTANCE_LOCK_UNAVAILABLE — no se pudo verificar si la instancia está ocupada"
 // @Failure      504 {object} ErrorResponse "PROXMOX_TIMEOUT — el snapshot puede haberse creado"
+// @Description  Auditoría RF-08: SNAPSHOT_CREATE, con despacho PENDIENTE y desenlace SUCCESS/FAILED.
 // @Router       /instances/{instanceRef}/snapshots [post]
 func (h *SnapshotHandler) CrearSnapshot(c *gin.Context) {
 	vmid, ok := extraerVmid(c)
@@ -139,6 +140,7 @@ func (h *SnapshotHandler) CrearSnapshot(c *gin.Context) {
 
 // RevertirSnapshot vuelve la instancia al estado del snapshot (asíncrono).
 //
+// @Description  Auditoría RF-08: SNAPSHOT_ROLLBACK, con despacho PENDIENTE y desenlace SUCCESS/FAILED.
 // @Summary      Revertir a un snapshot (rollback)
 // @Description  OPERATIVO. Vuelve la instancia al estado del snapshot; Proxmox la deja apagada. Requiere ADMIN o FULL_ACCESS y lleva la exclusión mutua: si la instancia tiene una tarea RUNNING o el lock de operación está tomado responde 409 INSTANCE_BUSY sin contactar a Proxmox. Se registra en tareas_asincronas con accion ROLLBACK_SNAPSHOT y responde 202 con `tareaId` (el UPID de Proxmox nunca se devuelve). Mientras dura, el inventario y el detalle muestran la instancia con status `rolling_back` y activeTask.action `ROLLBACK_SNAPSHOT`; el desenlace llega en TASK_FINISHED (accion ROLLBACK_SNAPSHOT). Las instancias de infraestructura también lo admiten.
 // @Tags         Snapshots
@@ -180,6 +182,7 @@ func (h *SnapshotHandler) RevertirSnapshot(c *gin.Context) {
 // @Failure      502 {object} ErrorResponse "PROXMOX_UNAVAILABLE"
 // @Failure      503 {object} ErrorResponse "INSTANCE_LOCK_UNAVAILABLE"
 // @Failure      504 {object} ErrorResponse "PROXMOX_TIMEOUT — el borrado puede haberse aplicado"
+// @Description  Auditoría RF-08: SNAPSHOT_DELETE, con despacho PENDIENTE y desenlace SUCCESS/FAILED.
 // @Router       /instances/{instanceRef}/snapshots/{snapname} [delete]
 func (h *SnapshotHandler) EliminarSnapshot(c *gin.Context) {
 	h.ordenSobreSnapshot(c, h.service.Eliminar)

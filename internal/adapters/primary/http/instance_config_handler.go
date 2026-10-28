@@ -56,6 +56,7 @@ type ConfigInstanciaResponse struct {
 // @Failure      502 {object} ErrorResponse "PROXMOX_UNAVAILABLE | CONFIG_APPLIED_VERIFICATION_FAILED — Proxmox aceptó el cambio, pero no se pudo determinar si requiere reinicio"
 // @Failure      503 {object} ErrorResponse "INSTANCE_LOCK_UNAVAILABLE | PROVISIONING_COORDINATION_UNAVAILABLE — no se pudo coordinar la validación de capacidad"
 // @Failure      504 {object} ErrorResponse "PROXMOX_TIMEOUT"
+// @Description  Auditoría RF-08: CONFIG_UPDATED con resultado SUCCESS/FAILED y valores anteriores/nuevos cuando están disponibles.
 // @Router       /instances/{instanceRef}/config [put]
 func (h *InstanceConfigHandler) ActualizarConfig(c *gin.Context) {
 	vmid, ok := extraerVmid(c)

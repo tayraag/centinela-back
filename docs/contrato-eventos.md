@@ -190,7 +190,12 @@ correo.
 `auditoria` con resultado `SUCCESS`, sin usuario, `resource_type` `HOST`,
 `VM` o `LXC` y `resource_id` el VMID o `host`. En `detalles` van la métrica,
 los valores, el mensaje, el `timestamp` (UTC) y, en la alerta, los
-`destinatarios` del correo.
+`destinatarios` del correo. Las alertas nuevas se guardan con alcance
+explícito en `auditoria.organizacion_id`, una fila por organización autorizada
+por la política del correo y con sus propios destinatarios. Aparecen en listado
+y exportación administrativos como `[sistema]`, sin usuario. Los registros
+históricos sin actor ni alcance permanecen excluidos; no se exponen globalmente.
+
 
 ```json
 {

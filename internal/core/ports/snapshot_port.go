@@ -12,7 +12,7 @@ import (
 const AccionTareaSnapshot = "snapshot"
 
 // Acciones de tareas_asincronas para revertir y borrar un snapshot; así llegan
-// también en TASK_FINISHED, en activeTask y en la auditoría.
+// también en TASK_FINISHED y en activeTask; auditoría usa los códigos SNAPSHOT_*.
 const (
 	AccionTareaRollbackSnapshot = "ROLLBACK_SNAPSHOT"
 	AccionTareaDeleteSnapshot   = "DELETE_SNAPSHOT"
