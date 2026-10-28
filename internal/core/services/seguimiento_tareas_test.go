@@ -86,6 +86,7 @@ func (p *proxmoxTareas) ObtenerEstadoActual(context.Context, string, string, int
 type tareasEnMemoria struct {
 	mu               sync.Mutex
 	tareas           map[uuid.UUID]*domain.TareaAsincrona
+	estadosIniciales map[uuid.UUID]string
 	audit            *auditoriaGrabadora
 	auditoriaInicial ports.RegistrarAuditoriaInput
 	purger           interface {
@@ -98,6 +99,10 @@ func (r *tareasEnMemoria) Crear(_ context.Context, t *domain.TareaAsincrona, aud
 	defer r.mu.Unlock()
 	copia := *t
 	r.tareas[t.ID] = &copia
+	if r.estadosIniciales == nil {
+		r.estadosIniciales = make(map[uuid.UUID]string)
+	}
+	r.estadosIniciales[t.ID] = t.Estado
 	r.auditoriaInicial = auditoria
 	return nil
 }
@@ -220,7 +225,12 @@ func seguirTarea(t *testing.T, px *proxmoxTareas, accion string) (uuid.UUID, *ta
 	if err != nil {
 		t.Fatal(err)
 	}
-	if estado := repo.estado(id); estado != ports.TareaRunning {
+	// El worker puede finalizar antes de que Seguir retorne. Verificar el
+	// estado capturado en Crear, no el estado actual que ya puede cambiar.
+	repo.mu.Lock()
+	estadoInicial := repo.estadosIniciales[id]
+	repo.mu.Unlock()
+	if estado := estadoInicial; estado != ports.TareaRunning {
 		t.Errorf("Al registrarla la tarea debe estar RUNNING, está %s", estado)
 	}
 	select {

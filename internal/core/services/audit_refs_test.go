@@ -165,3 +165,59 @@ func TestAuditoria_FiltroRecursoPublicoListadoYExportacion(t *testing.T) {
 		}
 	}
 }
+
+type cursorPublicoTest struct {
+	row     ports.AuditoriaDTO
+	next    bool
+	cerrado bool
+}
+
+func (c *cursorPublicoTest) Next() bool {
+	if c.next {
+		return false
+	}
+	c.next = true
+	return true
+}
+func (c *cursorPublicoTest) Actual() (ports.AuditoriaDTO, error) { return c.row, nil }
+func (c *cursorPublicoTest) Err() error                          { return nil }
+func (c *cursorPublicoTest) Close() error                        { c.cerrado = true; return nil }
+
+type repoPublicoStreamingTest struct {
+	*auditoriaConFiltro
+	cursor *cursorPublicoTest
+}
+
+func (r *repoPublicoStreamingTest) AbrirExportacion(_ context.Context, _ uuid.UUID, f ports.FiltrosAuditoria) (ports.CursorAuditoria, error) {
+	r.filtros = f
+	r.consulto = true
+	return r.cursor, nil
+}
+func TestAuditoria_CursorTraduceFiltrosYFilas(t *testing.T) {
+	refs := refsAuditoria(t)
+	ref, _ := refs.OfuscarVMID(110)
+	original := auditoriaConVmids()
+	repo := &repoPublicoStreamingTest{auditoriaConFiltro: original, cursor: &cursorPublicoTest{row: original.registros[0]}}
+	svc := services.NewAuditService(repo, refs).(ports.AuditStreaming)
+	cursor, err := svc.AbrirExportacion(context.Background(), uuid.New(), ports.FiltrosAuditoria{RecursoTipo: "VM", RecursoID: ref})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repo.filtros.RecursoID != "110" || !cursor.Next() {
+		t.Fatal("filtro/cursor inválido")
+	}
+	row, err := cursor.Actual()
+	if err != nil || row.RecursoID != ref || row.InstanciaID != ref || strings.Contains(string(row.Detalles), "lock-110.conf") {
+		t.Fatalf("fila privada: %+v %v", row, err)
+	}
+	cursor.Close()
+	if !repo.cursor.cerrado || repo.cursor.row.RecursoID != "110" {
+		t.Fatal("no cerró o mutó el origen")
+	}
+	repo.consulto = false
+	cursor, err = svc.AbrirExportacion(context.Background(), uuid.New(), ports.FiltrosAuditoria{RecursoTipo: "VM", RecursoID: "110"})
+	if err != nil || repo.consulto || cursor.Next() {
+		t.Fatal("referencia inválida consultó el repositorio")
+	}
+	cursor.Close()
+}

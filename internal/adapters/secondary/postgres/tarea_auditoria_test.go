@@ -2,11 +2,22 @@ package postgres_test
 
 import (
 	"context"
+	handlers "el-centinela/internal/adapters/primary/http"
+	"el-centinela/internal/adapters/primary/http/middleware"
+	"el-centinela/internal/infrastructure/crypto"
+	"encoding/csv"
 	"encoding/json"
+	"github.com/gin-gonic/gin"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -414,5 +425,160 @@ func TestDestruccionHaceRollbackSiFallaAuditoriaDePurga(t *testing.T) {
 	db.Model(&domain.PermisoInstancia{}).Where("vmid_proxmox = ?", 110).Count(&permisos)
 	if persistida.Estado != ports.TareaRunning || permisos != 1 {
 		t.Fatalf("rollback incompleto: estado=%s permisos=%d", persistida.Estado, permisos)
+	}
+}
+
+// Exporta más de 100000 filas (también detecta el límite histórico), con
+// PostgreSQL y HTTP reales, sin almacenar el archivo en el cliente de prueba.
+// RF08_TEST_DSN apunta a Docker local; baseRF08 aísla y elimina su esquema.
+func TestRF08ExportacionStreamingVolumenYCancelacion(t *testing.T) {
+	db, usuario, org := baseRF08(t)
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlDB.SetMaxOpenConns(1)
+	ahora := time.Now().UTC()
+	const total = 100501
+	if err := db.Exec(`INSERT INTO auditoria (usuario_id,accion,instancia_id,resource_type,resource_id,resultado,detalles,fecha_hora)
+ SELECT ?, 'EXPORT_STREAM','110','VM','110','SUCCESS',jsonb_build_object('mensaje','área,"prueba"','payload',repeat('x',384)), ?::timestamptz - n * interval '1 microsecond'
+ FROM generate_series(1,100501) n`, usuario, ahora).Error; err != nil {
+		t.Fatal(err)
+	}
+	refs, err := crypto.NuevoOfuscadorVMID("salt-streaming-pruebas-al-menos-32-caracteres")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref, _ := refs.OfuscarVMID(110)
+	svc := services.NewAuditService(postgres.NewAuditRepository(db), refs)
+	router := gin.New()
+	router.Use(middleware.RequestLogger())
+	router.Use(func(c *gin.Context) { c.Set(middleware.ContextKeyRol, "ADMIN"); c.Set(middleware.ContextKeyOrgID, org) })
+	router.GET("/api/admin/audit/export", middleware.RequireRole("ADMIN"), handlers.NewAuditHandler(svc).ExportarAuditoria)
+	servidor := httptest.NewServer(router)
+	defer servidor.Close()
+	cliente := &http.Client{Timeout: 2 * time.Minute}
+	runtime.GC()
+	var peak atomic.Uint64
+	stop, done := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(20 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ticker.C:
+				var m runtime.MemStats
+				runtime.ReadMemStats(&m)
+				for prev := peak.Load(); m.HeapAlloc > prev; prev = peak.Load() {
+					if peak.CompareAndSwap(prev, m.HeapAlloc) {
+						break
+					}
+				}
+			}
+		}
+	}()
+	defer func() { close(stop); <-done }()
+	query := "&accion=EXPORT_STREAM&usuarioId=" + usuario.String() + "&recursoTipo=VM&recursoId=" + ref + "&desde=" + url.QueryEscape(ahora.Add(-time.Hour).Format(time.RFC3339Nano))
+	for _, formato := range []string{"csv", "json"} {
+		respuesta, err := cliente.Get(servidor.URL + "/api/admin/audit/export?format=" + formato + query)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer respuesta.Body.Close()
+		if respuesta.StatusCode != 200 {
+			respuesta.Body.Close()
+			t.Fatalf("status=%d", respuesta.StatusCode)
+		}
+		cantidad := 0
+		if formato == "csv" {
+			lector := csv.NewReader(respuesta.Body)
+			lector.ReuseRecord = true
+			header, err := lector.Read()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.TrimPrefix(header[0], "\xef\xbb\xbf") != "id" || len(header) != 8 {
+				t.Fatal(header)
+			}
+			for {
+				fila, err := lector.Read()
+				if err == io.EOF {
+					break
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				cantidad++
+				if len(fila) != 8 || fila[5] != ref || !strings.Contains(fila[7], "área") {
+					t.Fatalf("CSV privado/corrupto: %v", fila)
+				}
+			}
+		} else {
+			lector := json.NewDecoder(respuesta.Body)
+			token, err := lector.Token()
+			if err != nil || token != json.Delim('[') {
+				t.Fatalf("inicio JSON: %v %v", token, err)
+			}
+			for lector.More() {
+				var fila handlers.ItemAuditoriaResponse
+				if err := lector.Decode(&fila); err != nil {
+					t.Fatal(err)
+				}
+				cantidad++
+				if fila.RecursoID != ref || !strings.Contains(string(fila.Detalle), "área") {
+					t.Fatal("JSON privado/corrupto")
+				}
+			}
+			token, err = lector.Token()
+			if err != nil || token != json.Delim(']') {
+				t.Fatalf("cierre JSON: %v %v", token, err)
+			}
+			var sobrante any
+			if err := lector.Decode(&sobrante); err != io.EOF {
+				t.Fatal("datos extra tras JSON")
+			}
+		}
+		respuesta.Body.Close()
+		if cantidad != total {
+			t.Fatalf("%s: se truncó el dataset: %d", formato, cantidad)
+		}
+		t.Logf("%s: %d filas completas", formato, cantidad)
+	}
+	// Cancelar una descarga real; un pool de una sola conexión detecta cursores
+	// retenidos porque el siguiente Ping quedaría bloqueado.
+	respuesta, err := cliente.Get(servidor.URL + "/api/admin/audit/export?format=json" + query)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.CopyN(io.Discard, respuesta.Body, 64); err != nil {
+		t.Fatal(err)
+	}
+	respuesta.Body.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := sqlDB.PingContext(ctx); err != nil {
+		t.Fatalf("la cancelación retuvo la conexión: %v", err)
+	}
+	if sqlDB.Stats().InUse != 0 {
+		t.Fatal("quedó una conexión en uso")
+	}
+	if peak.Load() > 50_000_000 {
+		t.Fatalf("heap superior a 50 MB: %d", peak.Load())
+	}
+	t.Logf("heap máximo muestreado: %.2f MB", float64(peak.Load())/1e6)
+	// En el contenedor de prueba este valor mide memoria del cgroup, no sólo
+	// heap Go. El límite de Docker detecta además un OOM durante la descarga.
+	if dato, err := os.ReadFile("/sys/fs/cgroup/memory.peak"); err == nil {
+		memoria, err := strconv.ParseUint(strings.TrimSpace(string(dato)), 10, 64)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("memoria máxima del contenedor: %.2f MB", float64(memoria)/1e6)
+		if memoria > 50_000_000 {
+			t.Fatalf("memoria de contenedor superior a 50 MB: %d", memoria)
+		}
 	}
 }

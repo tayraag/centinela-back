@@ -5,9 +5,14 @@ import (
 	"time"
 
 	"context"
+	"encoding/csv"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
+	"strings"
 	"testing"
 
 	handlers "el-centinela/internal/adapters/primary/http"
@@ -184,5 +189,202 @@ func TestRF08ContratoPaginado(t *testing.T) {
 	item := body.Items[0]
 	if item.UsuarioNombre != "admin" || item.RecursoTipo != "VM" || item.RecursoId != "105" || item.Detalle["snapname"] != "pre-deploy" {
 		t.Fatalf("item=%+v", item)
+	}
+}
+
+type cursorExportTest struct {
+	ctx              context.Context
+	cantidad, leidas int
+	cerrado          bool
+	errorLectura     error
+	pausa            time.Duration
+}
+
+func (c *cursorExportTest) Next() bool {
+	if c.ctx.Err() != nil {
+		return false
+	}
+	if c.leidas >= c.cantidad {
+		return false
+	}
+	c.leidas++
+	return true
+}
+func (c *cursorExportTest) Actual() (ports.AuditoriaDTO, error) {
+	if c.pausa > 0 {
+		select {
+		case <-time.After(c.pausa):
+		case <-c.ctx.Done():
+			return ports.AuditoriaDTO{}, c.ctx.Err()
+		}
+	}
+	return ports.AuditoriaDTO{ID: uuid.MustParse("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1"), FechaHora: time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC), Accion: "SNAPSHOT_CREATE", RecursoTipo: "VM", RecursoID: "inst_publica", Resultado: "SUCCESS", Detalles: json.RawMessage(`{"snapname":"área,prueba"}`)}, nil
+}
+func (c *cursorExportTest) Err() error {
+	if err := c.ctx.Err(); err != nil {
+		return err
+	}
+	return c.errorLectura
+}
+func (c *cursorExportTest) Close() error { c.cerrado = true; return nil }
+
+type servicioExportTest struct {
+	ports.AuditService
+	cursor  *cursorExportTest
+	err     error
+	abierto bool
+	filtros ports.FiltrosAuditoria
+}
+
+func (s *servicioExportTest) AbrirExportacion(ctx context.Context, _ uuid.UUID, f ports.FiltrosAuditoria) (ports.CursorAuditoria, error) {
+	s.abierto = true
+	s.filtros = f
+	if s.err != nil {
+		return nil, s.err
+	}
+	s.cursor.ctx = ctx
+	return s.cursor, nil
+}
+func routerExportTest(s *servicioExportTest, rol string) *gin.Engine {
+	r := gin.New()
+	r.Use(func(c *gin.Context) { c.Set(middleware.ContextKeyRol, rol) })
+	r.GET("/api/admin/audit/export", middleware.RequireRole("ADMIN"), handlers.NewAuditHandler(s).ExportarAuditoria)
+	return r
+}
+func TestAuditExportStreamingFormatosYVacio(t *testing.T) {
+	for _, formato := range []string{"csv", "json"} {
+		for _, cantidad := range []int{0, 3, 501} {
+			t.Run(formato+"/"+fmt.Sprint(cantidad), func(t *testing.T) {
+				s := &servicioExportTest{cursor: &cursorExportTest{cantidad: cantidad}}
+				w := httptest.NewRecorder()
+				routerExportTest(s, "ADMIN").ServeHTTP(w, httptest.NewRequest("GET", "/api/admin/audit/export?format="+formato, nil))
+				if w.Code != 200 || !s.cursor.cerrado || s.cursor.leidas != cantidad {
+					t.Fatalf("status=%d cursor=%+v", w.Code, s.cursor)
+				}
+				patron := `attachment; filename="auditoria_centinela_[0-9]{8}_[0-9]{4}\.` + formato + `"`
+				if !regexp.MustCompile(patron).MatchString(w.Header().Get("Content-Disposition")) {
+					t.Fatal(w.Header())
+				}
+				if formato == "csv" {
+					if w.Header().Get("Content-Type") != "text/csv; charset=utf-8" || !strings.HasPrefix(w.Body.String(), "\xef\xbb\xbf") {
+						t.Fatal("CSV sin UTF8/BOM")
+					}
+					rows, err := csv.NewReader(strings.NewReader(strings.TrimPrefix(w.Body.String(), "\xef\xbb\xbf"))).ReadAll()
+					if err != nil || len(rows) != cantidad+1 {
+						t.Fatalf("csv: filas=%d err=%v", len(rows), err)
+					}
+					if strings.Join(rows[0], ",") != "id,fecha_hora,usuario_id,accion,recurso_tipo,recurso_id,resultado,detalle" {
+						t.Fatal(rows[0])
+					}
+					if cantidad > 0 && !strings.Contains(rows[1][7], "área,prueba") {
+						t.Fatal(rows[1])
+					}
+				} else {
+					var rows []map[string]any
+					if err := json.Unmarshal(w.Body.Bytes(), &rows); err != nil || len(rows) != cantidad {
+						t.Fatalf("JSON filas=%d err=%v", len(rows), err)
+					}
+					if w.Header().Get("Content-Type") != "application/json; charset=utf-8" {
+						t.Fatal(w.Header())
+					}
+				}
+			})
+		}
+	}
+}
+func TestAuditExportStreamingPermisosYErrores(t *testing.T) {
+	for _, caso := range []struct {
+		rol, query string
+		status     int
+	}{
+		{"OPERATOR", "", 403}, {"ADMIN", "?format=xml", 400}, {"ADMIN", "?usuarioId=invalido", 400},
+	} {
+		s := &servicioExportTest{cursor: &cursorExportTest{}}
+		w := httptest.NewRecorder()
+		routerExportTest(s, caso.rol).ServeHTTP(w, httptest.NewRequest("GET", "/api/admin/audit/export"+caso.query, nil))
+		if w.Code != caso.status || s.abierto {
+			t.Fatalf("%+v: %d abierto=%v", caso, w.Code, s.abierto)
+		}
+	}
+	s := &servicioExportTest{err: errors.New("base caída")}
+	w := httptest.NewRecorder()
+	routerExportTest(s, "ADMIN").ServeHTTP(w, httptest.NewRequest("GET", "/api/admin/audit/export", nil))
+	if w.Code != 500 || w.Header().Get("Content-Disposition") != "" {
+		t.Fatalf("error pre-stream: %d %v", w.Code, w.Header())
+	}
+	s = &servicioExportTest{cursor: &cursorExportTest{}}
+	w = httptest.NewRecorder()
+	routerExportTest(s, "ADMIN").ServeHTTP(w, httptest.NewRequest("GET", "/api/admin/audit/export?formato=json", nil))
+	if w.Code != 200 || strings.TrimSpace(w.Body.String()) != "[]" {
+		t.Fatal("alias formato roto")
+	}
+}
+
+type writerExportCancel struct {
+	*httptest.ResponseRecorder
+	cancel  context.CancelFunc
+	flushes int
+	cursor  *cursorExportTest
+}
+
+func (w *writerExportCancel) Flush() {
+	w.flushes++
+	if w.flushes == 1 && w.cursor.leidas != 0 {
+		panic("se leyó el dataset antes del primer flush")
+	}
+	if w.flushes == 2 {
+		w.cancel()
+	}
+	w.ResponseRecorder.Flush()
+}
+func TestAuditExportStreamingCancelaYCierraCursor(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s := &servicioExportTest{cursor: &cursorExportTest{cantidad: 60000}}
+	w := &writerExportCancel{ResponseRecorder: httptest.NewRecorder(), cancel: cancel, cursor: s.cursor}
+	req := httptest.NewRequest("GET", "/api/admin/audit/export?format=json", nil).WithContext(ctx)
+	routerExportTest(s, "ADMIN").ServeHTTP(w, req)
+	if !s.cursor.cerrado || s.cursor.leidas != 500 {
+		t.Fatalf("se leyó de más o quedó abierto: %+v", s.cursor)
+	}
+	if strings.HasSuffix(strings.TrimSpace(w.Body.String()), "]") {
+		t.Fatal("una descarga cancelada no debe completarse")
+	}
+}
+func TestAuditExportStreamingFalloParcialAborta(t *testing.T) {
+	s := &servicioExportTest{cursor: &cursorExportTest{cantidad: 1, errorLectura: errors.New("fallo de cursor")}}
+	w := httptest.NewRecorder()
+	defer func() {
+		if r := recover(); r != http.ErrAbortHandler {
+			t.Fatalf("se esperaba abortar transporte, vino %v", r)
+		}
+		if !s.cursor.cerrado {
+			t.Fatal("cursor sin cerrar")
+		}
+		if strings.Contains(w.Body.String(), "EXPORT_ERROR") {
+			t.Fatal("se anexó error JSON al archivo")
+		}
+	}()
+	routerExportTest(s, "ADMIN").ServeHTTP(w, httptest.NewRequest("GET", "/api/admin/audit/export?format=json", nil))
+}
+
+func TestAuditExportStreamingSuperaTimeoutGlobal(t *testing.T) {
+	s := &servicioExportTest{cursor: &cursorExportTest{cantidad: 3, pausa: 40 * time.Millisecond}}
+	server := httptest.NewUnstartedServer(routerExportTest(s, "ADMIN"))
+	server.Config.WriteTimeout = 20 * time.Millisecond
+	server.Start()
+	defer server.Close()
+	cliente := &http.Client{Timeout: 3 * time.Second}
+	response, err := cliente.Get(server.URL + "/api/admin/audit/export?format=json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	var rows []map[string]any
+	if err := json.NewDecoder(response.Body).Decode(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 3 {
+		t.Fatal("el timeout global cortó la descarga")
 	}
 }

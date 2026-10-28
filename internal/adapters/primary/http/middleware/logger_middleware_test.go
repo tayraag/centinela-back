@@ -1,6 +1,8 @@
 package middleware
 
 import (
+	"github.com/gin-gonic/gin"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -54,4 +56,17 @@ func TestSanitizarBody_ArrayYNoJSON(t *testing.T) {
 	if r := sanitizarBody([]byte(`no es json`)); r != "<non-json>" {
 		t.Errorf("No JSON: %s", r)
 	}
+}
+
+func TestLoggerNoAcumulaExportacion(t *testing.T) {
+	r := gin.New()
+	r.Use(RequestLogger())
+	r.GET("/api/admin/audit/export", func(c *gin.Context) {
+		if _, captura := c.Writer.(*bodyLogWriter); captura {
+			t.Fatal("el logger acumula una descarga")
+		}
+		c.Writer.Write([]byte("archivo"))
+		c.Writer.Flush()
+	})
+	r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/api/admin/audit/export", nil))
 }
