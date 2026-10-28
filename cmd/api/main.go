@@ -220,7 +220,13 @@ func main() {
 	if err := router.SetTrustedProxies(proxiesConfiables); err != nil {
 		log.Fatalf("[FATAL] TRUSTED_PROXIES inválida: %v", err)
 	}
-	router.Use(gin.Recovery())             // Recupera de panics sin caer el servidor
+	router.Use(gin.CustomRecovery(func(c *gin.Context, recovered any) {
+		// net/http debe cerrar un stream incompleto, sin anexarle un JSON de error.
+		if err, ok := recovered.(error); ok && errors.Is(err, http.ErrAbortHandler) {
+			panic(recovered)
+		}
+		c.AbortWithStatus(http.StatusInternalServerError)
+	}))
 	router.Use(middleware.RequestLogger()) // Logger conciso personalizado
 	router.Use(middleware.CORS())          // Política CORS: lista blanca de orígenes (ver ALLOWED_ORIGINS en .env)
 	router.Use(middleware.SecurityHeaders())
@@ -402,7 +408,7 @@ func main() {
 		Addr:        ":8080",
 		Handler:     router,
 		ReadTimeout: 15 * time.Second,
-		// Los streams SSE son de larga vida y anulan este deadline en su handler.
+		// SSE y exportaciones administran su deadline en el handler.
 		WriteTimeout: 15 * time.Second,
 		IdleTimeout:  60 * time.Second,
 	}

@@ -348,3 +348,49 @@ func (s *auditServiceImpl) PrepararAuditoriaTarea(t *domain.TareaAsincrona, cier
 		InstanciaNombre: nombre, RecursoTipo: recursoTipo, RecursoID: t.InstanciaID, Upid: t.UpidProxmox, Resultado: resultado, Detalles: detalles,
 	}
 }
+
+// AbrirExportacion conserva los filtros y transforma una sola fila por vez.
+// La ruta HTTP utiliza este cursor; los métodos de bytes siguen disponibles
+// para los consumidores históricos del puerto, con su límite existente.
+func (s *auditServiceImpl) AbrirExportacion(ctx context.Context, orgID uuid.UUID, filtros ports.FiltrosAuditoria) (ports.CursorAuditoria, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	filtros, valido := s.filtroInterno(filtros)
+	if !valido {
+		return cursorAuditoriaVacio{}, nil
+	}
+	repo, ok := s.repo.(ports.AuditStreaming)
+	if !ok {
+		return nil, errors.New("repositorio de auditoría sin soporte de streaming")
+	}
+	cursor, err := repo.AbrirExportacion(ctx, orgID, filtros)
+	if err != nil {
+		return nil, err
+	}
+	return &cursorAuditoriaPublico{CursorAuditoria: cursor, service: s}, nil
+}
+
+type cursorAuditoriaPublico struct {
+	ports.CursorAuditoria
+	service *auditServiceImpl
+}
+
+func (c *cursorAuditoriaPublico) Actual() (ports.AuditoriaDTO, error) {
+	row, err := c.CursorAuditoria.Actual()
+	if err != nil {
+		return ports.AuditoriaDTO{}, err
+	}
+	return c.service.publicos([]ports.AuditoriaDTO{row})[0], nil
+}
+
+type cursorAuditoriaVacio struct{}
+
+func (cursorAuditoriaVacio) Next() bool { return false }
+func (cursorAuditoriaVacio) Actual() (ports.AuditoriaDTO, error) {
+	return ports.AuditoriaDTO{}, errors.New("cursor vacío")
+}
+func (cursorAuditoriaVacio) Err() error   { return nil }
+func (cursorAuditoriaVacio) Close() error { return nil }
+
+var _ ports.AuditStreaming = (*auditServiceImpl)(nil)

@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -329,3 +330,58 @@ func (r *auditRepositoryImpl) registrarAlertaSistema(ctx context.Context, input 
 		return nil
 	})
 }
+
+// AbrirExportacion no impone un límite de filas ni materializa el dataset.
+// database/sql y pgx entregan filas incrementalmente; WithContext cancela la
+// consulta al desconectar el cliente y Close devuelve la conexión al pool.
+func (r *auditRepositoryImpl) AbrirExportacion(ctx context.Context, orgID uuid.UUID, filtros ports.FiltrosAuditoria) (ports.CursorAuditoria, error) {
+	query := r.db.WithContext(ctx).Table("auditoria a").
+		Select("a.*, CASE WHEN a.usuario_id IS NULL THEN '[sistema]' ELSE u.nombre_completo END AS nombre_completo").
+		Joins("LEFT JOIN usuarios u ON u.id = a.usuario_id").
+		Where("(a.organizacion_id = ? OR (a.organizacion_id IS NULL AND u.organizacion_id = ?))", orgID, orgID)
+	rows, err := aplicarFiltros(query, filtros).Order("a.fecha_hora DESC, a.id DESC").Rows()
+	if err != nil {
+		return nil, fmt.Errorf("error al abrir cursor de auditoría: %w", err)
+	}
+	return &cursorAuditoriaSQL{rows: rows, db: r.db, ctx: ctx}, nil
+}
+
+type cursorAuditoriaSQL struct {
+	rows *sql.Rows
+	db   *gorm.DB
+	ctx  context.Context
+}
+
+func (c *cursorAuditoriaSQL) Next() bool { return c.ctx.Err() == nil && c.rows.Next() }
+func (c *cursorAuditoriaSQL) Err() error {
+	if err := c.ctx.Err(); err != nil {
+		return err
+	}
+	return c.rows.Err()
+}
+func (c *cursorAuditoriaSQL) Close() error { return c.rows.Close() }
+func (c *cursorAuditoriaSQL) Actual() (ports.AuditoriaDTO, error) {
+	if err := c.ctx.Err(); err != nil {
+		return ports.AuditoriaDTO{}, err
+	}
+	var row struct {
+		domain.Auditoria
+		NombreCompleto string `gorm:"column:nombre_completo"`
+	}
+	if err := c.db.ScanRows(c.rows, &row); err != nil {
+		return ports.AuditoriaDTO{}, err
+	}
+	nombre := row.NombreCompleto
+	if nombre == "" {
+		nombre = "[usuario eliminado]"
+	}
+	var detalles json.RawMessage
+	if row.Detalles != nil {
+		detalles = json.RawMessage(*row.Detalles)
+	}
+	return ports.AuditoriaDTO{ID: row.ID, UsuarioID: row.UsuarioID, NombreUsuario: nombre, FechaHora: row.FechaHora,
+		Accion: row.Accion, InstanciaID: row.InstanciaID, InstanciaNombre: row.InstanciaNombre,
+		RecursoTipo: row.RecursoTipo, RecursoID: row.RecursoID, Resultado: row.Resultado, Detalles: detalles}, nil
+}
+
+var _ ports.AuditStreaming = (*auditRepositoryImpl)(nil)

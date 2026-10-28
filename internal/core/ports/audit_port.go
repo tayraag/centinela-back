@@ -149,6 +149,21 @@ const (
 // Puerto: Repositorio de Auditoría
 // ==========================================
 
+// CursorAuditoria mantiene una lectura incremental. Siempre debe cerrarse,
+// incluso si el consumidor cancela o falla al escribir la descarga.
+type CursorAuditoria interface {
+	Next() bool
+	Actual() (AuditoriaDTO, error)
+	Err() error
+	Close() error
+}
+
+// AuditStreaming separa la capacidad de streaming del contrato histórico que
+// devuelve slices/bytes. Servicio y repositorio implementan esta capacidad.
+type AuditStreaming interface {
+	AbrirExportacion(context.Context, uuid.UUID, FiltrosAuditoria) (CursorAuditoria, error)
+}
+
 // AuditRepository define el contrato de persistencia para auditoría (append-only).
 // No expone métodos de actualización ni borrado.
 type AuditRepository interface {
@@ -159,7 +174,7 @@ type AuditRepository interface {
 	// Filtra por orgID para aislar los datos entre organizaciones.
 	Listar(ctx context.Context, orgID uuid.UUID, filtros FiltrosAuditoria, opciones OpcionesAuditoria) (*PaginaAuditoria, error)
 
-	// ExportarRegistros devuelve todos los registros que cumplen los filtros (sin paginación).
+	// ExportarRegistros es el contrato histórico en memoria; el endpoint HTTP usa AuditStreaming.
 	// Tiene un límite interno de 100.000 filas para proteger la memoria.
 	ExportarRegistros(ctx context.Context, orgID uuid.UUID, filtros FiltrosAuditoria) ([]AuditoriaDTO, error)
 }
@@ -185,10 +200,10 @@ type AuditService interface {
 	// ListarAuditoria devuelve el log de auditoría paginado con filtros.
 	ListarAuditoria(ctx context.Context, orgID uuid.UUID, filtros FiltrosAuditoria, opciones OpcionesAuditoria) (*PaginaAuditoria, error)
 
-	// ExportarCSV construye y devuelve el archivo CSV como bytes.
+	// ExportarCSV conserva el contrato histórico en memoria. HTTP usa AuditStreaming.
 	ExportarCSV(ctx context.Context, orgID uuid.UUID, filtros FiltrosAuditoria) ([]byte, error)
 
-	// ExportarJSON construye y devuelve el archivo JSON como bytes.
+	// ExportarJSON conserva el contrato histórico en memoria. HTTP usa AuditStreaming.
 	ExportarJSON(ctx context.Context, orgID uuid.UUID, filtros FiltrosAuditoria) ([]byte, error)
 }
 

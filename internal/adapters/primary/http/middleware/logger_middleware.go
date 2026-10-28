@@ -29,10 +29,10 @@ func RequestLogger() gin.HandlerFunc {
 			bodySnippet = sanitizarBody(bodyBytes)
 		}
 
-		// El stream de eventos (SSE) queda abierto horas: no se captura su cuerpo
-		// para no acumularlo en memoria. Solo se loguea la apertura y el cierre.
-		if c.Request.URL.Path == RutaEventos {
-			log.Printf("→ %s %s (stream SSE)", c.Request.Method, c.Request.URL.Path)
+		// SSE y exportaciones no capturan el cuerpo: acumular una descarga en el
+		// logger anularía el límite de memoria del streaming. Sólo apertura/cierre.
+		if c.Request.URL.Path == RutaEventos || (c.Request.Method == "GET" && c.Request.URL.Path == "/api/admin/audit/export") {
+			log.Printf("→ %s %s (stream)", c.Request.Method, c.Request.URL.Path)
 			c.Next()
 			log.Printf("%s %d | %s | stream cerrado", statusEmoji(c.Writer.Status()), c.Writer.Status(), time.Since(start).Round(time.Second))
 			return

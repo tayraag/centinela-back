@@ -1,8 +1,14 @@
 package http
 
 import (
+	"bufio"
+	"context"
+	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -107,10 +113,11 @@ func (h *AuditHandler) ListarAuditoria(c *gin.Context) {
 // GET /api/admin/audit/export
 // ==========================================
 
-// ExportarAuditoria exporta el log de auditoría en CSV o JSON según el parámetro `formato`.
+// ExportarAuditoria transmite CSV/JSON según format (formato es alias anterior).
 //
 // @Summary      Exportar log de auditoría
-// @Description  Solo ADMIN; OPERATOR recibe 403. Exporta hasta 100000 registros con los filtros y rango temporal del listado, sin paginación. formato=json devuelve JSON; cualquier otro valor devuelve CSV. Incluye alertas de sistema con alcance de la organización; las históricas sin alcance quedan fuera. Los identificadores de VM/LXC se exportan como referencias públicas y detalles es un objeto JSON.
+// @Description  Solo ADMIN; OPERATOR recibe 403. Transmite el reporte sin límite fijo de filas con un cursor SQL, buffer de 32 KiB y Flush periódico cada 500 registros; no materializa el dataset ni el archivo completo. La cancelación del cliente cierra el cursor. Mantiene los filtros, el rango temporal y el alcance organizacional del listado; las alertas históricas sin alcance quedan fuera.
+// @Description  format=csv (predeterminado) o json; formato es alias y format prevalece. Otro valor devuelve 400 INVALID_QUERY. Archivo auditoria_centinela_YYYYMMDD_HHMM.csv/json. CSV UTF-8 con BOM y columnas id,fecha_hora,usuario_id,accion,recurso_tipo,recurso_id,resultado,detalle. JSON es un array incremental con los campos públicos y sus aliases RF-08. Una falla después de iniciar la descarga interrumpe la conexión; se debe descartar el archivo parcial.
 // @Tags         Auditoría (Admin)
 // @Produce      text/csv
 // @Produce      application/json
@@ -124,44 +131,166 @@ func (h *AuditHandler) ListarAuditoria(c *gin.Context) {
 // @Param        recursoTipo query string false "Tipo del recurso" Enums(VM,LXC,HOST,USER)
 // @Param        recursoId query string false "Referencia pública para VM/LXC; identificador propio para HOST/USER"
 // @Param        excluirAccion query []string false "Acciones a excluir" collectionFormat(multi)
-// @Param        formato query string false "Formato de descarga; cualquier valor distinto de json produce CSV" default(csv)
+// @Param        format query string false "Formato de descarga incremental" Enums(csv,json) default(csv)
+// @Param        formato query string false "Alias anterior de format; format prevalece" Enums(csv,json)
 // @Failure      400 {object} ErrorResponse "INVALID_QUERY"
 // @Success      200 {file} binary "Archivo CSV o JSON descargable"
+// @Failure      500 {object} ErrorResponse "EXPORT_ERROR antes de iniciar la descarga"
 // @Failure      401 {object} map[string]string
 // @Failure      403 {object} map[string]string
 // @Router       /admin/audit/export [get]
 func (h *AuditHandler) ExportarAuditoria(c *gin.Context) {
-	orgID := extraerOrgID(c)
 	filtros := parsearFiltrosAuditoria(c)
 	opciones := parsearOpcionesAuditoria(c)
 	if err := validarConsultaAuditoria(c, &filtros, &opciones); err != nil {
 		SendError(c, http.StatusBadRequest, "INVALID_QUERY", err.Error())
 		return
 	}
-	formato := c.DefaultQuery("formato", "csv")
-	fecha := time.Now().Format("2006-01-02")
-
-	switch formato {
-	case "json":
-		data, err := h.service.ExportarJSON(c.Request.Context(), orgID, filtros)
-		if err != nil {
-			SendError(c, http.StatusInternalServerError, "EXPORT_ERROR", "Error al exportar auditoría en JSON.")
-			return
-		}
-		filename := fmt.Sprintf("auditoria_%s.json", fecha)
-		c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
-		c.Data(http.StatusOK, "application/json", data)
-
-	default: // "csv"
-		data, err := h.service.ExportarCSV(c.Request.Context(), orgID, filtros)
-		if err != nil {
-			SendError(c, http.StatusInternalServerError, "EXPORT_ERROR", "Error al exportar auditoría en CSV.")
-			return
-		}
-		filename := fmt.Sprintf("auditoria_%s.csv", fecha)
-		c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
-		c.Data(http.StatusOK, "text/csv; charset=utf-8", data)
+	formato, ok := c.GetQuery("format")
+	if !ok {
+		formato = c.DefaultQuery("formato", "csv")
 	}
+	if formato != "csv" && formato != "json" {
+		SendError(c, http.StatusBadRequest, "INVALID_QUERY", "format debe ser csv o json")
+		return
+	}
+	exportador, ok := h.service.(ports.AuditStreaming)
+	if !ok {
+		SendError(c, http.StatusInternalServerError, "EXPORT_ERROR", "Exportación incremental no disponible.")
+		return
+	}
+	ctx, cancel := context.WithCancel(c.Request.Context())
+	defer cancel()
+	cursor, err := exportador.AbrirExportacion(ctx, extraerOrgID(c), filtros)
+	if err != nil {
+		SendError(c, http.StatusInternalServerError, "EXPORT_ERROR", "Error al abrir la exportación de auditoría.")
+		return
+	}
+	defer cursor.Close()
+	controller := http.NewResponseController(c.Writer)
+	// Quitar el deadline absoluto de 15s; cada escritura tendrá un límite de
+	// inactividad de 30s. Las demás rutas conservan el timeout del servidor.
+	if err = controller.SetWriteDeadline(time.Time{}); err != nil && !errors.Is(err, http.ErrNotSupported) {
+		SendError(c, http.StatusInternalServerError, "EXPORT_ERROR", "No se pudo iniciar la descarga.")
+		return
+	}
+	defer controller.SetWriteDeadline(time.Time{})
+	c.Header("Content-Type", map[string]string{"csv": "text/csv; charset=utf-8", "json": "application/json; charset=utf-8"}[formato])
+	c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="auditoria_centinela_%s.%s"`, time.Now().Format("20060102_1504"), formato))
+	c.Header("Cache-Control", "no-store")
+	c.Header("X-Accel-Buffering", "no")
+	if err = escribirAuditoriaStreaming(ctx, c.Writer, controller, cursor, formato); err != nil {
+		cancel()
+		if c.Request.Context().Err() == nil {
+			log.Printf("[AUDIT EXPORT] descarga interrumpida: %v", err)
+			// La cabecera ya se envió: cerrar el transporte evita presentar un CSV
+			// truncado como una descarga completa. Recovery deja pasar este sentinel.
+			panic(http.ErrAbortHandler)
+		}
+	}
+}
+
+// escrituraAuditoria renueva el límite sólo cuando hay datos para enviar:
+// admite reportes largos y corta clientes que dejan de leer.
+type escrituraAuditoria struct {
+	writer     io.Writer
+	controller *http.ResponseController
+}
+
+func (w escrituraAuditoria) Write(p []byte) (int, error) {
+	if err := w.controller.SetWriteDeadline(time.Now().Add(30 * time.Second)); err != nil && !errors.Is(err, http.ErrNotSupported) {
+		return 0, err
+	}
+	return w.writer.Write(p)
+}
+
+func escribirAuditoriaStreaming(ctx context.Context, writer io.Writer, controller *http.ResponseController, cursor ports.CursorAuditoria, formato string) error {
+	buffer := bufio.NewWriterSize(escrituraAuditoria{writer: writer, controller: controller}, 32*1024)
+	csvWriter := csv.NewWriter(buffer)
+	csvWriter.UseCRLF = true
+	jsonWriter := json.NewEncoder(buffer)
+	flush := func() error {
+		if formato == "csv" {
+			csvWriter.Flush()
+			if err := csvWriter.Error(); err != nil {
+				return err
+			}
+		}
+		if err := buffer.Flush(); err != nil {
+			return err
+		}
+		if err := controller.SetWriteDeadline(time.Now().Add(30 * time.Second)); err != nil && !errors.Is(err, http.ErrNotSupported) {
+			return err
+		}
+		return controller.Flush()
+	}
+	if formato == "csv" {
+		if _, err := buffer.WriteString("\xef\xbb\xbf"); err != nil {
+			return err
+		}
+		if err := csvWriter.Write([]string{"id", "fecha_hora", "usuario_id", "accion", "recurso_tipo", "recurso_id", "resultado", "detalle"}); err != nil {
+			return err
+		}
+	} else {
+		if _, err := buffer.WriteString("["); err != nil {
+			return err
+		}
+	}
+	if err := flush(); err != nil {
+		return err
+	}
+	cantidad := 0
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if !cursor.Next() {
+			break
+		}
+		row, err := cursor.Actual()
+		if err != nil {
+			return err
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if formato == "csv" {
+			usuario := ""
+			if row.UsuarioID != nil {
+				usuario = row.UsuarioID.String()
+			}
+			if err := csvWriter.Write([]string{row.ID.String(), row.FechaHora.Format(time.RFC3339Nano), usuario, row.Accion, row.RecursoTipo, row.RecursoID, row.Resultado, string(row.Detalles)}); err != nil {
+				return err
+			}
+		} else {
+			if cantidad > 0 {
+				if err := buffer.WriteByte(','); err != nil {
+					return err
+				}
+			}
+			if err := jsonWriter.Encode(ItemAuditoriaResponse{AuditoriaDTO: row, UsuarioNombre: row.NombreUsuario, RecursoTipo: row.RecursoTipo, RecursoID: row.RecursoID, Detalle: row.Detalles}); err != nil {
+				return err
+			}
+		}
+		cantidad++
+		if cantidad%500 == 0 {
+			if err := flush(); err != nil {
+				return err
+			}
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := cursor.Err(); err != nil {
+		return err
+	}
+	if formato == "json" {
+		if err := buffer.WriteByte(']'); err != nil {
+			return err
+		}
+	}
+	return flush()
 }
 
 // ==========================================
