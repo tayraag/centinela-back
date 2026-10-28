@@ -562,7 +562,7 @@ centinela-back/
  | POST   | `/api/admin/users/:id/2fa/reset`      | `RequireAuth` + `RequireRole("ADMIN")` | Resetear TOTP del usuario                         |
  | POST   | `/api/admin/users/:id/password/reset` | `RequireAuth` + `RequireRole("ADMIN")` | Nueva contraseña temporal                         |
  | GET    | `/api/admin/audit`                    | `RequireAuth` + `RequireRole("ADMIN")` | Registro global de auditoría particionada (RF-08) |
- | GET    | `/api/admin/audit/export`             | `RequireAuth` + `RequireRole("ADMIN")` | Exportación CSV/JSON de auditoría (formato=csv o json) |
+ | GET    | `/api/admin/audit/export`             | `RequireAuth` + `RequireRole("ADMIN")` | Streaming CSV/JSON (format=csv o json; formato es alias) |
  | GET    | `/api/account/profile`                | `RequireAuth`                          | Perfil propio                                     |
  | PUT    | `/api/account/profile`                | `RequireAuth`                          | Actualizar nombre/email propios                   |
  | PUT    | `/api/account/password`               | `RequireAuth`                          | Cambiar contraseña y revocar las demás sesiones   |

@@ -398,7 +398,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Solo ADMIN; OPERATOR recibe 403. Exporta hasta 100000 registros con los filtros y rango temporal del listado, sin paginación. formato=json devuelve JSON; cualquier otro valor devuelve CSV. Incluye alertas de sistema con alcance de la organización; las históricas sin alcance quedan fuera. Los identificadores de VM/LXC se exportan como referencias públicas y detalles es un objeto JSON.",
+                "description": "Solo ADMIN; OPERATOR recibe 403. Transmite el reporte sin límite fijo de filas con un cursor SQL, buffer de 32 KiB y Flush periódico cada 500 registros; no materializa el dataset ni el archivo completo. La cancelación del cliente cierra el cursor. Mantiene los filtros, el rango temporal y el alcance organizacional del listado; las alertas históricas sin alcance quedan fuera.\nformat=csv (predeterminado) o json; formato es alias y format prevalece. Otro valor devuelve 400 INVALID_QUERY. Archivo auditoria_centinela_YYYYMMDD_HHMM.csv/json. CSV UTF-8 con BOM y columnas id,fecha_hora,usuario_id,accion,recurso_tipo,recurso_id,resultado,detalle. JSON es un array incremental con los campos públicos y sus aliases RF-08. Una falla después de iniciar la descarga interrumpe la conexión; se debe descartar el archivo parcial.",
                 "produces": [
                     "text/csv",
                     "application/json"
@@ -473,9 +473,23 @@
                         "in": "query"
                     },
                     {
+                        "enum": [
+                            "csv",
+                            "json"
+                        ],
                         "type": "string",
                         "default": "csv",
-                        "description": "Formato de descarga; cualquier valor distinto de json produce CSV",
+                        "description": "Formato de descarga incremental",
+                        "name": "format",
+                        "in": "query"
+                    },
+                    {
+                        "enum": [
+                            "csv",
+                            "json"
+                        ],
+                        "type": "string",
+                        "description": "Alias anterior de format; format prevalece",
                         "name": "formato",
                         "in": "query"
                     }
@@ -509,6 +523,12 @@
                             "additionalProperties": {
                                 "type": "string"
                             }
+                        }
+                    },
+                    "500": {
+                        "description": "EXPORT_ERROR antes de iniciar la descarga",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
                         }
                     }
                 }
