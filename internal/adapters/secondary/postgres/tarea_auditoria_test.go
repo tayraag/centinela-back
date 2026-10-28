@@ -49,7 +49,7 @@ func baseRF08(t *testing.T) (*gorm.DB, uuid.UUID, uuid.UUID) {
 		`CREATE TABLE usuarios (id uuid PRIMARY KEY, organizacion_id uuid NOT NULL, nombre_completo text)`,
 		`CREATE TABLE permisos_instancia (id uuid PRIMARY KEY DEFAULT public.uuid_generate_v7(), usuario_id uuid NOT NULL REFERENCES usuarios(id), vmid_proxmox integer NOT NULL, nivel_acceso varchar(30) NOT NULL, UNIQUE (usuario_id, vmid_proxmox))`,
 		`CREATE TABLE tareas_asincronas (id uuid PRIMARY KEY, usuario_id uuid NOT NULL REFERENCES usuarios(id), upid_proxmox varchar(255) UNIQUE NOT NULL, instancia_id varchar(100), accion varchar(100), estado varchar(50) NOT NULL, metadatos jsonb, fecha_creacion timestamptz NOT NULL)`,
-		`CREATE TABLE auditoria (id uuid NOT NULL DEFAULT public.uuid_generate_v7(), usuario_id uuid REFERENCES usuarios(id), accion varchar(100) NOT NULL, instancia_id varchar(100), instancia_nombre varchar(255), resource_type varchar(30), resource_id varchar(100), upid varchar(255), resultado varchar(50) NOT NULL, detalles jsonb, fecha_hora timestamptz NOT NULL, PRIMARY KEY (id, fecha_hora)) PARTITION BY RANGE (fecha_hora)`,
+		`CREATE TABLE auditoria (organizacion_id uuid, id uuid NOT NULL DEFAULT public.uuid_generate_v7(), usuario_id uuid REFERENCES usuarios(id), accion varchar(100) NOT NULL, instancia_id varchar(100), instancia_nombre varchar(255), resource_type varchar(30), resource_id varchar(100), upid varchar(255), resultado varchar(50) NOT NULL, detalles jsonb, fecha_hora timestamptz NOT NULL, PRIMARY KEY (id, fecha_hora)) PARTITION BY RANGE (fecha_hora)`,
 		`CREATE TABLE auditoria_actual PARTITION OF auditoria FOR VALUES FROM ('2020-01-01') TO ('2100-01-01')`,
 	} {
 		if err := db.Exec(ddl).Error; err != nil {

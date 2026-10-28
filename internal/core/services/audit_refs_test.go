@@ -125,3 +125,43 @@ func TestAuditoria_SinReferenciasNoExponeVmids(t *testing.T) {
 		t.Errorf("Sin refs no debe salir ningún VMID: %v\n%s", err, datos)
 	}
 }
+
+func TestAuditoria_FiltroRecursoPublicoListadoYExportacion(t *testing.T) {
+	refs := refsAuditoria(t)
+	ref, _ := refs.OfuscarVMID(110)
+	for _, tipo := range []string{ports.RecursoVM, ports.RecursoLXC, ""} {
+		for _, operacion := range []string{"listado", "JSON", "CSV"} {
+			repo := auditoriaConVmids()
+			svc := services.NewAuditService(repo, refs)
+			f := ports.FiltrosAuditoria{RecursoTipo: tipo, RecursoID: ref}
+			var err error
+			switch operacion {
+			case "listado":
+				_, err = svc.ListarAuditoria(context.Background(), uuid.New(), f, ports.OpcionesAuditoria{})
+			case "JSON":
+				_, err = svc.ExportarJSON(context.Background(), uuid.New(), f)
+			case "CSV":
+				_, err = svc.ExportarCSV(context.Background(), uuid.New(), f)
+			}
+			if err != nil || !repo.consulto || repo.filtros.RecursoID != "110" {
+				t.Fatalf("%s/%s: filtro=%+v err=%v", tipo, operacion, repo.filtros, err)
+			}
+		}
+	}
+	for _, tipo := range []string{ports.RecursoVM, ports.RecursoLXC} {
+		repo := auditoriaConVmids()
+		svc := services.NewAuditService(repo, refs)
+		_, err := svc.ListarAuditoria(context.Background(), uuid.New(), ports.FiltrosAuditoria{RecursoTipo: tipo, RecursoID: "110"}, ports.OpcionesAuditoria{})
+		if err != nil || repo.consulto {
+			t.Fatal("el VMID crudo no es una referencia pública válida")
+		}
+	}
+	for tipo, id := range map[string]string{"HOST": "host", "USER": uuid.NewString()} {
+		repo := auditoriaConVmids()
+		svc := services.NewAuditService(repo, refs)
+		_, err := svc.ListarAuditoria(context.Background(), uuid.New(), ports.FiltrosAuditoria{RecursoTipo: tipo, RecursoID: id}, ports.OpcionesAuditoria{})
+		if err != nil || repo.filtros.RecursoID != id {
+			t.Fatal("se alteró un identificador ajeno a VM/LXC")
+		}
+	}
+}

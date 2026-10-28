@@ -1,6 +1,8 @@
 package services_test
 
 import (
+	"strings"
+
 	"context"
 	"encoding/json"
 	"errors"
@@ -244,5 +246,62 @@ func TestAuditService_CreacionGeneraContratoRF08(t *testing.T) {
 	}
 	if fin.Resultado != ports.ResultadoSuccess || fin.Detalles["exitstatus"] != "OK" || fin.Detalles["duracionSegundos"] != float64(3) {
 		t.Fatalf("desenlace de creación incompleto: %+v", fin)
+	}
+}
+
+func TestRF08RegistrarRedactaSinMutar(t *testing.T) {
+	repo := newMockAuditRepository()
+	svc := services.NewAuditService(repo)
+	detalles := map[string]any{"token": "oculto", "nested": map[string]any{"password": "oculto", "cores": 4}}
+	if err := svc.RegistrarEstricto(context.Background(), ports.RegistrarAuditoriaInput{Accion: ports.AccionConfigurarInstancia, Detalles: detalles}); err != nil {
+		t.Fatal(err)
+	}
+	if detalles["token"] != "oculto" || detalles["nested"].(map[string]any)["password"] != "oculto" {
+		t.Fatal("mutación del llamador")
+	}
+	if repo.ultimoInput.Detalles["token"] != "[REDACTED]" {
+		t.Fatal("secreto sin redactar")
+	}
+}
+
+func TestRF08SnapshotAccionesCanonicas(t *testing.T) {
+	s := services.NewAuditService(nil)
+	meta := `{"snapname":"pre-deploy","resource_type":"lxc"}`
+	for accion, esperada := range map[string]string{ports.AccionTareaSnapshot: "SNAPSHOT_CREATE", ports.AccionTareaRollbackSnapshot: "SNAPSHOT_ROLLBACK", ports.AccionTareaDeleteSnapshot: "SNAPSHOT_DELETE"} {
+		for _, cierre := range []map[string]any{nil, {"exitstatus": "OK"}, {"exitstatus": "ERROR", "motivo": "PROXMOX_ERROR"}} {
+			tarea := &domain.TareaAsincrona{Accion: accion, InstanciaID: "105", Metadatos: &meta, FechaCreacion: time.Now().Add(-4 * time.Second)}
+			input := s.PrepararAuditoriaTarea(tarea, cierre, time.Now())
+			if input.Accion != esperada || input.RecursoTipo != "LXC" || input.RecursoID != "105" {
+				t.Fatalf("input=%+v", input)
+			}
+			esperado := ports.ResultadoPendiente
+			if cierre != nil {
+				esperado = ports.ResultadoSuccess
+				if cierre["motivo"] != nil {
+					esperado = ports.ResultadoFailed
+				}
+			}
+			if input.Resultado != esperado || input.Detalles["snapname"] != "pre-deploy" {
+				b, _ := json.Marshal(input)
+				t.Fatal(string(b))
+			}
+		}
+	}
+}
+
+func TestDetallesAuditoriaSeguros(t *testing.T) {
+	original := map[string]any{"password": "privado", "datos": json.RawMessage(`{"array":[{"API_KEY":"privado","snapname":"pre-deploy"}]}`)}
+	raw, err := ports.DetallesAuditoriaSeguros(original)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "privado") || !strings.Contains(string(raw), "pre-deploy") {
+		t.Fatal(string(raw))
+	}
+	if original["password"] != "privado" {
+		t.Fatal("mutó el input")
+	}
+	if _, err := ports.DetallesAuditoriaSeguros(map[string]any{"x": make(chan int)}); err == nil {
+		t.Fatal("se aceptó metadata inválida")
 	}
 }

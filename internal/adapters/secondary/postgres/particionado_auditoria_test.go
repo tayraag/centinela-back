@@ -1,6 +1,11 @@
 package postgres
 
 import (
+	"el-centinela/internal/core/ports"
+	pg "gorm.io/driver/postgres"
+	"time"
+
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -276,9 +281,9 @@ func TestMigracionParticionadoAuditoria_InsercionesYPruning(t *testing.T) {
 	}
 }
 
-func explicarConsulta(t *testing.T, db *gorm.DB, consulta string) string {
+func explicarConsulta(t *testing.T, db *gorm.DB, consulta string, args ...any) string {
 	t.Helper()
-	filas, err := db.Raw(consulta).Rows()
+	filas, err := db.Raw(consulta, args...).Rows()
 	if err != nil {
 		t.Fatalf("EXPLAIN ANALYZE falló: %v", err)
 	}
@@ -296,4 +301,111 @@ func explicarConsulta(t *testing.T, db *gorm.DB, consulta string) string {
 		t.Fatalf("error al recorrer EXPLAIN ANALYZE: %v", err)
 	}
 	return strings.Join(lineas, "\n")
+}
+
+func TestRF08FiltrosSQLPruning(t *testing.T) {
+	db, err := gorm.Open(pg.New(pg.Config{DSN: "host=localhost user=test dbname=test sslmode=disable"}), &gorm.Config{DryRun: true, DisableAutomaticPing: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	desde := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	hasta := time.Date(2026, 10, 20, 10, 0, 0, 123, time.UTC)
+	for _, f := range []ports.FiltrosAuditoria{{}, {Desde: &desde, Hasta: &hasta, RecursoTipo: "VM", RecursoID: "105", Accion: "SNAPSHOT_CREATE", Resultado: "SUCCESS"}} {
+		q := aplicarFiltros(db.Table("auditoria a"), f).Find(&[]map[string]any{})
+		sql := q.Statement.SQL.String()
+		if !strings.Contains(sql, "a.fecha_hora >= $") {
+			t.Fatalf("sin pruning: %s", sql)
+		}
+		if f.Hasta != nil {
+			for _, col := range []string{"a.fecha_hora <= $", "a.resource_type = $", "a.resource_id = $", "a.accion = $", "a.resultado = $"} {
+				if !strings.Contains(sql, col) {
+					t.Fatalf("falta %s en %s", col, sql)
+				}
+			}
+			encontrado := false
+			for _, v := range q.Statement.Vars {
+				if fecha, ok := v.(*time.Time); ok && fecha.Equal(hasta) {
+					encontrado = true
+				}
+			}
+			if !encontrado {
+				t.Fatalf("se alteró el instante hasta: %v", q.Statement.Vars)
+			}
+		}
+	}
+}
+
+// Activación explícita: AUDIT_PERF_TEST=1 y DB_DSN de una base de pruebas.
+// Todo el fixture vive en un esquema transaccional que se revierte.
+func TestRF08VolumenPaginacionYPruning(t *testing.T) {
+	if os.Getenv("AUDIT_PERF_TEST") != "1" {
+		t.Skip("requiere AUDIT_PERF_TEST=1 para generar un millón de eventos")
+	}
+	db := conectarDBTest(t)
+	err := db.Connection(func(conn *gorm.DB) error {
+		tx := conn.Begin()
+		if tx.Error != nil {
+			return tx.Error
+		}
+		defer tx.Rollback()
+		esquema := "rf08_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+		if err := tx.Exec("CREATE SCHEMA " + esquema).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec("SET LOCAL search_path TO " + esquema).Error; err != nil {
+			return err
+		}
+		ddl := `CREATE TABLE usuarios (id uuid PRIMARY KEY, organizacion_id uuid, nombre_completo text);
+  INSERT INTO usuarios VALUES ('00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000002','admin');
+  CREATE TABLE auditoria (organizacion_id uuid,id uuid,fecha_hora timestamptz,usuario_id uuid,accion text,resource_type text,resource_id text,resultado text,detalles jsonb) PARTITION BY RANGE(fecha_hora);
+  CREATE TABLE auditoria_2026_q3 PARTITION OF auditoria FOR VALUES FROM ('2026-07-01T00:00:00Z') TO ('2026-10-01T00:00:00Z');
+  CREATE TABLE auditoria_2026_q4 PARTITION OF auditoria FOR VALUES FROM ('2026-10-01T00:00:00Z') TO ('2027-01-01T00:00:00Z');
+  CREATE INDEX idx_auditoria_query ON auditoria(fecha_hora DESC,usuario_id,accion);
+  INSERT INTO auditoria (id,fecha_hora,usuario_id,accion,resource_type,resource_id,resultado,detalles) SELECT md5(n::text)::uuid,'2026-07-01T00:00:00Z'::timestamptz+(n%184)*interval '1 day'+(n%86400)*interval '1 second',
+  '00000000-0000-0000-0000-000000000001'::uuid,CASE WHEN n%4=0 THEN 'SNAPSHOT_CREATE' ELSE 'CONFIG_UPDATED' END,'VM',(n%200)::text,'SUCCESS','{}'::jsonb
+  FROM generate_series(1,1000000) n;
+  ANALYZE auditoria; ANALYZE usuarios;`
+		if err := tx.Exec(ddl).Error; err != nil {
+			return err
+		}
+		desde := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+		hasta := time.Date(2026, 10, 21, 0, 0, 0, 0, time.UTC).Add(-time.Microsecond)
+		usuario := uuid.MustParse("00000000-0000-0000-0000-000000000001")
+		org := uuid.MustParse("00000000-0000-0000-0000-000000000002")
+		filtros := ports.FiltrosAuditoria{Desde: &desde, Hasta: &hasta, UsuarioID: &usuario, Accion: ports.AccionCrearSnapshot, RecursoTipo: "VM", RecursoID: "100", Resultado: ports.ResultadoSuccess}
+		opciones := ports.OpcionesAuditoria{Pagina: 2, TamanoPag: 25, OrdenarPor: "fechaHora", Direccion: "desc"}
+		repo := NewAuditRepository(tx)
+		// Calentar caches antes de medir; la medición incluye COUNT y SELECT reales.
+		if _, err := repo.Listar(context.Background(), org, filtros, opciones); err != nil {
+			return err
+		}
+		inicio := time.Now()
+		pagina, err := repo.Listar(context.Background(), org, filtros, opciones)
+		duracion := time.Since(inicio)
+		if err != nil {
+			return err
+		}
+		if pagina.Total == 0 || len(pagina.Items) != 25 {
+			return fmt.Errorf("fixture vacío o página inválida: %+v", pagina)
+		}
+		// Conservar parámetros y precisión temporal: ToSQL interpola las fechas
+		// para logging y puede perder la zona al volver a ejecutar ese texto.
+		consulta := aplicarFiltros(tx.Session(&gorm.Session{DryRun: true}).Table("auditoria a").
+			Select("a.*, CASE WHEN a.usuario_id IS NULL THEN '[sistema]' ELSE u.nombre_completo END AS nombre_completo").
+			Joins("LEFT JOIN usuarios u ON u.id = a.usuario_id").
+			Where("(a.organizacion_id = ? OR (a.organizacion_id IS NULL AND u.organizacion_id = ?))", org, org), filtros).
+			Order("a.fecha_hora DESC, a.id DESC").Limit(25).Offset(25).Find(&[]map[string]any{}).Statement
+		plan := explicarConsulta(t, tx, "EXPLAIN (ANALYZE, BUFFERS) "+consulta.SQL.String(), consulta.Vars...)
+		t.Logf("COUNT + SELECT: %s; plan: %s", duracion, plan)
+		if !strings.Contains(plan, "auditoria_2026_q4") || strings.Contains(plan, "auditoria_2026_q3") {
+			return fmt.Errorf("pruning incorrecto: %s", plan)
+		}
+		if duracion >= 150*time.Millisecond {
+			return fmt.Errorf("consulta excede 150 ms: %s", duracion)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 }

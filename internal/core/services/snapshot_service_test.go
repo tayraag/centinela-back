@@ -201,7 +201,7 @@ func TestSnapshots_FallaDeProxmoxSeAudita(t *testing.T) {
 		t.Fatalf("Se esperaba el error de Proxmox sin tarea registrada: %v %+v", err, seg)
 	}
 	registro := audit.buscar(ports.AccionCrearSnapshot)
-	if registro == nil || registro.Resultado != ports.ResultadoFalla || registro.InstanciaID != "110" || registro.Detalles["snapname"] != "snap1" {
+	if registro == nil || registro.Resultado != ports.ResultadoFailed || registro.InstanciaID != "110" || registro.Detalles["snapname"] != "snap1" {
 		t.Errorf("Debe auditarse la falla: %+v", registro)
 	}
 }

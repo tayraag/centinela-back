@@ -92,7 +92,10 @@ func TestMigrarAuditoriaParticionada_TraspasoLegacy(t *testing.T) {
 	// 3. Assert: Verificar que los datos sigan existiendo y sean legibles por el Repositorio
 	repo := NewAuditRepository(tx)
 
-	filtros := ports.FiltrosAuditoria{}
+	// La verificación de migración solicita explícitamente el historial,
+	// porque el listado sin rango ahora se limita al trimestre actual (RF-08).
+	desde := time.Now().AddDate(-1, 0, 0)
+	filtros := ports.FiltrosAuditoria{Desde: &desde}
 	opciones := ports.OpcionesAuditoria{
 		Pagina:     1,
 		TamanoPag:  50,

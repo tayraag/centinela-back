@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -239,5 +241,118 @@ func TestAuditRepository_ExcluirAcciones(t *testing.T) {
 	if conExclusion.Total >= sinExclusion.Total {
 		t.Fatalf("Total con exclusión (%d) debería ser menor que sin exclusión (%d)",
 			conExclusion.Total, sinExclusion.Total)
+	}
+}
+
+// Verifica alcance persistido, separación de destinatarios y fail-closed
+// para registros históricos sin actor ni organización.
+func TestAuditoriaAlertasSistemaAisladasPorOrganizacion(t *testing.T) {
+	db := conectarDBTest(t)
+	err := db.Connection(func(conn *gorm.DB) error {
+		tx := conn.Begin()
+		if tx.Error != nil {
+			return tx.Error
+		}
+		defer tx.Rollback()
+		esquema := "aud_scope_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+		if err := tx.Exec("CREATE SCHEMA " + esquema).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec("SET LOCAL search_path TO " + esquema).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`CREATE TABLE usuarios (id uuid PRIMARY KEY,organizacion_id uuid,nombre_completo text,email_usuario text,rol text,activo boolean,eliminado_en timestamptz);
+   CREATE TABLE permisos_instancia (id uuid,usuario_id uuid,vmid_proxmox integer,nivel_acceso text);
+   CREATE TABLE auditoria (id uuid DEFAULT md5(random()::text || clock_timestamp()::text)::uuid,organizacion_id uuid,usuario_id uuid,accion text,instancia_id text,instancia_nombre text,resource_type text,resource_id text,upid text,resultado text,detalles jsonb,fecha_hora timestamptz);`).Error; err != nil {
+			return err
+		}
+		orgs := []uuid.UUID{uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()}
+		actor := uuid.New()
+		for i, org := range orgs {
+			id := uuid.New()
+			if i == 0 {
+				id = actor
+			}
+			rol := "ADMIN"
+			if i == 2 || i == 3 {
+				rol = "OPERATOR"
+			}
+			if err := tx.Exec("INSERT INTO usuarios VALUES (?,?,?,?,?,?,NULL)", id, org, fmt.Sprintf("u%d", i), fmt.Sprintf("u%d@test", i), rol, i != 4).Error; err != nil {
+				return err
+			}
+			if i == 2 || i == 3 {
+				nivel := "FULL_ACCESS"
+				if i == 3 {
+					nivel = "READ_ONLY"
+				}
+				if err := tx.Exec("INSERT INTO permisos_instancia VALUES (?,?,110,?)", uuid.New(), id, nivel).Error; err != nil {
+					return err
+				}
+			}
+		}
+		repo := postgres.NewAuditRepository(tx)
+		for _, input := range []ports.RegistrarAuditoriaInput{
+			{Accion: ports.AccionAlertaDisparada, RecursoTipo: ports.RecursoHost, RecursoID: "host", Resultado: ports.ResultadoSuccess, Detalles: map[string]any{"alertId": "host", "destinatarios": []string{"foreign@test"}}},
+			{Accion: ports.AccionAlertaDisparada, RecursoTipo: ports.RecursoVM, RecursoID: "110", Resultado: ports.ResultadoSuccess, Detalles: map[string]any{"alertId": "vm"}},
+			{Accion: ports.AccionAlertaDisparada, RecursoTipo: ports.RecursoLXC, RecursoID: "110", Resultado: ports.ResultadoSuccess, Detalles: map[string]any{"alertId": "lxc"}},
+			{Accion: ports.AccionAlertaResuelta, RecursoTipo: ports.RecursoVM, RecursoID: "110", Resultado: ports.ResultadoSuccess},
+			{UsuarioID: actor, Accion: ports.AccionLogin, Resultado: ports.ResultadoExito},
+		} {
+			if err := repo.Registrar(context.Background(), input); err != nil {
+				return err
+			}
+		}
+		if err := tx.Exec("INSERT INTO auditoria (accion,resultado,fecha_hora) VALUES ('ALERT_TRIGGERED','SUCCESS',now())").Error; err != nil {
+			return err
+		}
+		// Cambiar permisos actuales no debe borrar la atribución histórica.
+		if err := tx.Exec("DELETE FROM permisos_instancia").Error; err != nil {
+			return err
+		}
+		for i, org := range orgs {
+			esperadas := []int{5, 4, 3, 0, 0}[i]
+			pagina, err := repo.Listar(context.Background(), org, ports.FiltrosAuditoria{}, ports.OpcionesAuditoria{Pagina: 1, TamanoPag: 25, Direccion: "desc"})
+			if err != nil {
+				return err
+			}
+			if int(pagina.Total) != esperadas || len(pagina.Items) != esperadas {
+				return fmt.Errorf("org %d: total=%d items=%d esperado=%d", i, pagina.Total, len(pagina.Items), esperadas)
+			}
+			rows, err := repo.ExportarRegistros(context.Background(), org, ports.FiltrosAuditoria{})
+			if err != nil {
+				return err
+			}
+			if len(rows) != esperadas {
+				return fmt.Errorf("exportación org %d: %d", i, len(rows))
+			}
+			for _, row := range rows {
+				if row.UsuarioID != nil {
+					continue
+				}
+				if row.NombreUsuario != "[sistema]" {
+					return fmt.Errorf("actor inventado: %s", row.NombreUsuario)
+				}
+				if row.Accion == ports.AccionAlertaDisparada {
+					var d struct{ Destinatarios []string }
+					if err := json.Unmarshal(row.Detalles, &d); err != nil {
+						return err
+					}
+					if len(d.Destinatarios) != 1 || d.Destinatarios[0] != fmt.Sprintf("u%d@test", i) {
+						return fmt.Errorf("destinatarios ajenos para org %d: %v", i, d.Destinatarios)
+					}
+				}
+			}
+			vacia, err := repo.Listar(context.Background(), org, ports.FiltrosAuditoria{Accion: "NO_EXISTE"}, ports.OpcionesAuditoria{Pagina: 1, TamanoPag: 25})
+			if err != nil {
+				return err
+			}
+			if vacia.Total != 0 {
+				return fmt.Errorf("el alcance omitió el filtro de acción")
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }
