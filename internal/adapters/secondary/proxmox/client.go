@@ -32,31 +32,29 @@ const (
 // Client implementa ports.ProxmoxPort hablando directo con la API REST de
 // Proxmox VE, autenticado con un API Token de servicio.
 type Client struct {
-	baseURL        string
-	nodePorDefecto string
-	tokenID        string
-	tokenSecret    string
-	httpClient     *http.Client
-	aprovisionMu   sync.Mutex // serializa nextid + create dentro de esta API
+	baseURL      string
+	tokenID      string
+	tokenSecret  string
+	httpClient   *http.Client
+	aprovisionMu sync.Mutex // serializa nextid + create dentro de esta API
 }
 
 // NewClient crea un cliente de Proxmox VE.
 // baseURL: ej. "https://10.10.20.1:8006" o "https://10.10.20.1:8006/api2/json"
 // (el sufijo /api2/json se normaliza).
-// node: nodo por defecto; el tipo/nodo real de cada instancia siempre se
-// resuelve contra cluster/resources.
+// El cliente no tiene un nodo fijo: el de cada instancia se resuelve contra
+// cluster/resources y el del hipervisor (PROXMOX_NODE) lo recibe cada método.
 // tokenID/tokenSecret: API Token de servicio (ej. "centinela-api@pve!backend-token").
 // Si falta alguno de los dos, toda operación falla con ErrProxmoxCredenciales
 // sin llegar a llamar a Proxmox.
-func NewClient(baseURL, node, tokenID, tokenSecret string, tlsCfg *tls.Config) *Client {
+func NewClient(baseURL, tokenID, tokenSecret string, tlsCfg *tls.Config) *Client {
 	cleanURL := strings.TrimRight(baseURL, "/")
 	cleanURL = strings.TrimSuffix(cleanURL, "/api2/json")
 
 	return &Client{
-		baseURL:        cleanURL,
-		nodePorDefecto: node,
-		tokenID:        tokenID,
-		tokenSecret:    tokenSecret,
+		baseURL:     cleanURL,
+		tokenID:     tokenID,
+		tokenSecret: tokenSecret,
 		httpClient: &http.Client{
 			Timeout:   requestTimeout,
 			Transport: &http.Transport{TLSClientConfig: tlsCfg},
@@ -563,6 +561,48 @@ func (c *Client) ObtenerEstadoNodo(ctx context.Context, node string) (*ports.Nod
 		DiscoTotal: d.RootFS.Total, DiscoUsado: d.RootFS.Used, DiscoDisponible: d.RootFS.Avail,
 		UptimeSegs: d.Uptime,
 	}, nil
+}
+
+// ListarNodos consulta GET /nodes y devuelve el nombre de cada nodo del
+// cluster. Se usa al arrancar para descubrir el nodo si falta PROXMOX_NODE.
+func (c *Client) ListarNodos(ctx context.Context) ([]string, error) {
+	raw, err := c.doRequest(ctx, http.MethodGet, "/api2/json/nodes", nil)
+	if err != nil {
+		return nil, err
+	}
+	var parsed struct {
+		Data []struct {
+			Node string `json:"node"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return nil, fmt.Errorf("%w: respuesta de nodos inválida: %v", ports.ErrProxmoxNoDisponible, err)
+	}
+	nodos := make([]string, 0, len(parsed.Data))
+	for _, n := range parsed.Data {
+		if n.Node != "" {
+			nodos = append(nodos, n.Node)
+		}
+	}
+	return nodos, nil
+}
+
+// VersionPVE consulta GET /version y devuelve la versión de Proxmox VE (ej.
+// "8.4.21"). Se usa al arrancar para contrastarla con PROXMOX_TARGET_PVE_VERSION.
+func (c *Client) VersionPVE(ctx context.Context) (string, error) {
+	raw, err := c.doRequest(ctx, http.MethodGet, "/api2/json/version", nil)
+	if err != nil {
+		return "", err
+	}
+	var parsed struct {
+		Data struct {
+			Version string `json:"version"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &parsed); err != nil || parsed.Data.Version == "" {
+		return "", fmt.Errorf("%w: respuesta de versión inválida", ports.ErrProxmoxNoDisponible)
+	}
+	return parsed.Data.Version, nil
 }
 
 // prefijoFlexible acepta el prefix como número (guest agent de qemu: 24) o como

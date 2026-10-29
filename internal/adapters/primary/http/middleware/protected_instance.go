@@ -9,20 +9,13 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// VmidsProtegidosPorDefecto son las instancias que conforman la infraestructura
-// del propio El Centinela (base de datos, API, front, etc.). Apagarlas deja el
-// sistema fuera de servicio, así que ninguna acción destructiva puede tocarlas.
-const VmidsProtegidosPorDefecto = "100,101,102,103,104,105"
-
-// ParseVmidsProtegidos convierte una lista de VMIDs separados por coma (ej. el
-// valor de PROXMOX_PROTECTED_VMIDS) en un set. Un valor vacío devuelve los
-// VmidsProtegidosPorDefecto. Una entrada inválida es un error: preferimos que
+// ParseVmidsProtegidos convierte PROXMOX_PROTECTED_VMIDS (VMIDs separados por
+// coma, ej. "200,201,202") en el set de instancias de infraestructura que
+// ninguna acción destructiva puede tocar. Los VMIDs varían según el servidor,
+// así que no hay ninguno fijo: un valor vacío devuelve un set vacío y no se
+// bloquea ninguna instancia. Una entrada inválida es un error: preferimos que
 // la API no arranque antes que dejar una instancia desprotegida por un typo.
 func ParseVmidsProtegidos(raw string) (map[int]bool, error) {
-	if strings.TrimSpace(raw) == "" {
-		raw = VmidsProtegidosPorDefecto
-	}
-
 	protegidos := make(map[int]bool)
 	for _, parte := range strings.Split(raw, ",") {
 		parte = strings.TrimSpace(parte)
@@ -30,8 +23,8 @@ func ParseVmidsProtegidos(raw string) (map[int]bool, error) {
 			continue
 		}
 		vmid, err := strconv.Atoi(parte)
-		if err != nil {
-			return nil, fmt.Errorf("VMID protegido inválido %q: debe ser un número entero", parte)
+		if err != nil || vmid <= 0 {
+			return nil, fmt.Errorf("VMID protegido inválido %q: debe ser un número entero positivo", parte)
 		}
 		protegidos[vmid] = true
 	}

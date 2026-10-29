@@ -74,7 +74,7 @@ func (e *entorno) pedir(metodo, ruta string, form url.Values) (int, any, map[str
 }
 
 func (e *entorno) cliente() *proxmox.Client {
-	return proxmox.NewClient(e.server.URL+"/api2/json", "proxmox", tokenID, tokenSecret, nil)
+	return proxmox.NewClient(e.server.URL+"/api2/json", tokenID, tokenSecret, nil)
 }
 
 // buscar devuelve el elemento de una lista con el vmid dado.
@@ -175,6 +175,20 @@ func TestClusterResourcesComoLaCaptura(t *testing.T) {
 
 	if _, soloVMs, _ := e.pedir("GET", "/cluster/resources?type=vm", nil); len(soloVMs.([]any)) != 8 {
 		t.Errorf("?type=vm debe devolver solo las 8 instancias, vinieron %d", len(soloVMs.([]any)))
+	}
+}
+
+// Al arrancar sin PROXMOX_NODE la API descubre el nodo en /nodes, y siempre
+// contrasta /version con PROXMOX_TARGET_PVE_VERSION.
+func TestContrato_ClienteDelBackend_NodosYVersion(t *testing.T) {
+	e := nuevoEntorno(t, "")
+	nodos, err := e.cliente().ListarNodos(context.Background())
+	if err != nil || len(nodos) != 1 || nodos[0] != "proxmox" {
+		t.Errorf("nodos=%v err=%v", nodos, err)
+	}
+	version, err := e.cliente().VersionPVE(context.Background())
+	if err != nil || version != VersionPVE {
+		t.Errorf("version=%q err=%v", version, err)
 	}
 }
 
@@ -750,7 +764,7 @@ func TestFidelidad_401Canonico(t *testing.T) {
 		t.Errorf("Modo falla token: %q %q", status, body)
 	}
 	// Y el cliente del backend lo sigue reconociendo como token rechazado.
-	malo := proxmox.NewClient(e.server.URL+"/api2/json", "proxmox", tokenID, "incorrecto", nil)
+	malo := proxmox.NewClient(e.server.URL+"/api2/json", tokenID, "incorrecto", nil)
 	if _, err := malo.ListarInstancias(context.Background()); !errors.Is(err, ports.ErrProxmoxCredenciales) {
 		t.Errorf("El backend debe reconocer el 401 canónico como credenciales rechazadas: %v", err)
 	}

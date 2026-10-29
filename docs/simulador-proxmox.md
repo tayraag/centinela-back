@@ -79,7 +79,7 @@ Listo: `GET /api/instances` ahora trae las instancias del simulador. Cada pedido
 | VMID | Tipo | Nombre                      | Estado inicial | Notas |
 | ---- | ---- | --------------------------- | -------------- | ----- |
 | 100  | VM   | `PruebaLucas`               | encendida      | Administrada por HA (sus tareas se llaman `hastart`/`hastop`, como en la captura). Tiene 2 snapshots. **Protegida** en el backend. |
-| 101  | LXC  | `back`                      | encendida      | **Protegida** en el backend (100–105 son infraestructura de El Centinela). |
+| 101  | LXC  | `back`                      | encendida      | Infraestructura de El Centinela: **protegida** en el backend si `PROXMOX_PROTECTED_VMIDS` la incluye (ej. `100,101,102,103,104,105`). |
 | 110  | VM   | `Servidor-Prueba`           | apagada        | 2 cores, 2 GB, 20 GB de disco. |
 | 201  | LXC  | `Contenedor-Prueba-Postman` | apagada        | Config de la captura de RF-10. |
 | 9000 | VM   | `test-vm-go-9000`           | apagada        | |
@@ -108,7 +108,7 @@ El inventario (`GET /api/instances`, `internal/core/services/inventario_service.
 
 Además, `cluster/resources` devuelve el nodo, dos storages (`local-lvm` y `local`) y la zona de red, igual que la captura. El backend los descarta y se queda solo con VMs y contenedores.
 
-> "Protegida" es una regla **del backend**, no del simulador: `POST /api/instances/<referencia de la 100>/stop` responde `403 INSTANCE_PROTECTED` antes de llegar a Proxmox (la API no acepta el VMID en la ruta: usa la `id` que devuelve `GET /api/instances`). Pegándole directo al simulador sí se puede apagar la 100.
+> "Protegida" es una regla **del backend**, no del simulador, y solo aplica a los VMIDs de `PROXMOX_PROTECTED_VMIDS` (vacía = ninguno). Con `PROXMOX_PROTECTED_VMIDS=100,101,102,103,104,105`, `POST /api/instances/<referencia de la 100>/stop` responde `403 INSTANCE_PROTECTED` antes de llegar a Proxmox (la API no acepta el VMID en la ruta: usa la `id` que devuelve `GET /api/instances`). Pegándole directo al simulador sí se puede apagar la 100.
 
 ---
 
@@ -119,6 +119,8 @@ Todos bajo `/api2/json`, con el formato de Proxmox (`{"data": ...}`).
 | RF | Endpoint | Qué hace |
 | -- | -------- | -------- |
 | RF-02, 03 | `GET /cluster/resources` | Inventario completo. Acepta `?type=vm\|node\|storage\|sdn`. |
+| RNF-04 | `GET /version` | Versión de Proxmox VE: `{"version": "9.2.2", "release": "9.2", ...}`. La API la consulta al arrancar (`PROXMOX_TARGET_PVE_VERSION`). |
+| RNF-04 | `GET /nodes` | El único nodo del simulador (`PROXMOX_NODE`), con `status: online`. La API lo usa para descubrir el nodo si no tiene `PROXMOX_NODE`. |
 | RF-07 | `GET /cluster/nextid` | Menor VMID libre desde 100, como string: `{"data": "102"}`. Con `?vmid=N` lo devuelve si está libre o responde `400 VM N already exists`. |
 | RF-02, 07, 11 | `GET /nodes/{node}/status` | Salud del nodo: CPU, memoria (sube cuando encendés instancias), disco, uptime. |
 | — | `GET /nodes/{node}/qemu` · `GET /nodes/{node}/lxc` | Listado por tipo. |

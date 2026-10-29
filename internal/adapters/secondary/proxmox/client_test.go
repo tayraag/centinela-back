@@ -78,7 +78,7 @@ func TestClient_ListarInstancias_ConToken(t *testing.T) {
 	})
 
 	// Con el sufijo /api2/json, como viene en la config real: no debe duplicarse.
-	client := proxmox.NewClient(server.URL+"/api2/json", "pve1", tokenIDValido, tokenSecretValido, nil)
+	client := proxmox.NewClient(server.URL+"/api2/json", tokenIDValido, tokenSecretValido, nil)
 
 	instancias, err := client.ListarInstancias(context.Background())
 	if err != nil {
@@ -99,7 +99,7 @@ func TestClient_ListarInstancias_ConToken(t *testing.T) {
 
 func TestClient_ListarInstancias_TokenRechazado(t *testing.T) {
 	server := nuevoProxmoxSimulado(t, nil)
-	client := proxmox.NewClient(server.URL, "pve1", tokenIDValido, "secret-incorrecto", nil)
+	client := proxmox.NewClient(server.URL, tokenIDValido, "secret-incorrecto", nil)
 
 	_, err := client.ListarInstancias(context.Background())
 	if !errors.Is(err, ports.ErrProxmoxCredenciales) {
@@ -118,7 +118,7 @@ func TestClient_ListarInstancias_SinTokenNoLlamaAProxmox(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := proxmox.NewClient(server.URL, "pve1", "", "", nil)
+	client := proxmox.NewClient(server.URL, "", "", nil)
 	if client.TokenConfigurado() {
 		t.Fatal("TokenConfigurado debe ser false sin token")
 	}
@@ -135,7 +135,7 @@ func TestClient_ListarInstancias_SinTokenNoLlamaAProxmox(t *testing.T) {
 func TestClient_ListarInstancias_URLMalConfigurada(t *testing.T) {
 	server := nuevoProxmoxSimulado(t, nil)
 	// Una ruta base incorrecta hace que Proxmox responda 404.
-	client := proxmox.NewClient(server.URL+"/ruta-incorrecta", "pve1", tokenIDValido, tokenSecretValido, nil)
+	client := proxmox.NewClient(server.URL+"/ruta-incorrecta", tokenIDValido, tokenSecretValido, nil)
 
 	_, err := client.ListarInstancias(context.Background())
 	if !errors.Is(err, ports.ErrProxmoxNoDisponible) {
@@ -150,7 +150,7 @@ func TestClient_ObtenerInstancia_VmidInexistente(t *testing.T) {
 	server := nuevoProxmoxSimulado(t, []map[string]any{
 		{"vmid": 100, "type": "qemu", "name": "vm-prod-1", "node": "pve1", "status": "running"},
 	})
-	client := proxmox.NewClient(server.URL, "pve1", tokenIDValido, tokenSecretValido, nil)
+	client := proxmox.NewClient(server.URL, tokenIDValido, tokenSecretValido, nil)
 
 	_, err := client.ObtenerInstancia(context.Background(), 999)
 	if !errors.Is(err, ports.ErrInstanciaNoEncontrada) {
@@ -214,7 +214,7 @@ func TestClient_AprovisionarInstancia_ReservaVMIDYEnviaConfiguracion(t *testing.
 				}
 			}))
 			t.Cleanup(server.Close)
-			client := proxmox.NewClient(server.URL, "pve1", tokenIDValido, tokenSecretValido, nil)
+			client := proxmox.NewClient(server.URL, tokenIDValido, tokenSecretValido, nil)
 
 			resultado, err := client.AprovisionarInstancia(context.Background(), caso.input)
 			if err != nil {
@@ -239,7 +239,7 @@ func TestClient_AprovisionarInstancia_MarcaFalloPrevioAlDespacho(t *testing.T) {
 		http.Error(w, "nextid no disponible", http.StatusInternalServerError)
 	}))
 	t.Cleanup(server.Close)
-	client := proxmox.NewClient(server.URL, "pve1", tokenIDValido, tokenSecretValido, nil)
+	client := proxmox.NewClient(server.URL, tokenIDValido, tokenSecretValido, nil)
 
 	_, err := client.AprovisionarInstancia(context.Background(), ports.CrearInstanciaProxmoxInput{Tipo: ports.TipoInstanciaQemu, Nodo: "pve1"})
 	if !errors.Is(err, ports.ErrCreacionNoDespachada) {
@@ -260,7 +260,7 @@ func TestClient_ListarInstancias_ProxmoxCaido(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := proxmox.NewClient(server.URL, "pve1", "token", "secret", nil)
+	client := proxmox.NewClient(server.URL, "token", "secret", nil)
 
 	_, err := client.ListarInstancias(context.Background())
 	if err == nil {
@@ -281,7 +281,7 @@ func TestClient_ListarInstancias_Timeout(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := proxmox.NewClient(server.URL, "pve1", tokenIDValido, tokenSecretValido, nil)
+	client := proxmox.NewClient(server.URL, tokenIDValido, tokenSecretValido, nil)
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 
@@ -312,7 +312,7 @@ func proxmoxQueRechaza(t *testing.T, mensaje string, enLineaDeEstado bool) *prox
 		_ = buf.Flush()
 	}))
 	t.Cleanup(server.Close)
-	return proxmox.NewClient(server.URL, "pve1", tokenIDValido, tokenSecretValido, nil)
+	return proxmox.NewClient(server.URL, tokenIDValido, tokenSecretValido, nil)
 }
 
 func TestClient_BloqueoDeProxmoxEsInstanciaOcupada(t *testing.T) {
@@ -369,7 +369,7 @@ func TestClient_ObtenerInterfaces_Qemu(t *testing.T) {
 		}
 	}`
 	server, ruta := nuevoProxmoxSimuladoInterfaces(t, http.StatusOK, payload)
-	client := proxmox.NewClient(server.URL, "pve1", tokenIDValido, tokenSecretValido, nil)
+	client := proxmox.NewClient(server.URL, tokenIDValido, tokenSecretValido, nil)
 
 	interfaces, err := client.ObtenerInterfaces(context.Background(), "pve1", ports.TipoInstanciaQemu, 100)
 	if err != nil {
@@ -439,7 +439,7 @@ func TestClient_ObtenerInterfaces_LXC(t *testing.T) {
 			]
 		}`
 		server, ruta := nuevoProxmoxSimuladoInterfaces(t, http.StatusOK, payload)
-		client := proxmox.NewClient(server.URL, "pve1", tokenIDValido, tokenSecretValido, nil)
+		client := proxmox.NewClient(server.URL, tokenIDValido, tokenSecretValido, nil)
 
 		interfaces, err := client.ObtenerInterfaces(context.Background(), "pve1", ports.TipoInstanciaLXC, 101)
 		if err != nil {
@@ -477,7 +477,7 @@ func TestClient_ObtenerInterfaces_LXC(t *testing.T) {
 	t.Run("contenedor detenido", func(t *testing.T) {
 		// Proxmox responde {"data": null} cuando el contenedor está apagado.
 		server, ruta := nuevoProxmoxSimuladoInterfaces(t, http.StatusOK, `{"data": null}`)
-		client := proxmox.NewClient(server.URL, "pve1", tokenIDValido, tokenSecretValido, nil)
+		client := proxmox.NewClient(server.URL, tokenIDValido, tokenSecretValido, nil)
 
 		interfaces, err := client.ObtenerInterfaces(context.Background(), "pve1", ports.TipoInstanciaLXC, 101)
 		if err != nil {
@@ -498,7 +498,7 @@ func TestClient_ObtenerInterfaces_ErrorYTimeout(t *testing.T) {
 		// tiene el QEMU Guest Agent corriendo.
 		server, _ := nuevoProxmoxSimuladoInterfaces(t, http.StatusInternalServerError,
 			`{"data":null,"message":"QEMU guest agent is not running"}`)
-		client := proxmox.NewClient(server.URL, "pve1", tokenIDValido, tokenSecretValido, nil)
+		client := proxmox.NewClient(server.URL, tokenIDValido, tokenSecretValido, nil)
 
 		_, err := client.ObtenerInterfaces(context.Background(), "pve1", ports.TipoInstanciaQemu, 100)
 		if err == nil {
@@ -522,7 +522,7 @@ func TestClient_ObtenerInterfaces_ErrorYTimeout(t *testing.T) {
 		}))
 		defer server.Close()
 
-		client := proxmox.NewClient(server.URL, "pve1", tokenIDValido, tokenSecretValido, nil)
+		client := proxmox.NewClient(server.URL, tokenIDValido, tokenSecretValido, nil)
 		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 		defer cancel()
 
@@ -563,7 +563,7 @@ func TestClient_ObtenerStorages(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := proxmox.NewClient(server.URL, "pve1", tokenIDValido, tokenSecretValido, nil)
+	client := proxmox.NewClient(server.URL, tokenIDValido, tokenSecretValido, nil)
 	storages, err := client.ObtenerStorages(context.Background(), "pve1")
 	if err != nil {
 		t.Fatalf("ObtenerStorages falló: %v", err)
@@ -585,7 +585,7 @@ func TestClient_ObtenerEstadoNodo_ConservaStorageDisponible(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := proxmox.NewClient(server.URL, "pve1", tokenIDValido, tokenSecretValido, nil)
+	client := proxmox.NewClient(server.URL, tokenIDValido, tokenSecretValido, nil)
 	estado, err := client.ObtenerEstadoNodo(context.Background(), "pve1")
 	if err != nil {
 		t.Fatalf("ObtenerEstadoNodo falló: %v", err)
@@ -626,7 +626,7 @@ func TestClient_ObtenerContenidoStorage(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := proxmox.NewClient(server.URL, "pve1", tokenIDValido, tokenSecretValido, nil)
+	client := proxmox.NewClient(server.URL, tokenIDValido, tokenSecretValido, nil)
 	items, err := client.ObtenerContenidoStorage(context.Background(), "pve1", "local")
 	if err != nil {
 		t.Fatalf("ObtenerContenidoStorage falló: %v", err)
@@ -679,7 +679,7 @@ func TestClient_ObtenerMetricasRRD(t *testing.T) {
 		}))
 		defer server.Close()
 
-		client := proxmox.NewClient(server.URL, "pve1", tokenIDValido, tokenSecretValido, nil)
+		client := proxmox.NewClient(server.URL, tokenIDValido, tokenSecretValido, nil)
 		puntos, err := client.ObtenerMetricasRRD(context.Background(), "pve1", "qemu", 100, "hour")
 		if err != nil {
 			t.Fatalf("ObtenerMetricasRRD falló: %v", err)
@@ -761,7 +761,7 @@ func TestClient_ObtenerMetricasRRD(t *testing.T) {
 				}))
 				defer server.Close()
 
-				client := proxmox.NewClient(server.URL, "pve1", tokenIDValido, tokenSecretValido, nil)
+				client := proxmox.NewClient(server.URL, tokenIDValido, tokenSecretValido, nil)
 				puntos, err := client.ObtenerMetricasRRD(context.Background(), "pve1", "lxc", 201, tf)
 				if err != nil {
 					t.Fatalf("ObtenerMetricasRRD falló para timeframe %s: %v", tf, err)
@@ -789,7 +789,7 @@ func TestClient_ObtenerMetricasRRD(t *testing.T) {
 		}))
 		defer server.Close()
 
-		client := proxmox.NewClient(server.URL, "pve1", tokenIDValido, tokenSecretValido, nil)
+		client := proxmox.NewClient(server.URL, tokenIDValido, tokenSecretValido, nil)
 		_, err := client.ObtenerMetricasRRD(context.Background(), "pve1", "vm", 110, "")
 		if err != nil {
 			t.Fatalf("ObtenerMetricasRRD con 'vm' falló: %v", err)
@@ -797,7 +797,7 @@ func TestClient_ObtenerMetricasRRD(t *testing.T) {
 	})
 
 	t.Run("rechaza tipo desconocido", func(t *testing.T) {
-		client := proxmox.NewClient("http://127.0.0.1:8006", "pve1", tokenIDValido, tokenSecretValido, nil)
+		client := proxmox.NewClient("http://127.0.0.1:8006", tokenIDValido, tokenSecretValido, nil)
 		_, err := client.ObtenerMetricasRRD(context.Background(), "pve1", "invalido", 110, "hour")
 		if err == nil {
 			t.Fatal("Se esperaba error por tipo desconocido, pero fue nil")
@@ -819,7 +819,7 @@ func TestClient_ObtenerMetricasNodoRRD(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := proxmox.NewClient(server.URL, "pve1", tokenIDValido, tokenSecretValido, nil)
+	client := proxmox.NewClient(server.URL, tokenIDValido, tokenSecretValido, nil)
 	puntos, err := client.ObtenerMetricasNodoRRD(context.Background(), "pve1", "hour")
 	if err != nil {
 		t.Fatalf("ObtenerMetricasNodoRRD falló: %v", err)
@@ -862,7 +862,7 @@ func TestClient_ObtenerEstadoActual(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := proxmox.NewClient(server.URL, "pve1", tokenIDValido, tokenSecretValido, nil)
+	client := proxmox.NewClient(server.URL, tokenIDValido, tokenSecretValido, nil)
 	m, err := client.ObtenerEstadoActual(context.Background(), "pve1", "qemu", 100)
 	if err != nil {
 		t.Fatalf("ObtenerEstadoActual falló: %v", err)
@@ -887,7 +887,7 @@ func TestObtenerEstadoActual_ApagadaDevuelveNull(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := proxmox.NewClient(server.URL, "pve1", tokenIDValido, tokenSecretValido, nil)
+	client := proxmox.NewClient(server.URL, tokenIDValido, tokenSecretValido, nil)
 	m, err := client.ObtenerEstadoActual(context.Background(), "pve1", "lxc", 101)
 	if err != nil {
 		t.Fatal(err)
@@ -917,7 +917,7 @@ func TestObtenerConfig_QemuYLXC(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"data": data})
 	}))
 	defer server.Close()
-	client := proxmox.NewClient(server.URL, "pve1", tokenIDValido, tokenSecretValido, nil)
+	client := proxmox.NewClient(server.URL, tokenIDValido, tokenSecretValido, nil)
 
 	vm, err := client.ObtenerConfig(context.Background(), "pve1", "qemu", 110, true)
 	if err != nil || vm.MemoriaMB != 2048 || vm.Cores != 2 || vm.Digest != "abc" {
@@ -948,7 +948,7 @@ func TestActualizarConfig_ParametrosYDigestRechazado(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"data": nil})
 	}))
 	defer server.Close()
-	client := proxmox.NewClient(server.URL, "pve1", tokenIDValido, tokenSecretValido, nil)
+	client := proxmox.NewClient(server.URL, tokenIDValido, tokenSecretValido, nil)
 
 	if err := client.ActualizarConfig(context.Background(), "pve1", "qemu", 110, 0, 4096, "abc"); err != nil {
 		t.Fatal(err)
@@ -971,7 +971,7 @@ func TestClient_AprovisionarInstancia_RechazaInyeccionSinLlamarAProxmox(t *testi
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	defer server.Close()
-	client := proxmox.NewClient(server.URL, "pve1", tokenIDValido, tokenSecretValido, nil)
+	client := proxmox.NewClient(server.URL, tokenIDValido, tokenSecretValido, nil)
 
 	valido := ports.CrearInstanciaProxmoxInput{Tipo: ports.TipoInstanciaQemu, Nodo: "pve1", Nombre: "srv", Cores: 1, MemoriaMB: 512,
 		StorageID: "local-lvm", DiscoGB: 5, TemplateID: "local:iso/debian-12.iso", Bridge: "vmbr0", IPv4Tipo: "static",
@@ -1008,7 +1008,7 @@ func TestClient_CrearSnapshot(t *testing.T) {
 		fmt.Fprint(w, `{"data":"UPID:pve1:0001:qmsnapshot"}`)
 	}))
 	defer server.Close()
-	client := proxmox.NewClient(server.URL, "pve1", tokenIDValido, tokenSecretValido, nil)
+	client := proxmox.NewClient(server.URL, tokenIDValido, tokenSecretValido, nil)
 
 	for _, tipo := range []string{"qemu", "lxc"} {
 		upid, err := client.CrearSnapshot(context.Background(), "pve1", tipo, 110, "snap_1", "Previo")
@@ -1035,7 +1035,7 @@ func TestClient_ListarSnapshots(t *testing.T) {
 			{"name":"current","description":"You are here!","running":1,"parent":"snap_pre_upgrade","digest":"abc"}]}`)
 	}))
 	defer server.Close()
-	client := proxmox.NewClient(server.URL, "pve1", tokenIDValido, tokenSecretValido, nil)
+	client := proxmox.NewClient(server.URL, tokenIDValido, tokenSecretValido, nil)
 	lista, err := client.ListarSnapshots(context.Background(), "pve1", "qemu", 110)
 	if err != nil || len(lista) != 2 {
 		t.Fatalf("%+v %v", lista, err)
@@ -1053,7 +1053,7 @@ func TestClient_RevertirYEliminarSnapshot(t *testing.T) {
 		fmt.Fprint(w, `{"data":"UPID:pve1:0002:qmrollback"}`)
 	}))
 	defer server.Close()
-	client := proxmox.NewClient(server.URL, "pve1", tokenIDValido, tokenSecretValido, nil)
+	client := proxmox.NewClient(server.URL, tokenIDValido, tokenSecretValido, nil)
 	if upid, err := client.RevertirSnapshot(context.Background(), "pve1", "qemu", 110, "snap_1"); err != nil || upid == "" {
 		t.Fatalf("rollback: %q %v", upid, err)
 	}
@@ -1071,5 +1071,26 @@ func TestClient_RevertirYEliminarSnapshot(t *testing.T) {
 	}
 	if len(pedidos) != 2 {
 		t.Errorf("Un nombre inválido no debe llegar a Proxmox: %v", pedidos)
+	}
+}
+
+func TestClient_ListarNodos(t *testing.T) {
+	server, ruta := nuevoProxmoxSimuladoInterfaces(t, http.StatusOK,
+		`{"data":[{"node":"pve-cluster01","status":"online","type":"node"},{"node":"pve-cluster02","status":"offline","type":"node"}]}`)
+	nodos, err := proxmox.NewClient(server.URL, tokenIDValido, tokenSecretValido, nil).ListarNodos(context.Background())
+	if err != nil || *ruta != "/api2/json/nodes" || len(nodos) != 2 || nodos[0] != "pve-cluster01" || nodos[1] != "pve-cluster02" {
+		t.Fatalf("nodos=%v ruta=%s err=%v", nodos, *ruta, err)
+	}
+}
+
+func TestClient_VersionPVE(t *testing.T) {
+	server, ruta := nuevoProxmoxSimuladoInterfaces(t, http.StatusOK, `{"data":{"version":"8.4.21","release":"8.4","repoid":"abc"}}`)
+	version, err := proxmox.NewClient(server.URL, tokenIDValido, tokenSecretValido, nil).VersionPVE(context.Background())
+	if err != nil || version != "8.4.21" || *ruta != "/api2/json/version" {
+		t.Fatalf("version=%q ruta=%s err=%v", version, *ruta, err)
+	}
+	server, _ = nuevoProxmoxSimuladoInterfaces(t, http.StatusOK, `{"data":{}}`)
+	if _, err := proxmox.NewClient(server.URL, tokenIDValido, tokenSecretValido, nil).VersionPVE(context.Background()); !errors.Is(err, ports.ErrProxmoxNoDisponible) {
+		t.Fatalf("Sin versión en la respuesta se esperaba ErrProxmoxNoDisponible: %v", err)
 	}
 }

@@ -124,6 +124,29 @@ func (s *Simulador) resumenNodo(ahora time.Time) resumenNodo {
 	}
 }
 
+// VersionPVE es la versión de Proxmox VE que informa el simulador en /version.
+const VersionPVE = "9.2.2"
+
+// version imita GET /version: lo consulta la API al arrancar para contrastarlo
+// con PROXMOX_TARGET_PVE_VERSION.
+func (s *Simulador) version(w http.ResponseWriter, _ *http.Request) {
+	responder(w, map[string]any{"version": VersionPVE, "release": "9.2", "repoid": "3e76eec21c4a14a7"})
+}
+
+// listarNodos imita GET /nodes con el único nodo del simulador (PROXMOX_NODE):
+// la API lo usa para descubrir el nodo si no tiene PROXMOX_NODE.
+func (s *Simulador) listarNodos(w http.ResponseWriter, _ *http.Request) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.finalizarTareas()
+	n := s.resumenNodo(s.ahora())
+	responder(w, []map[string]any{{
+		"id": "node/" + s.cfg.Nodo, "type": "node", "node": s.cfg.Nodo, "status": "online", "level": "",
+		"cpu": n.cpu, "maxcpu": n.cpus, "mem": n.memUsada, "maxmem": n.memTotal,
+		"disk": n.discoUsado, "maxdisk": n.discoTotal, "uptime": n.uptime,
+	}})
+}
+
 func (s *Simulador) estadoNodo(w http.ResponseWriter, r *http.Request) {
 	if !s.validarNodoYTipo(w, r) {
 		return

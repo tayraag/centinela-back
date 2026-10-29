@@ -57,7 +57,8 @@ El proyecto sigue una **Arquitectura Hexagonal (Puertos y Adaptadores)** adaptad
 centinela-back/
 ├── cmd/
 │   ├── api/
-│   │   └── main.go              # Punto de entrada: wiring, router, arranque HTTP
+│   │   ├── main.go              # Punto de entrada: wiring, router, arranque HTTP
+│   │   └── proxmox_entorno.go   # Nodo, versión de PVE y VMIDs protegidos del .env al arrancar
 │   ├── proxmox-simulador/       # Simulador de Proxmox para desarrollar sin red (docs/simulador-proxmox.md)
 │   └── seed/                    # Scripts de seed de datos iniciales
 │

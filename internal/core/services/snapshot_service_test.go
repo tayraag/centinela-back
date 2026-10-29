@@ -146,7 +146,7 @@ func clienteSimulador(t *testing.T) *proxmox.Client {
 	if direccion == "" || err != nil || (u.Hostname() != "localhost" && u.Hostname() != "127.0.0.1") {
 		t.Skip("Sin simulador local de Proxmox en PROXMOX_URL: no se prueba contra un Proxmox real")
 	}
-	client := proxmox.NewClient(direccion, os.Getenv("PROXMOX_NODE"), os.Getenv("PROXMOX_TOKEN_ID"), os.Getenv("PROXMOX_TOKEN_SECRET"), proxmox.BuildTLSConfig())
+	client := proxmox.NewClient(direccion, os.Getenv("PROXMOX_TOKEN_ID"), os.Getenv("PROXMOX_TOKEN_SECRET"), proxmox.BuildTLSConfig())
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	if _, err := client.ListarInstancias(ctx); err != nil {

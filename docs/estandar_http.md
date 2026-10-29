@@ -58,7 +58,7 @@ Cuando la API devuelva un error (códigos 400 a 500), el cuerpo de la respuesta 
 | ---- | --------- | ------ |
 | 403 | `INSTANCE_ACCESS_DENIED` | El OPERATOR no tiene permiso (o nivel suficiente) sobre la instancia. |
 | 400 | `INVALID_ACTION` | La acción de `/status/:action` no es `start`, `stop`, `shutdown` ni `reboot`. |
-| 403 | `INSTANCE_PROTECTED` | La instancia es infraestructura de El Centinela (VMID 100–105 en Proxmox, configurable con `PROXMOX_PROTECTED_VMIDS`) y no admite operaciones de energía (`start`, `stop`, `shutdown`, `reboot`). |
+| 403 | `INSTANCE_PROTECTED` | La instancia es infraestructura de El Centinela (VMIDs listados en `PROXMOX_PROTECTED_VMIDS`; vacía = ninguna) y no admite operaciones de energía (`start`, `stop`, `shutdown`, `reboot`). |
 | 409 | `INSTANCE_INVALID_STATE` | `DELETE /api/instances/:instanceRef` sobre una instancia que no está `stopped`. Hay que apagarla antes de borrarla. |
 | 409 | `INSTANCE_INVALID_STATE` | El estado actual es incompatible con la acción: `start` exige `stopped`; `stop`, `shutdown` y `reboot` exigen `running`. Se valida antes de enviar órdenes a Proxmox. |
 | 404 | `RESOURCE_NOT_FOUND` | La referencia de la ruta (`:instanceRef`, `inst_...`) no corresponde a ninguna instancia: está alterada, es inventada, es de otro servidor o es un VMID numérico; o la instancia no existe en Proxmox. Los dos casos responden exactamente igual, para que el error no sirva para probar referencias. |

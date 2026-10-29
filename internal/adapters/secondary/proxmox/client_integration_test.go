@@ -30,7 +30,6 @@ func TestIntegracionProxmoxReal(t *testing.T) {
 
 	client := proxmox.NewClient(
 		url,
-		os.Getenv("PROXMOX_NODE"),
 		tokenID,
 		tokenSecret,
 		proxmox.BuildTLSConfig(),

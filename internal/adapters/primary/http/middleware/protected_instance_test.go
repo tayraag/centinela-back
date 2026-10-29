@@ -3,6 +3,8 @@ package middleware_test
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strings"
 	"testing"
 
 	"el-centinela/internal/adapters/primary/http/middleware"
@@ -10,18 +12,13 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func TestParseVmidsProtegidos_VacioUsaDefault(t *testing.T) {
-	protegidos, err := middleware.ParseVmidsProtegidos("")
-	if err != nil {
-		t.Fatalf("Error inesperado: %v", err)
-	}
-	for vmid := 100; vmid <= 105; vmid++ {
-		if !protegidos[vmid] {
-			t.Errorf("El VMID %d debe estar protegido por defecto", vmid)
+// DoD: con PROXMOX_PROTECTED_VMIDS vacía no se protege ningún VMID por defecto.
+func TestParseVmidsProtegidos_VacioNoProtegeNada(t *testing.T) {
+	for _, raw := range []string{"", "   ", " , ,"} {
+		protegidos, err := middleware.ParseVmidsProtegidos(raw)
+		if err != nil || protegidos == nil || len(protegidos) != 0 {
+			t.Errorf("%q: se esperaba un set vacío sin error, vino %v (%v)", raw, protegidos, err)
 		}
-	}
-	if protegidos[106] {
-		t.Error("El VMID 106 no debe estar protegido por defecto")
 	}
 }
 
@@ -36,35 +33,54 @@ func TestParseVmidsProtegidos_ListaPersonalizada(t *testing.T) {
 }
 
 func TestParseVmidsProtegidos_EntradaInvalida(t *testing.T) {
-	if _, err := middleware.ParseVmidsProtegidos("100,1O1"); err == nil {
-		t.Fatal("Se esperaba error por un VMID inválido")
+	for _, raw := range []string{"100,1O1", "200,0", "-5", "100-105"} {
+		if _, err := middleware.ParseVmidsProtegidos(raw); err == nil {
+			t.Errorf("%q: se esperaba error por un VMID inválido", raw)
+		}
 	}
 }
 
-func TestRejectProtectedInstance(t *testing.T) {
+// DoD: la lista de exclusión sale de PROXMOX_PROTECTED_VMIDS. Cambiar la
+// variable cambia qué VMIDs responden 403 INSTANCE_PROTECTED, sin rangos fijos.
+func TestRejectProtectedInstance_ListaDesdeEntorno(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	protegidos, _ := middleware.ParseVmidsProtegidos("")
-
-	r := gin.New()
-	r.POST("/instances/:instanceRef/stop", middleware.ResolveInstanceRef(refsPrueba, "instanceRef"), middleware.RejectProtectedInstance(protegidos), func(c *gin.Context) {
-		c.Status(http.StatusAccepted)
-	})
-
 	casos := []struct {
-		vmid   string
-		codigo int
+		entorno    string
+		protegidos []int
+		libres     []int
 	}{
-		{ref(t, 101), http.StatusForbidden}, // base de datos: protegida
-		{ref(t, 102), http.StatusForbidden}, // la propia API: protegida
-		{ref(t, 200), http.StatusAccepted},  // instancia común: pasa
-		{"101", http.StatusNotFound},        // el VMID numérico no es una referencia
+		{"200,201,202", []int{200, 201, 202}, []int{100, 101, 102, 103, 104, 105, 203}},
+		{"101", []int{101}, []int{100, 102, 105, 200}},
+		{"", nil, []int{100, 101, 102, 103, 104, 105, 200}},
 	}
 	for _, caso := range casos {
-		w := httptest.NewRecorder()
-		req, _ := http.NewRequest(http.MethodPost, "/instances/"+caso.vmid+"/stop", nil)
-		r.ServeHTTP(w, req)
-		if w.Code != caso.codigo {
-			t.Errorf("vmid %s: código esperado %d, obtenido %d (%s)", caso.vmid, caso.codigo, w.Code, w.Body.String())
+		t.Setenv("PROXMOX_PROTECTED_VMIDS", caso.entorno)
+		protegidos, err := middleware.ParseVmidsProtegidos(os.Getenv("PROXMOX_PROTECTED_VMIDS"))
+		if err != nil {
+			t.Fatalf("%q: %v", caso.entorno, err)
+		}
+		r := gin.New()
+		r.POST("/instances/:instanceRef/stop", middleware.ResolveInstanceRef(refsPrueba, "instanceRef"), middleware.RejectProtectedInstance(protegidos), func(c *gin.Context) {
+			c.Status(http.StatusAccepted)
+		})
+		parar := func(instancia string) *httptest.ResponseRecorder {
+			w := httptest.NewRecorder()
+			req, _ := http.NewRequest(http.MethodPost, "/instances/"+instancia+"/stop", nil)
+			r.ServeHTTP(w, req)
+			return w
+		}
+		for _, vmid := range caso.protegidos {
+			if w := parar(ref(t, vmid)); w.Code != http.StatusForbidden || !strings.Contains(w.Body.String(), `"errorCode":"INSTANCE_PROTECTED"`) {
+				t.Errorf("PROXMOX_PROTECTED_VMIDS=%q, VMID %d: se esperaba 403 INSTANCE_PROTECTED, vino %d %s", caso.entorno, vmid, w.Code, w.Body.String())
+			}
+		}
+		for _, vmid := range caso.libres {
+			if w := parar(ref(t, vmid)); w.Code != http.StatusAccepted {
+				t.Errorf("PROXMOX_PROTECTED_VMIDS=%q, VMID %d: debe poder operarse, vino %d %s", caso.entorno, vmid, w.Code, w.Body.String())
+			}
+		}
+		if w := parar("101"); w.Code != http.StatusNotFound {
+			t.Errorf("El VMID numérico no es una referencia: %d", w.Code)
 		}
 	}
 }

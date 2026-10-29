@@ -73,15 +73,18 @@ Configuración oficial pasada por la PM. El backend se autentica **solo** con el
 | Variable                       | Descripción                                                                 | Valor                                    |
 | ------------------------------ | --------------------------------------------------------------------------- | ---------------------------------------- |
 | `PROXMOX_URL`                  | URL de la API de Proxmox. `/api2/json` opcional (ver entornos abajo)        | `https://10.10.20.1:8006/api2/json`      |
-| `PROXMOX_NODE`                 | Nodo del cluster                                                            | `proxmox`                                |
+| `PROXMOX_NODE`                 | Nodo físico de Proxmox para las rutas `/nodes/{node}/...`. Vacío = se descubre en `/nodes` si hay un solo nodo; si no, `proxmox` con un aviso | `proxmox` |
+| `PROXMOX_TARGET_PVE_VERSION`   | Opcional. Versión de Proxmox VE esperada: `auto`, `8.4.21` o `9.2.2`. Vacío = `auto`. Al arrancar se consulta `/version` y se muestra en el log; si no coincide con la fijada, avisa pero arranca. Otro valor impide arrancar | `auto` |
 | `PROXMOX_TOKEN_ID`             | ID del API Token de servicio                                                | `centinela-api@pve!backend-token`        |
 | `PROXMOX_TOKEN_SECRET`         | Secreto del API Token. **Pedírselo a la PM / infra, nunca commitearlo**     | `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`   |
 | `PROXMOX_INSECURE_SKIP_VERIFY` | Saltea la verificación TLS (certificado autofirmado)                        | `true`                                   |
-| `PROXMOX_PROTECTED_VMIDS`      | Opcional. VMIDs que no se pueden apagar desde la API. Vacío = `100`–`105`   | *(vacío)*                                |
+| `PROXMOX_PROTECTED_VMIDS`      | VMIDs de infraestructura que no se pueden apagar desde la API (`403 INSTANCE_PROTECTED`), separados por coma (ej. `200,201,202`). Cambian según el servidor. **Vacío = ninguna instancia protegida** (no hay VMIDs fijos). Un valor inválido impide arrancar | *(vacío)* |
 | `TOPOLOGY_NODE_ALIASES`        | Opcional. Alias del nodo que ve quien no es ADMIN (`real=alias,...`). Vacío = `PROXMOX_NODE` como `nodo-principal` | *(vacío)*              |
 | `TOPOLOGY_STORAGE_ALIASES`     | Opcional. Alias de storages (`real=alias,...`). Vacío = `local-lvm=Almacenamiento Local Rápido,local=Almacenamiento Estándar` | *(vacío)* |
 | `ALERT_POLL_INTERVAL`          | Opcional. Cada cuánto el evaluador de alertas revisa el host y las instancias (ej. `30s`, `1m`). Vacío = `30s` | *(vacío)* |
 | `PROXMOX_SIM_*`                | Opcionales. Configuración del simulador (solo desarrollo local)             | ver `docs/simulador-proxmox.md`          |
+
+Las tres se leen al arrancar: cambiarlas en el `.env` y reiniciar la API cambia el nodo consultado y los VMIDs bloqueados, sin recompilar. El log de arranque muestra el nodo (`🖥️  Nodo de Proxmox: ...`), la versión de Proxmox detectada y los VMIDs protegidos (o `Sin VMIDs protegidos configurados`).
 
 Cada request a Proxmox lleva la cabecera:
 

@@ -71,6 +71,8 @@ func (s *Simulador) rutas() {
 	// Inventario y nodo (RF-02, RF-03, RF-07)
 	m.HandleFunc("GET "+base+"/cluster/resources", s.clusterResources)
 	m.HandleFunc("GET "+base+"/cluster/nextid", s.siguienteID)
+	m.HandleFunc("GET "+base+"/version", s.version)
+	m.HandleFunc("GET "+base+"/nodes", s.listarNodos)
 	m.HandleFunc("GET "+base+"/nodes/{node}/status", s.estadoNodo)
 	m.HandleFunc("GET "+base+"/nodes/{node}/rrddata", s.rrddataNodo)
 	m.HandleFunc("GET "+base+"/nodes/{node}/{tipo}", s.listarPorTipo)

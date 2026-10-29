@@ -203,7 +203,7 @@ func TestAprovisionamiento_HTTPAceptadoConRespuestaPerdida(t *testing.T) {
 	}))
 	defer server.Close()
 	px := &proxmoxAprovisionamiento{}
-	remote := proxmox.NewClient(server.URL, "pve1", "test@pve!token", "not-a-secret", nil)
+	remote := proxmox.NewClient(server.URL, "test@pve!token", "not-a-secret", nil)
 	store := memoria.Nuevo()
 	svc := services.NewCuotasService(px, remote, store)
 	if result, err := svc.AprovisionarInstancia(context.Background(), inputCreacion(4096, 1, 1)); result != nil || !errors.Is(err, ports.ErrProxmoxNoDisponible) {

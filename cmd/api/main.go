@@ -122,7 +122,6 @@ func main() {
 
 	proxmoxClient := proxmox.NewClient(
 		proxmoxURL,
-		os.Getenv("PROXMOX_NODE"),
 		os.Getenv("PROXMOX_TOKEN_ID"),
 		os.Getenv("PROXMOX_TOKEN_SECRET"),
 		proxmox.BuildTLSConfig(),
@@ -135,6 +134,13 @@ func main() {
 	if err != nil {
 		log.Fatalf("❌ PROXMOX_PROTECTED_VMIDS inválida: %v", err)
 	}
+	informarVmidsProtegidos(vmidsProtegidos)
+
+	versionPVE, err := versionObjetivoPVE(os.Getenv("PROXMOX_TARGET_PVE_VERSION"))
+	if err != nil {
+		log.Fatalf("❌ %v", err)
+	}
+	go verificarVersionPVE(ctx, versionPVE, proxmoxClient)
 
 	// Referencias públicas de instancias: el VMID nunca sale de la API (IDOR y
 	// enumeración). Sin el secreto la API no arranca.
@@ -144,7 +150,7 @@ func main() {
 	}
 
 	// 4. Inicializar servicios de dominio (inyección de dependencias)
-	nodoNombre := valorODefecto(os.Getenv("PROXMOX_NODE"), "proxmox")
+	nodoNombre := resolverNodo(ctx, os.Getenv("PROXMOX_NODE"), proxmoxClient)
 	topologia := cargarTopologia(nodoNombre, os.Getenv("INSTANCE_ID_SALT"))
 	auditService := services.NewAuditService(auditRepo, refsInstancia)
 	authService := services.NewAuthService(authRepo, kvStore, emailService, auditService)
@@ -559,13 +565,6 @@ func cargarTopologia(nodo, secreto string) *topology.Catalogo {
 		log.Fatalf("❌ Catálogo de topología inválido: %v", err)
 	}
 	return catalogo
-}
-
-func valorODefecto(v, defecto string) string {
-	if v == "" {
-		return defecto
-	}
-	return v
 }
 
 // Keep login and read-only features available in degraded mode, not creation.
