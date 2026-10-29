@@ -49,6 +49,25 @@ func ProbarContrato(t *testing.T, nuevo Fabrica) {
 		}
 	})
 
+	t.Run("RegistrarEnVentana informa cuánto falta para volver a intentar", func(t *testing.T) {
+		store, _ := nuevo(t)
+		inicio := time.Now()
+		for i, desfase := range []time.Duration{0, 20 * time.Second} {
+			r, err := store.RegistrarEnVentana(ctx, "ventana", fmt.Sprintf("m%d", i), inicio.Add(desfase), time.Minute, 2)
+			if err != nil || !r.Permitido {
+				t.Fatalf("Intento %d: %+v %v", i, r, err)
+			}
+		}
+		r, err := store.RegistrarEnVentana(ctx, "ventana", "m3", inicio.Add(25*time.Second), time.Minute, 2)
+		if err != nil || r.Permitido {
+			t.Fatalf("El tercero debe rechazarse: %+v %v", r, err)
+		}
+		// El más viejo (en 0 s) sale de la ventana de 60 s a los 60 s: faltan 35 s.
+		if r.ReintentarEn < 34*time.Second || r.ReintentarEn > 35*time.Second {
+			t.Errorf("ReintentarEn = %s, se esperaban ~35 s", r.ReintentarEn)
+		}
+	})
+
 	t.Run("Incrementar cuenta, renueva el vencimiento y es atómico", func(t *testing.T) {
 		store, avanzar := nuevo(t)
 		for esperado := int64(1); esperado <= 3; esperado++ {

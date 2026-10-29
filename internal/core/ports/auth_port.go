@@ -32,6 +32,9 @@ type TokenResult struct {
 	AccessToken  string `json:"accessToken"`
 	RefreshToken string `json:"-"`
 	ExpiresIn    int64  `json:"expiresIn"` // segundos hasta expiración del access token
+	// RefreshExpiraEn es cuándo vence el refresh token (el de la sesión). No
+	// viaja en el JSON: define el Max-Age de la cookie centinela_refresh.
+	RefreshExpiraEn time.Time `json:"-"`
 }
 
 // ==========================================

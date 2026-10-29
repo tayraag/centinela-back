@@ -351,7 +351,7 @@ curl -i -X POST http://localhost:8080/api/auth/2fa/verify -H "Authorization: Bea
 
 ```
 HTTP/1.1 200 OK
-Set-Cookie: centinela_refresh=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...; Path=/api/auth; Max-Age=604800; HttpOnly; Secure; SameSite=Strict
+Set-Cookie: centinela_refresh=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...; Path=/api/auth; Max-Age=2592000; HttpOnly; Secure; SameSite=Strict
 
 {
   "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
@@ -359,6 +359,7 @@ Set-Cookie: centinela_refresh=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...; Path=/api
 }
 ```
 
+> `Max-Age` es lo que le queda al refresh token (`JWT_REFRESH_TTL_DAYS`, 30 días por defecto); el refresh no la extiende. En local sin HTTPS poné `COOKIE_SECURE=false` para que se emita sin `Secure`.
 > La cookie es `HttpOnly`: el JavaScript del front no puede leerla (protege contra XSS) y el navegador la manda sola en `/api/auth/refresh` y `/api/auth/logout`. Con curl hay que copiar su valor y mandarlo a mano con `-H "Cookie: centinela_refresh=<valor>"`.
 
 **Logs en el servidor:**
@@ -451,7 +452,9 @@ curl -i -X POST http://localhost:8080/api/auth/login -H "Content-Type: applicati
 
 - **Código esperado**: `HTTP/1.1 401 Unauthorized`
 - **Log servidor**: `[AUTH] login failed | email=juan@empresa.com | reason=wrong_password`
-- Tras 5 fallos para la misma IP y correo, el sexto responde `429 TOO_MANY_ATTEMPTS` con `Retry-After: 900`.
+- Más de 5 pedidos por minuto desde la misma IP (cuenten o no como fallidos) responden `429 RATE_LIMIT_EXCEEDED` con `Retry-After` en los segundos que faltan. Vale también para `/password/forgot` y `/password/reset`, cada ruta con su propia cuenta. Si hacés pruebas a mano o con scripts, espaciá los logins.
+- Tras 5 fallos para la misma IP y correo, el sexto responde `429 TOO_MANY_ATTEMPTS` con `Retry-After` (hasta 900 s).
+- Los cuerpos de `/api/auth` tienen que ser un objeto JSON plano (sin objetos ni listas anidadas), sin caracteres de control (CR, LF, NUL) y de hasta 16 KB; si no, `400 INVALID_REQUEST`. Lo mismo para cualquier cabecera con CR, LF o NUL en toda la API.
 - Si hay un proxy inverso, agregá su IP o CIDR a `TRUSTED_PROXIES`; de lo contrario el backend ignora `X-Forwarded-For` para impedir que se falsee la IP del rate limit.
 - Si Redis no está disponible, las rutas con límites distribuidos responden `503 RATE_LIMIT_UNAVAILABLE`; no degradan a contadores locales que puedan divergir entre réplicas.
 

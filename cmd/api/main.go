@@ -230,6 +230,7 @@ func main() {
 	router.Use(middleware.RequestLogger()) // Logger conciso personalizado
 	router.Use(middleware.CORS())          // Política CORS: lista blanca de orígenes (ver ALLOWED_ORIGINS en .env)
 	router.Use(middleware.SecurityHeaders())
+	router.Use(middleware.RechazarCabecerasConControl()) // CR/LF/NUL en cabeceras: 400
 
 	// 7. Definir las rutas
 	api := router.Group("/api")
@@ -257,10 +258,13 @@ func main() {
 		// ==========================================
 		// Rutas de Autenticación (RF-01)
 		// ==========================================
-		auth := api.Group("/auth")
+		// Cuerpos JSON planos y sin caracteres de control en toda la autenticación.
+		auth := api.Group("/auth", middleware.ValidarCuerpoAuth())
 		{
 			// Rutas públicas (sin autenticación)
-			auth.POST("/login", middleware.LimitarLogin(kvStore), authHandler.Login)
+			// Rutas públicas: 5 pedidos por minuto por IP (ráfagas) y, detrás, los
+			// límites por intentos fallidos.
+			auth.POST("/login", middleware.LimitarRafagas(kvStore, "login"), middleware.LimitarLogin(kvStore), authHandler.Login)
 			auth.POST("/refresh", authHandler.RefrescarToken)
 
 			// Rutas protegidas (requieren JWT access)
@@ -268,8 +272,8 @@ func main() {
 			auth.POST("/ws-ticket", middleware.RequireAuth(authService), authHandler.EmitirWsTicket)
 
 			// Recuperación de contraseña (públicas)
-			auth.POST("/password/forgot", middleware.LimitarSolicitudRecuperacion(kvStore), authHandler.SolicitarRecuperacion)
-			auth.POST("/password/reset", authHandler.ConfirmarRecuperacion)
+			auth.POST("/password/forgot", middleware.LimitarRafagas(kvStore, "forgot"), middleware.LimitarSolicitudRecuperacion(kvStore), authHandler.SolicitarRecuperacion)
+			auth.POST("/password/reset", middleware.LimitarRafagas(kvStore, "reset"), authHandler.ConfirmarRecuperacion)
 
 			// Rutas del flujo 2FA (requieren JWT temporal pre-auth)
 			twoFA := auth.Group("/2fa", middleware.RequirePreAuth(authService))

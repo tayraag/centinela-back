@@ -192,7 +192,8 @@ redis.call("ZREMRANGEBYSCORE", KEYS[1], "-inf", ARGV[1])
 local cantidad = redis.call("ZCARD", KEYS[1])
 if cantidad >= tonumber(ARGV[3]) then
   redis.call("EXPIRE", KEYS[1], ARGV[4])
-  return {0, cantidad}
+  local masViejo = redis.call("ZRANGE", KEYS[1], 0, 0, "WITHSCORES")
+  return {0, cantidad, tonumber(masViejo[2])}
 end
 redis.call("ZADD", KEYS[1], ARGV[2], ARGV[5])
 redis.call("EXPIRE", KEYS[1], ARGV[4])
@@ -204,10 +205,20 @@ return {1, cantidad + 1}
 	if err != nil {
 		return ports.RegistroVentana{}, fmt.Errorf("redis sliding window %s: %w", key, err)
 	}
-	if len(resultado) != 2 {
+	if len(resultado) < 2 {
 		return ports.RegistroVentana{}, fmt.Errorf("redis sliding window %s devolvió un resultado inválido", key)
 	}
-	return ports.RegistroVentana{Permitido: resultado[0] == 1, Cantidad: resultado[1]}, nil
+	registro := ports.RegistroVentana{Permitido: resultado[0] == 1, Cantidad: resultado[1]}
+	if !registro.Permitido && len(resultado) == 3 {
+		registro.ReintentarEn = reintentarEn(time.UnixMilli(resultado[2]), ventana, ahora)
+	}
+	return registro, nil
+}
+
+// reintentarEn: cuánto falta para que el intento más viejo salga de la
+// ventana (como mínimo 1 s, para que Retry-After nunca sea 0).
+func reintentarEn(masViejo time.Time, ventana time.Duration, ahora time.Time) time.Duration {
+	return max(masViejo.Add(ventana).Sub(ahora), time.Second)
 }
 
 func (s *KVStore) EliminarDeVentana(ctx context.Context, key, member string) error {

@@ -24,9 +24,48 @@ const (
 	limite2FA     int64 = 3
 	ventanaForgot       = time.Hour
 	limiteForgot  int64 = 3
+	// Ráfagas: pedidos por minuto y por IP en cada ruta pública de autenticación,
+	// cuenten o no como fallidos (frena la saturación de bcrypt y el spraying).
+	ventanaPorMinuto       = time.Minute
+	limitePorMinuto  int64 = 5
 
 	contextKeyUltimoIntento2FA = "rateLimit2FAUltimoIntento"
 )
+
+// LimitarRafagas permite como máximo 5 pedidos por minuto por IP a una ruta
+// pública de autenticación (ruta identifica la ventana: login, forgot, reset).
+// El sexto responde 429 RATE_LIMIT_EXCEEDED con Retry-After en los segundos
+// que faltan para que se libere un lugar. Va antes de los límites por intentos
+// fallidos y también corre sin Redis (en la memoria del proceso).
+func LimitarRafagas(store ports.KeyValueStore, ruta string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		key := "ratelimit:minuto:" + ruta + ":" + huella(c.ClientIP())
+		registro, err := store.RegistrarEnVentana(c.Request.Context(), key, uuid.NewString(), time.Now(), ventanaPorMinuto, limitePorMinuto)
+		if err != nil {
+			responderRateLimitNoDisponible(c)
+			return
+		}
+		if !registro.Permitido {
+			c.Header("Retry-After", segundosParaReintentar(registro, ventanaPorMinuto))
+			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
+				"errorCode": "RATE_LIMIT_EXCEEDED",
+				"message":   "Demasiados intentos. Por favor, intente nuevamente en un minuto.",
+			})
+			return
+		}
+		c.Next()
+	}
+}
+
+// segundosParaReintentar redondea hacia arriba ReintentarEn (o la ventana
+// entera si el almacén no lo informó).
+func segundosParaReintentar(registro ports.RegistroVentana, ventana time.Duration) string {
+	espera := registro.ReintentarEn
+	if espera <= 0 {
+		espera = ventana
+	}
+	return strconv.Itoa(int((espera + time.Second - 1) / time.Second))
+}
 
 // LimitarLogin reserva un lugar en la ventana antes de ejecutar el handler y
 // lo revierte salvo que la respuesta sea 401. Así solo persisten los intentos
@@ -50,7 +89,7 @@ func LimitarLogin(store ports.KeyValueStore) gin.HandlerFunc {
 			return
 		}
 		if !registro.Permitido {
-			responderDemasiadosIntentos(c, int(ventanaLogin.Seconds()), "Demasiados intentos fallidos. Intente nuevamente en 15 minutos.")
+			responderDemasiadosIntentos(c, segundosParaReintentar(registro, ventanaLogin), "Demasiados intentos fallidos. Intente nuevamente en 15 minutos.")
 			return
 		}
 
@@ -138,7 +177,7 @@ func LimitarSolicitudRecuperacion(store ports.KeyValueStore) gin.HandlerFunc {
 			return
 		}
 		if !porIP.Permitido {
-			responderDemasiadosIntentos(c, int(ventanaForgot.Seconds()), "Demasiadas solicitudes de recuperación. Intente nuevamente en 60 minutos.")
+			responderDemasiadosIntentos(c, segundosParaReintentar(porIP, ventanaForgot), "Demasiadas solicitudes de recuperación. Intente nuevamente en 60 minutos.")
 			return
 		}
 		porEmail, err := store.RegistrarEnVentana(c.Request.Context(), keyEmail, member, time.Now(), ventanaForgot, limiteForgot)
@@ -149,7 +188,7 @@ func LimitarSolicitudRecuperacion(store ports.KeyValueStore) gin.HandlerFunc {
 		}
 		if !porEmail.Permitido {
 			_ = store.EliminarDeVentana(c.Request.Context(), keyIP, member)
-			responderDemasiadosIntentos(c, int(ventanaForgot.Seconds()), "Demasiadas solicitudes de recuperación. Intente nuevamente en 60 minutos.")
+			responderDemasiadosIntentos(c, segundosParaReintentar(porEmail, ventanaForgot), "Demasiadas solicitudes de recuperación. Intente nuevamente en 60 minutos.")
 			return
 		}
 		c.Next()
@@ -179,8 +218,8 @@ func huella(valor string) string {
 	return hex.EncodeToString(suma[:])
 }
 
-func responderDemasiadosIntentos(c *gin.Context, retryAfter int, mensaje string) {
-	c.Header("Retry-After", strconv.Itoa(retryAfter))
+func responderDemasiadosIntentos(c *gin.Context, retryAfter string, mensaje string) {
+	c.Header("Retry-After", retryAfter)
 	c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
 		"errorCode": "TOO_MANY_ATTEMPTS",
 		"message":   mensaje,

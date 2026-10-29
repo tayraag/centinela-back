@@ -350,9 +350,10 @@ func (s *authServiceImpl) VerificarTotp(ctx context.Context, jtiTemporal, codigo
 	})
 
 	return &ports.TokenResult{
-		AccessToken:  accessToken,
-		RefreshToken: refreshToken,
-		ExpiresIn:    int64(accessTTL.Seconds()),
+		AccessToken:     accessToken,
+		RefreshToken:    refreshToken,
+		ExpiresIn:       int64(accessTTL.Seconds()),
+		RefreshExpiraEn: sesion.FechaExpiracion,
 	}, nil
 }
 
@@ -436,9 +437,10 @@ func (s *authServiceImpl) RefrescarToken(ctx context.Context, refreshToken strin
 	log.Printf("[AUTH] refresh ok | user=%s | session=%s", usuario.EmailUsuario, sesionID)
 
 	return &ports.TokenResult{
-		AccessToken:  accessToken,
-		RefreshToken: refreshToken, // El refresh token se mantiene igual
-		ExpiresIn:    int64(accessTTL.Seconds()),
+		AccessToken:     accessToken,
+		RefreshToken:    refreshToken, // El refresh token se mantiene igual
+		ExpiresIn:       int64(accessTTL.Seconds()),
+		RefreshExpiraEn: sesion.FechaExpiracion,
 	}, nil
 }
 

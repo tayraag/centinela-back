@@ -170,7 +170,14 @@ func (s *KVStore) RegistrarEnVentana(_ context.Context, key, member string, ahor
 		}
 	}
 	if int64(len(eventos)) >= limite {
-		return ports.RegistroVentana{Permitido: false, Cantidad: int64(len(eventos))}, nil
+		masViejo := ahora
+		for _, instante := range eventos {
+			if instante.Before(masViejo) {
+				masViejo = instante
+			}
+		}
+		return ports.RegistroVentana{Permitido: false, Cantidad: int64(len(eventos)),
+			ReintentarEn: max(masViejo.Add(ventana).Sub(ahora), time.Second)}, nil
 	}
 	eventos[member] = ahora
 	return ports.RegistroVentana{Permitido: true, Cantidad: int64(len(eventos))}, nil

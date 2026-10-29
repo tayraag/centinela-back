@@ -64,7 +64,8 @@ miServicio := services.NewMiServicio(kvStore)
 | ----- | ----- | --- | ------------ |
 | `auth:pre2fa:<jti>` | `usuario_id` | 5 min | Login → 2FA. Se consume con `GetDel` al verificar el código. |
 | `auth:session:<session_id>` | JSON: `sesion_id`, `usuario_id`, `jti_access`, `jti_refresh`, `fecha_expiracion` | vida del refresh (30 días) | Réplica de `sesiones_activas` para validar cada request. PostgreSQL sigue siendo la fuente de verdad. |
-| `ratelimit:login:<sha256(IP,email)>` | Sorted set de intentos fallidos | 15 min | Máximo 5 fallos por tupla IP/correo; el sexto responde `429` con `Retry-After: 900`. |
+| `ratelimit:minuto:<login\|forgot\|reset>:<sha256(IP)>` | Sorted set de pedidos | 1 min | Ráfagas: máximo 5 pedidos por minuto por IP en cada ruta pública de autenticación, cuenten o no como fallidos; el sexto responde `429 RATE_LIMIT_EXCEEDED` con `Retry-After` en los segundos que faltan. Sin Redis se aplica en la memoria del proceso. |
+| `ratelimit:login:<sha256(IP,email)>` | Sorted set de intentos fallidos | 15 min | Máximo 5 fallos por tupla IP/correo; el sexto responde `429 TOO_MANY_ATTEMPTS` con `Retry-After` en los segundos que faltan (hasta 900). |
 | `ratelimit:2fa:<jti>` | Sorted set de verificaciones fallidas | 5 min | Al tercer fallo se elimina también `auth:pre2fa:<jti>` y el token responde `TOKEN_REVOKED`. |
 | `ratelimit:forgot:ip:<sha256(IP)>` | Sorted set de solicitudes | 60 min | Máximo 3 solicitudes de recuperación por IP. |
 | `ratelimit:forgot:email:<sha256(email)>` | Sorted set de solicitudes | 60 min | Máximo 3 solicitudes por correo destino. |

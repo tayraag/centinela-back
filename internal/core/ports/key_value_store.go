@@ -29,6 +29,9 @@ type Mensaje struct {
 type RegistroVentana struct {
 	Permitido bool
 	Cantidad  int64
+	// ReintentarEn: si no se permitió, cuánto falta para que el intento más
+	// viejo salga de la ventana y vuelva a haber lugar (Retry-After).
+	ReintentarEn time.Duration
 }
 
 // KeyValueStore es el almacén efímero compartido por todo el backend: claves

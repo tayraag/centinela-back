@@ -120,6 +120,8 @@ centinela-back/
 │   │   │           ├── instance_guard.go     # RequireInstanceAccess (permiso del OPERATOR sobre la instancia)
 │   │   │           ├── protected_instance.go # RejectProtectedInstance (VMIDs de infraestructura)
 │   │   │           ├── instance_idle.go      # RequireInstanceIdle (exclusión mutua: 409 INSTANCE_BUSY sin contactar a Proxmox)
+│   │   │           ├── ratelimit.go          # Límites de autenticación: ráfagas por IP (5/min) y intentos fallidos (login, 2FA, recuperación)
+│   │   │           ├── sanitizacion.go       # Cabeceras sin CR/LF/NUL y cuerpos JSON de /api/auth planos y sin caracteres de control
 │   │   │           ├── cors_middleware.go    # CORS (ALLOWED_ORIGINS; también lo usa el WebSocket de métricas)
 │   │   │           ├── security_headers_middleware.go # Headers de seguridad
 │   │   │           └── logger_middleware.go  # Logger de peticiones HTTP

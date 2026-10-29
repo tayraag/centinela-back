@@ -25,6 +25,12 @@ func NewAuthHandler(service ports.AuthService, kv ports.KeyValueStore) *AuthHand
 	return &AuthHandler{service: service, kv: kv}
 }
 
+// segundosHasta es el Max-Age de la cookie: lo que le queda al refresh token
+// (la cookie no debe sobrevivir al token ni vencer antes).
+func segundosHasta(vence time.Time) int {
+	return max(int(time.Until(vence).Seconds()), 1)
+}
+
 // setRefreshCookie encapsula la lógica para emitir o borrar la cookie segura del refresh token.
 func setRefreshCookie(c *gin.Context, token string, maxAge int) {
 	// En producción usar Secure=true. En desarrollo local puede ser false mediante variable de entorno.
@@ -59,10 +65,10 @@ type LoginRequest struct {
 // @Produce      json
 // @Param        body body LoginRequest true "Credenciales de acceso"
 // @Success      200 {object} ports.LoginResult
-// @Failure      400 {object} ErrorResponse "Formato de petición inválido"
+// @Failure      400 {object} ErrorResponse "INVALID_REQUEST — formato inválido, o el cuerpo no es un objeto JSON plano (sin objetos ni listas anidadas), trae caracteres de control (CR, LF, NUL) o supera 16 KB; también una cabecera con caracteres de control"
 // @Failure      401 {object} ErrorResponse "AUTH_FAILED — credenciales incorrectas o cuenta eliminada"
 // @Failure      403 {object} ErrorResponse "USER_INACTIVE — credenciales correctas pero la cuenta está suspendida"
-// @Failure      429 {object} ErrorResponse "TOO_MANY_ATTEMPTS — máximo 5 intentos fallidos por IP y correo cada 15 minutos"
+// @Failure      429 {object} ErrorResponse "RATE_LIMIT_EXCEEDED — más de 5 pedidos por minuto desde la misma IP | TOO_MANY_ATTEMPTS — máximo 5 intentos fallidos por IP y correo cada 15 minutos. Ambos traen Retry-After con los segundos que faltan"
 // @Failure      503 {object} ErrorResponse "RATE_LIMIT_UNAVAILABLE — Redis no permite aplicar el límite distribuido"
 // @Router       /auth/login [post]
 func (h *AuthHandler) Login(c *gin.Context) {
@@ -91,13 +97,17 @@ func (h *AuthHandler) Login(c *gin.Context) {
 // Logout invalida la sesión del usuario a partir de su refresh token en la cookie.
 //
 // @Summary      Cerrar sesión (logout)
-// @Description  Invalida la sesión asociada al refresh token en la cookie `centinela_refresh`. Emite la eliminación de la cookie y responde 204.
+// @Description  Invalida la sesión asociada al refresh token en la cookie `centinela_refresh` y responde 204. Siempre ordena borrar la cookie (`Set-Cookie` con `Max-Age=0`, expiración inmediata), también cuando la cookie falta o la sesión ya no era válida (401).
 // @Tags         Autenticación
 // @Produce      json
 // @Success      204 "Sin contenido"
 // @Failure      401 {object} ErrorResponse "Refresh token inválido, sesión ya cerrada o cookie ausente"
 // @Router       /auth/logout [post]
 func (h *AuthHandler) Logout(c *gin.Context) {
+	// La cookie se borra siempre (Max-Age=-1), aunque la sesión ya no sea
+	// válida: el navegador no debe quedarse con un refresh token inservible.
+	setRefreshCookie(c, "", -1)
+
 	refreshToken, err := c.Cookie("centinela_refresh")
 	if err != nil || refreshToken == "" {
 		SendError(c, http.StatusUnauthorized, "REFRESH_COOKIE_MISSING", "Cookie de refresh token no provista.")
@@ -108,9 +118,6 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 		SendError(c, http.StatusUnauthorized, "AUTH_FAILED", "sesión inválida o ya cerrada")
 		return
 	}
-
-	// Borrar la cookie emitiendo Max-Age=-1
-	setRefreshCookie(c, "", -1)
 
 	c.Status(http.StatusNoContent)
 }
@@ -166,14 +173,14 @@ type verificarTotpRequest struct {
 // VerificarTotp valida el código TOTP y emite access + refresh tokens.
 //
 // @Summary      Verificar código TOTP → obtener tokens definitivos
-// @Description  Recibe el código de 6 dígitos del autenticador. Si es correcto emite el `accessToken` (8h) y el `refreshToken` (30 días) con 2FA completado. Funciona tanto para la primera vinculación como para logins posteriores.
+// @Description  Recibe el código de 6 dígitos del autenticador. Si es correcto devuelve en el cuerpo el `accessToken` (8h) y `expiresIn`, y deja el refresh token **solo** en la cookie `centinela_refresh` (`HttpOnly; Secure; SameSite=Strict; Path=/api/auth`, con `Max-Age` igual a la vida del refresh token, `JWT_REFRESH_TTL_DAYS`): el JavaScript del front no puede leerla. Con `COOKIE_SECURE=false` (solo desarrollo local sin HTTPS) se emite sin `Secure`. Funciona tanto para la primera vinculación como para logins posteriores.
 // @Tags         Autenticación 2FA
 // @Accept       json
 // @Produce      json
 // @Security     BearerPreAuth
 // @Param        body body verificarTotpRequest true "Código TOTP de 6 dígitos"
 // @Success      200 {object} ports.TokenResult
-// @Failure      400 {object} ErrorResponse "Código inválido (no tiene 6 dígitos)"
+// @Failure      400 {object} ErrorResponse "Código inválido (no tiene 6 dígitos) | INVALID_REQUEST — formato inválido, o el cuerpo no es un objeto JSON plano (sin objetos ni listas anidadas), trae caracteres de control (CR, LF, NUL) o supera 16 KB; también una cabecera con caracteres de control"
 // @Failure      401 {object} ErrorResponse "TOTP_FAILED — código incorrecto o ya utilizado; TOKEN_REVOKED — sesión temporal revocada tras 3 fallos"
 // @Failure      403 {object} ErrorResponse "USER_INACTIVE — la cuenta fue suspendida durante el login"
 // @Failure      503 {object} ErrorResponse "RATE_LIMIT_UNAVAILABLE — Redis no permite aplicar el límite distribuido"
@@ -202,8 +209,9 @@ func (h *AuthHandler) VerificarTotp(c *gin.Context) {
 		return
 	}
 
-	// Emitir la cookie segura con el refresh token. Tiempo de vida: 7 días.
-	setRefreshCookie(c, result.RefreshToken, 7*24*3600)
+	// Emitir la cookie segura con el refresh token, con la vida del token
+	// (JWT_REFRESH_TTL_DAYS).
+	setRefreshCookie(c, result.RefreshToken, segundosHasta(result.RefreshExpiraEn))
 
 	c.JSON(http.StatusOK, result)
 }
@@ -215,7 +223,7 @@ func (h *AuthHandler) VerificarTotp(c *gin.Context) {
 // RefrescarToken valida un refresh token de la cookie y emite un nuevo access token.
 //
 // @Summary      Renovar access token
-// @Description  Lee el refresh token desde la cookie HTTP-Only, valida la sesión y emite un nuevo access token. Rota la cookie emitiendo un nuevo refresh token.
+// @Description  Lee el refresh token desde la cookie HTTP-Only, valida la sesión y emite un nuevo access token en el cuerpo. Vuelve a emitir la cookie (`HttpOnly; Secure; SameSite=Strict; Path=/api/auth`) con lo que le queda al refresh token: el refresh no extiende la sesión. El refresh token nunca va en el cuerpo.
 // @Tags         Autenticación
 // @Produce      json
 // @Success      200 {object} ports.TokenResult
@@ -236,8 +244,9 @@ func (h *AuthHandler) RefrescarToken(c *gin.Context) {
 		return
 	}
 
-	// Rotar la cookie con el nuevo refresh token emitido
-	setRefreshCookie(c, result.RefreshToken, 7*24*3600)
+	// Volver a emitir la cookie con lo que le queda al refresh token: el
+	// refresh no extiende la sesión.
+	setRefreshCookie(c, result.RefreshToken, segundosHasta(result.RefreshExpiraEn))
 
 	c.JSON(http.StatusOK, result)
 }
@@ -259,8 +268,8 @@ type solicitarRecuperacionRequest struct {
 // @Produce      json
 // @Param        body body solicitarRecuperacionRequest true "Email del usuario"
 // @Success      200 {object} map[string]string
-// @Failure      400 {object} ErrorResponse "Email inválido"
-// @Failure      429 {object} ErrorResponse "TOO_MANY_ATTEMPTS — máximo 3 solicitudes por IP o correo cada 60 minutos"
+// @Failure      400 {object} ErrorResponse "Email inválido | INVALID_REQUEST — formato inválido, o el cuerpo no es un objeto JSON plano (sin objetos ni listas anidadas), trae caracteres de control (CR, LF, NUL) o supera 16 KB; también una cabecera con caracteres de control"
+// @Failure      429 {object} ErrorResponse "RATE_LIMIT_EXCEEDED — más de 5 pedidos por minuto desde la misma IP | TOO_MANY_ATTEMPTS — máximo 3 solicitudes por IP o correo cada 60 minutos. Ambos traen Retry-After"
 // @Failure      503 {object} ErrorResponse "RATE_LIMIT_UNAVAILABLE — Redis no permite aplicar el límite distribuido"
 // @Router       /auth/password/forgot [post]
 func (h *AuthHandler) SolicitarRecuperacion(c *gin.Context) {
@@ -298,7 +307,8 @@ type confirmarRecuperacionRequest struct {
 // @Produce      json
 // @Param        body body confirmarRecuperacionRequest true "Datos de recuperación"
 // @Success      200 {object} map[string]string
-// @Failure      400 {object} ErrorResponse "Datos inválidos, código incorrecto, demasiados intentos, contraseña débil o igual a la actual"
+// @Failure      400 {object} ErrorResponse "Datos inválidos, código incorrecto, demasiados intentos, contraseña débil o igual a la actual | INVALID_REQUEST — formato inválido, o el cuerpo no es un objeto JSON plano (sin objetos ni listas anidadas), trae caracteres de control (CR, LF, NUL) o supera 16 KB; también una cabecera con caracteres de control"
+// @Failure      429 {object} ErrorResponse "RATE_LIMIT_EXCEEDED — más de 5 pedidos por minuto desde la misma IP (con Retry-After)"
 // @Router       /auth/password/reset [post]
 func (h *AuthHandler) ConfirmarRecuperacion(c *gin.Context) {
 	var req confirmarRecuperacionRequest

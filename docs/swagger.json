@@ -1273,7 +1273,7 @@
                         "BearerPreAuth": []
                     }
                 ],
-                "description": "Recibe el código de 6 dígitos del autenticador. Si es correcto emite el `accessToken` (8h) y el `refreshToken` (30 días) con 2FA completado. Funciona tanto para la primera vinculación como para logins posteriores.",
+                "description": "Recibe el código de 6 dígitos del autenticador. Si es correcto devuelve en el cuerpo el `accessToken` (8h) y `expiresIn`, y deja el refresh token **solo** en la cookie `centinela_refresh` (`HttpOnly; Secure; SameSite=Strict; Path=/api/auth`, con `Max-Age` igual a la vida del refresh token, `JWT_REFRESH_TTL_DAYS`): el JavaScript del front no puede leerla. Con `COOKIE_SECURE=false` (solo desarrollo local sin HTTPS) se emite sin `Secure`. Funciona tanto para la primera vinculación como para logins posteriores.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1303,7 +1303,7 @@
                         }
                     },
                     "400": {
-                        "description": "Código inválido (no tiene 6 dígitos)",
+                        "description": "Código inválido (no tiene 6 dígitos) | INVALID_REQUEST — formato inválido, o el cuerpo no es un objeto JSON plano (sin objetos ni listas anidadas), trae caracteres de control (CR, LF, NUL) o supera 16 KB; también una cabecera con caracteres de control",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -1361,7 +1361,7 @@
                         }
                     },
                     "400": {
-                        "description": "Formato de petición inválido",
+                        "description": "INVALID_REQUEST — formato inválido, o el cuerpo no es un objeto JSON plano (sin objetos ni listas anidadas), trae caracteres de control (CR, LF, NUL) o supera 16 KB; también una cabecera con caracteres de control",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -1379,7 +1379,7 @@
                         }
                     },
                     "429": {
-                        "description": "TOO_MANY_ATTEMPTS — máximo 5 intentos fallidos por IP y correo cada 15 minutos",
+                        "description": "RATE_LIMIT_EXCEEDED — más de 5 pedidos por minuto desde la misma IP | TOO_MANY_ATTEMPTS — máximo 5 intentos fallidos por IP y correo cada 15 minutos. Ambos traen Retry-After con los segundos que faltan",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -1395,7 +1395,7 @@
         },
         "/auth/logout": {
             "post": {
-                "description": "Invalida la sesión asociada al refresh token en la cookie `centinela_refresh`. Emite la eliminación de la cookie y responde 204.",
+                "description": "Invalida la sesión asociada al refresh token en la cookie `centinela_refresh` y responde 204. Siempre ordena borrar la cookie (`Set-Cookie` con `Max-Age=0`, expiración inmediata), también cuando la cookie falta o la sesión ya no era válida (401).",
                 "produces": [
                     "application/json"
                 ],
@@ -1451,13 +1451,13 @@
                         }
                     },
                     "400": {
-                        "description": "Email inválido",
+                        "description": "Email inválido | INVALID_REQUEST — formato inválido, o el cuerpo no es un objeto JSON plano (sin objetos ni listas anidadas), trae caracteres de control (CR, LF, NUL) o supera 16 KB; también una cabecera con caracteres de control",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
                     },
                     "429": {
-                        "description": "TOO_MANY_ATTEMPTS — máximo 3 solicitudes por IP o correo cada 60 minutos",
+                        "description": "RATE_LIMIT_EXCEEDED — más de 5 pedidos por minuto desde la misma IP | TOO_MANY_ATTEMPTS — máximo 3 solicitudes por IP o correo cada 60 minutos. Ambos traen Retry-After",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -1506,7 +1506,13 @@
                         }
                     },
                     "400": {
-                        "description": "Datos inválidos, código incorrecto, demasiados intentos, contraseña débil o igual a la actual",
+                        "description": "Datos inválidos, código incorrecto, demasiados intentos, contraseña débil o igual a la actual | INVALID_REQUEST — formato inválido, o el cuerpo no es un objeto JSON plano (sin objetos ni listas anidadas), trae caracteres de control (CR, LF, NUL) o supera 16 KB; también una cabecera con caracteres de control",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "RATE_LIMIT_EXCEEDED — más de 5 pedidos por minuto desde la misma IP (con Retry-After)",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -1516,7 +1522,7 @@
         },
         "/auth/refresh": {
             "post": {
-                "description": "Lee el refresh token desde la cookie HTTP-Only, valida la sesión y emite un nuevo access token. Rota la cookie emitiendo un nuevo refresh token.",
+                "description": "Lee el refresh token desde la cookie HTTP-Only, valida la sesión y emite un nuevo access token en el cuerpo. Vuelve a emitir la cookie (`HttpOnly; Secure; SameSite=Strict; Path=/api/auth`) con lo que le queda al refresh token: el refresh no extiende la sesión. El refresh token nunca va en el cuerpo.",
                 "produces": [
                     "application/json"
                 ],

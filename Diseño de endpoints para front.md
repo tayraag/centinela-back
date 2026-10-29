@@ -100,6 +100,8 @@ Petición (Frontend ➡️ Backend)
 
 **POST /api/auth/login**
 
+> **OPERATIVO ETAPA-1:** más de 5 pedidos por minuto desde la misma IP (a login, y aparte a `/password/forgot` y `/password/reset`) responden `429 {"errorCode":"RATE_LIMIT_EXCEEDED","message":"Demasiados intentos. Por favor, intente nuevamente en un minuto."}` con la cabecera `Retry-After` (segundos); además, 5 intentos fallidos para el mismo correo en 15 minutos dan `429 TOO_MANY_ATTEMPTS`. El cuerpo tiene que ser un objeto JSON plano, sin caracteres de control (`400 INVALID_REQUEST` si no).
+
 ```json
 {
   "email": "ejemplo@correo.com",
@@ -306,10 +308,11 @@ Al validar el código correctamente, el backend entrega el par de tokens definit
 ```json
 {
   "accessToken": "eyJhbGciOiJIUzI1NiIsInR...",
-  "refreshToken": "eyJhbGciOiJIUzI1NiIsInR...",
   "expiresIn": 28800
 }
 ```
+
+> **OPERATIVO ETAPA-1:** el `refreshToken` **no** viene en el cuerpo: el backend lo deja en la cookie `centinela_refresh` (`HttpOnly; Secure; SameSite=Strict; Path=/api/auth`, `Max-Age` = la vida del refresh token, 30 días por defecto). El JavaScript del front no puede leerla (`document.cookie` no la ve): el navegador la manda sola a `/api/auth/refresh` y `/api/auth/logout`, así que el front tiene que hacer esos pedidos con `credentials: "include"` (o `withCredentials: true`). No guardar tokens en `sessionStorage`/`localStorage` más allá del `accessToken`.
 
 > 📌 El `accessToken` y el `refreshToken` son JWT firmados que contienen los claims del usuario (ID, rol, estado 2FA verificado). El frontend no necesita recibir un objeto `user` separado: puede decodificar el payload del JWT para leer `sub` (userID) y `rol`. El `refreshToken` tiene una vida de 30 días (configurable).
 
@@ -348,8 +351,12 @@ Al validar el código correctamente, el backend entrega el par de tokens definit
 **POST /api/auth/refresh**
 Recibe el `refreshToken` y devuelve un nuevo par de tokens temporal si la sesión sigue siendo válida.
 
+> **OPERATIVO ETAPA-1:** sin cuerpo: el refresh token llega en la cookie `centinela_refresh`. Responde `200 {accessToken, expiresIn}` y vuelve a emitir la cookie con lo que le queda al refresh token (el refresh no extiende la sesión).
+
 **POST /api/auth/logout**
 Invalida los tokens de la sesión actual en el backend. Requiere enviar el `Authorization: Bearer <accessToken>`.
+
+> **OPERATIVO ETAPA-1:** además de la cabecera `Authorization`, necesita la cookie `centinela_refresh` (el navegador la manda sola con `credentials: "include"`). Responde `204` y **siempre** ordena borrar la cookie (`Max-Age=0`), incluso si la sesión ya no era válida (`401`).
 
 #### 5\. Recuperación / Revinculación de 2FA
 
