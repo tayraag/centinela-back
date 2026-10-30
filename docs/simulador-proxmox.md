@@ -119,10 +119,10 @@ Todos bajo `/api2/json`, con el formato de Proxmox (`{"data": ...}`).
 | RF | Endpoint | Qué hace |
 | -- | -------- | -------- |
 | RF-02, 03 | `GET /cluster/resources` | Inventario completo. Acepta `?type=vm\|node\|storage\|sdn`. |
-| RNF-04 | `GET /version` | Versión de Proxmox VE: `{"version": "9.2.2", "release": "9.2", ...}`. La API la consulta al arrancar (`PROXMOX_TARGET_PVE_VERSION`). |
+| RNF-04 | `GET /version` | Versión de Proxmox VE según el perfil: `{"version": "9.2.2", "release": "9.2", ...}` o, con `PROXMOX_SIM_TARGET_VERSION=8.4.21`, `{"version": "8.4", "release": "21", ...}`. La API la consulta al arrancar (`PROXMOX_TARGET_PVE_VERSION`) y entiende los dos formatos. |
 | RNF-04 | `GET /nodes` | El único nodo del simulador (`PROXMOX_NODE`), con `status: online`. La API lo usa para descubrir el nodo si no tiene `PROXMOX_NODE`. |
 | RF-07 | `GET /cluster/nextid` | Menor VMID libre desde 100, como string: `{"data": "102"}`. Con `?vmid=N` lo devuelve si está libre o responde `400 VM N already exists`. |
-| RF-02, 07, 11 | `GET /nodes/{node}/status` | Salud del nodo: CPU, memoria (sube cuando encendés instancias), disco, uptime. |
+| RF-02, 07, 11 | `GET /nodes/{node}/status` | Salud del nodo: CPU, memoria (sube cuando encendés instancias), disco, uptime. `pveversion`, `kversion` y `current-kernel` dependen del perfil de versión. |
 | — | `GET /nodes/{node}/qemu` · `GET /nodes/{node}/lxc` | Listado por tipo. |
 | RF-05, 11 | `GET /nodes/{node}/{tipo}/{vmid}/status/current` | Estado detallado de una instancia. |
 | RF-04 | `POST /nodes/{node}/{tipo}/{vmid}/status/{accion}` | `start`, `stop`, `shutdown`, `reboot` y, solo en VMs, `reset`. Devuelve un UPID. |
@@ -228,6 +228,25 @@ También podés simplemente **apagar el simulador**: la API responde `502` y en 
 
 ---
 
+## Perfil de versión: imitar PVE 9.2.2 o 8.4.21
+
+Por defecto el simulador imita **Proxmox VE 9.2.2**, la versión de las capturas. Para probar contra lo que responde el servidor de destino (**PVE 8.4.21**), arrancalo con `PROXMOX_SIM_TARGET_VERSION`:
+
+```bash
+PROXMOX_SIM_TARGET_VERSION=8.4.21 go run ./cmd/proxmox-simulador
+```
+
+| Perfil | `GET /version` | `pveversion` en `/nodes/{node}/status` | Kernel (`kversion`, `current-kernel`) |
+| ------ | -------------- | -------------------------------------- | ------------------------------------- |
+| `9.2.2` *(por defecto)* | `"version": "9.2.2"`, `"release": "9.2"` | `pve-manager/9.2.2/b9984c6d90a4bd80` | `Linux 7.0.2-6-pve ...` |
+| `8.4.21` | `"version": "8.4"`, `"release": "21"` | `pve-manager/8.4-21/c5b55b84d1f84ea6` | `Linux 6.8.12-11-pve ...` |
+
+El resto de las respuestas, y la estructura y los tipos de `/nodes/{node}/status`, son iguales en los dos perfiles. El log de arranque muestra el perfil activo. Otro valor (ej. `8.4`) no deja arrancar el simulador.
+
+Para que una respuesta cambie según la versión, el handler lee `s.obtenerPerfilVersion()` (en `perfil.go`). Ahí se suman las variaciones de cada versión (por ejemplo, formatos de discos o storages).
+
+---
+
 ## Configuración
 
 Todas se leen del mismo `.env` del backend.
@@ -239,6 +258,7 @@ Todas se leen del mismo `.env` del backend.
 | `PROXMOX_SIM_PORT` | `8081` | Puerto donde escucha. |
 | `PROXMOX_SIM_DURACION_TAREA` | `3` | Segundos que tarda cada tarea (start, stop, snapshot...). |
 | `PROXMOX_SIM_FALLA` | *(vacío)* | Modo falla: `caido`, `token` o `lento`. |
+| `PROXMOX_SIM_TARGET_VERSION` | `9.2.2` | Versión de Proxmox VE que imita: `9.2.2` u `8.4.21`. Ver *Perfil de versión*. |
 
 ---
 
@@ -295,6 +315,7 @@ go test ./cmd/proxmox-simulador/ -v
 | ------- | --------- |
 | `cmd/proxmox-simulador/main.go` | Arranque: lee el `.env` y levanta el servidor. |
 | `simulador.go` | Rutas, autenticación por token, modos de falla y formato de respuestas y errores. |
+| `perfil.go` | Perfiles de versión de PVE (`PROXMOX_SIM_TARGET_VERSION`) y `obtenerPerfilVersion()`. |
 | `inventario.go` | Las instancias iniciales (de las capturas) y su config. |
 | `instancias.go` | Inventario, estado del nodo, estado de cada instancia y acciones de energía. |
 | `tareas.go` | Tareas asíncronas, UPID y locks. |

@@ -44,7 +44,7 @@ Si falta el token, el cliente no llama a Proxmox y devuelve `ErrProxmoxCredencia
 | Endpoint                                              | Para qué                                                        |
 | ----------------------------------------------------- | --------------------------------------------------------------- |
 | `GET /nodes`                                          | Al arrancar, descubrir el nodo si falta `PROXMOX_NODE` (`ListarNodos`) |
-| `GET /version`                                        | Al arrancar, informar la versión de Proxmox VE y contrastarla con `PROXMOX_TARGET_PVE_VERSION` (`VersionPVE`) |
+| `GET /version`                                        | Al arrancar, informar la versión de Proxmox VE y contrastarla con `PROXMOX_TARGET_PVE_VERSION` (`VersionPVE`). Acepta `version` `"9.2.2"` con `release` `"9.2"`, y `version` `"8.4"` con `release` `"21"` (→ `8.4.21`) |
 | `GET /cluster/resources`                              | Inventario; se conservan solo `type=qemu` y `type=lxc`. También resuelve el nodo y tipo real de cada vmid |
 | `POST /nodes/{node}/{qemu\|lxc}/{vmid}/status/start`  | Iniciar instancia (devuelve UPID)                               |
 | `POST /nodes/{node}/{qemu\|lxc}/{vmid}/status/stop`   | Apagado forzado (devuelve UPID)                                 |

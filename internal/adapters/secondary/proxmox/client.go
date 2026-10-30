@@ -597,12 +597,23 @@ func (c *Client) VersionPVE(ctx context.Context) (string, error) {
 	var parsed struct {
 		Data struct {
 			Version string `json:"version"`
+			Release string `json:"release"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(raw, &parsed); err != nil || parsed.Data.Version == "" {
 		return "", fmt.Errorf("%w: respuesta de versión inválida", ports.ErrProxmoxNoDisponible)
 	}
-	return parsed.Data.Version, nil
+	return versionCompleta(parsed.Data.Version, parsed.Data.Release), nil
+}
+
+// versionCompleta arma la versión de tres partes a partir de /version. Acepta
+// los dos formatos: version "9.2.2" con release "9.2" (la versión ya viene
+// completa) y version "8.4" con release "21" (el release es el último número).
+func versionCompleta(version, release string) string {
+	if strings.Count(version, ".") == 1 && release != "" && strings.Trim(release, "0123456789") == "" {
+		return version + "." + release
+	}
+	return version
 }
 
 // prefijoFlexible acepta el prefix como número (guest agent de qemu: 24) o como

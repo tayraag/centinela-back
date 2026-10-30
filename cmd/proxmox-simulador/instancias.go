@@ -124,13 +124,11 @@ func (s *Simulador) resumenNodo(ahora time.Time) resumenNodo {
 	}
 }
 
-// VersionPVE es la versión de Proxmox VE que informa el simulador en /version.
-const VersionPVE = "9.2.2"
-
-// version imita GET /version: lo consulta la API al arrancar para contrastarlo
-// con PROXMOX_TARGET_PVE_VERSION.
+// version imita GET /version según el perfil (PROXMOX_SIM_TARGET_VERSION): lo
+// consulta la API al arrancar para contrastarlo con PROXMOX_TARGET_PVE_VERSION.
 func (s *Simulador) version(w http.ResponseWriter, _ *http.Request) {
-	responder(w, map[string]any{"version": VersionPVE, "release": "9.2", "repoid": "3e76eec21c4a14a7"})
+	p := s.obtenerPerfilVersion()
+	responder(w, map[string]any{"version": p.VersionAPI, "release": p.ReleaseAPI, "repoid": p.RepoID})
 }
 
 // listarNodos imita GET /nodes con el único nodo del simulador (PROXMOX_NODE):
@@ -156,6 +154,7 @@ func (s *Simulador) estadoNodo(w http.ResponseWriter, r *http.Request) {
 	s.finalizarTareas()
 	n := s.resumenNodo(s.ahora())
 	libre := n.memTotal - n.memUsada
+	perfil := s.obtenerPerfilVersion()
 
 	responder(w, map[string]any{
 		"memory": map[string]any{"total": n.memTotal, "used": n.memUsada, "free": libre - 1084870656, "available": libre},
@@ -173,9 +172,9 @@ func (s *Simulador) estadoNodo(w http.ResponseWriter, r *http.Request) {
 		"wait":           0,
 		"ksm":            map[string]any{"shared": 0},
 		"boot-info":      map[string]any{"mode": "efi", "secureboot": 0},
-		"pveversion":     "pve-manager/9.2.2/b9984c6d90a4bd80",
-		"kversion":       "Linux 7.0.2-6-pve #1 SMP PREEMPT_DYNAMIC PMX 7.0.2-6 (2026-05-20T08:55Z)",
-		"current-kernel": map[string]any{"sysname": "Linux", "release": "7.0.2-6-pve", "machine": "x86_64", "version": "#1 SMP PREEMPT_DYNAMIC PMX 7.0.2-6 (2026-05-20T08:55Z)"},
+		"pveversion":     perfil.PVEManager,
+		"kversion":       perfil.Kversion(),
+		"current-kernel": map[string]any{"sysname": "Linux", "release": perfil.KernelRelease, "machine": "x86_64", "version": perfil.KernelBuild},
 	})
 }
 

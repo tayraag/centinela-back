@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -33,8 +34,15 @@ type entorno struct {
 
 func nuevoEntorno(t *testing.T, falla string) *entorno {
 	t.Helper()
+	return nuevoEntornoConVersion(t, falla, "")
+}
+
+// nuevoEntornoConVersion levanta el simulador con un perfil de versión de PVE
+// (PROXMOX_SIM_TARGET_VERSION); "" = el perfil por defecto.
+func nuevoEntornoConVersion(t *testing.T, falla, version string) *entorno {
+	t.Helper()
 	e := &entorno{t: t, reloj: time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)}
-	cfg := Config{Nodo: "proxmox", TokenID: tokenID, TokenSecret: tokenSecret, DuracionTarea: 3 * time.Second, Falla: falla}
+	cfg := Config{Nodo: "proxmox", TokenID: tokenID, TokenSecret: tokenSecret, DuracionTarea: 3 * time.Second, Falla: falla, Version: version}
 	e.sim = NuevoSimulador(cfg)
 	e.sim.ahora = func() time.Time { return e.reloj }
 	e.sim.inicio = e.reloj
@@ -187,8 +195,93 @@ func TestContrato_ClienteDelBackend_NodosYVersion(t *testing.T) {
 		t.Errorf("nodos=%v err=%v", nodos, err)
 	}
 	version, err := e.cliente().VersionPVE(context.Background())
-	if err != nil || version != VersionPVE {
+	if err != nil || version != VersionSimPorDefecto {
 		t.Errorf("version=%q err=%v", version, err)
+	}
+}
+
+// ==========================================
+// Perfiles de versión (PROXMOX_SIM_TARGET_VERSION)
+// ==========================================
+
+func TestPerfilDeVersion(t *testing.T) {
+	for raw, esperada := range map[string]string{"": "9.2.2", " 9.2.2 ": "9.2.2", "8.4.21": "8.4.21"} {
+		if perfil, err := PerfilDeVersion(raw); err != nil || perfil.Version != esperada {
+			t.Errorf("%q: perfil %q err=%v", raw, perfil.Version, err)
+		}
+	}
+	for _, raw := range []string{"8.4", "9", "auto", "8.4-21"} {
+		if _, err := PerfilDeVersion(raw); err == nil || !strings.Contains(err.Error(), "8.4.21, 9.2.2") {
+			t.Errorf("%q debía rechazarse con las opciones válidas: %v", raw, err)
+		}
+	}
+}
+
+// DoD: cada perfil emite su firma en /version y en /nodes/{node}/status; sin
+// la variable se imita 9.2.2, igual que antes; la estructura y los tipos del
+// estado del nodo no cambian entre perfiles; la API lee las dos como corresponde.
+func TestPerfilesDeVersion(t *testing.T) {
+	casos := []struct {
+		variable, versionAPI, release, pveManager, kernel, deLaAPI string
+	}{
+		{"", "9.2.2", "9.2", "pve-manager/9.2.2/", "Linux 7.0.2-6-pve ", "9.2.2"},
+		{"9.2.2", "9.2.2", "9.2", "pve-manager/9.2.2/", "Linux 7.0.2-6-pve ", "9.2.2"},
+		{"8.4.21", "8.4", "21", "pve-manager/8.4-21/", "Linux 6.8.", "8.4.21"},
+	}
+	estructuras := map[string]string{}
+	for _, caso := range casos {
+		e := nuevoEntornoConVersion(t, "", caso.variable)
+
+		status, data, _ := e.pedir(http.MethodGet, "/version", nil)
+		v, _ := data.(map[string]any)
+		if status != http.StatusOK || v["version"] != caso.versionAPI || v["release"] != caso.release || v["repoid"] == "" {
+			t.Errorf("%q: /version → %d %v", caso.variable, status, data)
+		}
+
+		status, data, _ = e.pedir(http.MethodGet, "/nodes/proxmox/status", nil)
+		n, _ := data.(map[string]any)
+		kernel, _ := n["current-kernel"].(map[string]any)
+		kversion, _ := n["kversion"].(string)
+		pveversion, _ := n["pveversion"].(string)
+		if status != http.StatusOK || !strings.HasPrefix(pveversion, caso.pveManager) || !strings.HasPrefix(kversion, caso.kernel) ||
+			!strings.HasPrefix(kversion, "Linux "+kernel["release"].(string)+" ") {
+			t.Errorf("%q: /nodes/proxmox/status → %d pveversion=%q kversion=%q current-kernel=%v", caso.variable, status, pveversion, kversion, kernel)
+		}
+		estructuras[caso.variable] = estructura(n)
+
+		if version, err := e.cliente().VersionPVE(context.Background()); err != nil || version != caso.deLaAPI {
+			t.Errorf("%q: la API lee la versión %q (err=%v), se esperaba %q", caso.variable, version, err, caso.deLaAPI)
+		}
+		if estado, err := e.cliente().ObtenerEstadoNodo(context.Background(), "proxmox"); err != nil || estado.CPUs != 12 || estado.MemTotal == 0 {
+			t.Errorf("%q: el estado del nodo cambió para la API: %+v err=%v", caso.variable, estado, err)
+		}
+	}
+	if estructuras["8.4.21"] != estructuras["9.2.2"] || estructuras[""] != estructuras["9.2.2"] {
+		t.Errorf("La estructura del estado del nodo cambió entre perfiles:\n9.2.2:  %s\n8.4.21: %s", estructuras["9.2.2"], estructuras["8.4.21"])
+	}
+}
+
+// estructura describe las claves y los tipos JSON de un objeto, recursivamente.
+func estructura(v any) string {
+	switch x := v.(type) {
+	case map[string]any:
+		claves := make([]string, 0, len(x))
+		for k := range x {
+			claves = append(claves, k)
+		}
+		sort.Strings(claves)
+		partes := make([]string, len(claves))
+		for i, k := range claves {
+			partes[i] = k + ":" + estructura(x[k])
+		}
+		return "{" + strings.Join(partes, ",") + "}"
+	case []any:
+		if len(x) == 0 {
+			return "[]"
+		}
+		return "[" + estructura(x[0]) + "]"
+	default:
+		return fmt.Sprintf("%T", v)
 	}
 }
 

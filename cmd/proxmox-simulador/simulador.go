@@ -18,6 +18,7 @@ type Config struct {
 	TokenSecret   string        // PROXMOX_TOKEN_SECRET
 	DuracionTarea time.Duration // cuánto tarda cada tarea asíncrona (start, stop, snapshot...)
 	Falla         string        // modo falla para probar errores: "", "caido", "token", "lento"
+	Version       string        // perfil de versión de PVE (PROXMOX_SIM_TARGET_VERSION); vacío = 9.2.2
 }
 
 // Modos de falla (PROXMOX_SIM_FALLA), para probar cómo reacciona el backend:
@@ -33,6 +34,7 @@ var demoraModoLento = 15 * time.Second
 // Simulador implementa http.Handler imitando la API REST de Proxmox VE.
 type Simulador struct {
 	cfg         Config
+	perfil      PerfilVersion
 	demoraLento time.Duration
 	ahora       func() time.Time // reemplazable en los tests
 	inicio      time.Time
@@ -46,9 +48,15 @@ type Simulador struct {
 }
 
 // NuevoSimulador arma el simulador con el inventario inicial de las capturas.
+// Un cfg.Version no soportado usa el perfil por defecto: main lo valida antes.
 func NuevoSimulador(cfg Config) *Simulador {
+	perfil, err := PerfilDeVersion(cfg.Version)
+	if err != nil {
+		perfil = perfilesVersion[VersionSimPorDefecto]
+	}
 	s := &Simulador{
 		cfg:         cfg,
+		perfil:      perfil,
 		demoraLento: demoraModoLento,
 		ahora:       time.Now,
 		instancias:  map[int]*instancia{},

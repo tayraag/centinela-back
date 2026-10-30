@@ -1089,6 +1089,17 @@ func TestClient_VersionPVE(t *testing.T) {
 	if err != nil || version != "8.4.21" || *ruta != "/api2/json/version" {
 		t.Fatalf("version=%q ruta=%s err=%v", version, *ruta, err)
 	}
+	for cuerpo, esperada := range map[string]string{
+		`{"data":{"version":"9.2.2","release":"9.2","repoid":"abc"}}`: "9.2.2",  // versión completa en "version"
+		`{"data":{"version":"8.4","release":"21","repoid":"abc"}}`:    "8.4.21", // el release es el último número
+		`{"data":{"version":"8.4","release":"","repoid":"abc"}}`:      "8.4",
+		`{"data":{"version":"8.4","release":"8.4","repoid":"abc"}}`:   "8.4",
+	} {
+		server, _ = nuevoProxmoxSimuladoInterfaces(t, http.StatusOK, cuerpo)
+		if version, err := proxmox.NewClient(server.URL, tokenIDValido, tokenSecretValido, nil).VersionPVE(context.Background()); err != nil || version != esperada {
+			t.Errorf("%s: version=%q err=%v, se esperaba %q", cuerpo, version, err, esperada)
+		}
+	}
 	server, _ = nuevoProxmoxSimuladoInterfaces(t, http.StatusOK, `{"data":{}}`)
 	if _, err := proxmox.NewClient(server.URL, tokenIDValido, tokenSecretValido, nil).VersionPVE(context.Background()); !errors.Is(err, ports.ErrProxmoxNoDisponible) {
 		t.Fatalf("Sin versión en la respuesta se esperaba ErrProxmoxNoDisponible: %v", err)
