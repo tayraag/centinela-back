@@ -49,7 +49,7 @@ func TestRejectProtectedInstance_ListaDesdeEntorno(t *testing.T) {
 		protegidos []int
 		libres     []int
 	}{
-		{"200,201,202", []int{200, 201, 202}, []int{100, 101, 102, 103, 104, 105, 203}},
+		{"200,201", []int{200, 201}, []int{100, 101, 102, 103, 104, 105, 202, 203}},
 		{"101", []int{101}, []int{100, 102, 105, 200}},
 		{"", nil, []int{100, 101, 102, 103, 104, 105, 200}},
 	}

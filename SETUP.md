@@ -86,6 +86,13 @@ Configuración oficial pasada por la PM. El backend se autentica **solo** con el
 
 Las tres se leen al arrancar: cambiarlas en el `.env` y reiniciar la API cambia el nodo consultado y los VMIDs bloqueados, sin recompilar. El log de arranque muestra el nodo (`🖥️  Nodo de Proxmox: ...`), la versión de Proxmox detectada y los VMIDs protegidos (o `Sin VMIDs protegidos configurados`).
 
+Al migrar al servidor físico PVE 8.4.21, no se conserva ningún rango histórico
+por defecto. Hay que relevar los VMIDs que realmente pertenecen a la
+infraestructura de El Centinela en ese servidor y declararlos explícitamente,
+por ejemplo `PROXMOX_PROTECTED_VMIDS=200,201`. Si no se desea proteger un VMID
+específico, se deja `PROXMOX_PROTECTED_VMIDS=`: en ese caso los IDs 100 al 105,
+igual que cualquier otro, se pueden operar normalmente.
+
 Cada request a Proxmox lleva la cabecera:
 
 ```
