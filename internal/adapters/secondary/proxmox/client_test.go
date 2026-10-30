@@ -521,20 +521,57 @@ func TestClient_ObtenerInterfaces_LXC(t *testing.T) {
 		}
 	})
 
-	t.Run("contenedor detenido", func(t *testing.T) {
-		// Proxmox responde {"data": null} cuando el contenedor está apagado.
-		server, ruta := nuevoProxmoxSimuladoInterfaces(t, http.StatusOK, `{"data": null}`)
+	t.Run("ip-addresses nulo usa inet", func(t *testing.T) {
+		const payload = `{"data":[{"name":"eth0","hwaddr":"BC:24:11:AA:BB:CC","ip-addresses":null,"inet":"192.168.1.50/24"}]}`
+		server, _ := nuevoProxmoxSimuladoInterfaces(t, http.StatusOK, payload)
 		client := proxmox.NewClient(server.URL, tokenIDValido, tokenSecretValido, nil)
 
 		interfaces, err := client.ObtenerInterfaces(context.Background(), "pve1", ports.TipoInstanciaLXC, 101)
 		if err != nil {
-			t.Fatalf("Un contenedor detenido no debe devolver error: %v", err)
+			t.Fatalf("ip-addresses nulo no debe devolver error: %v", err)
 		}
-		if esperada := "/api2/json/nodes/pve1/lxc/101/interfaces"; *ruta != esperada {
-			t.Errorf("Ruta llamada incorrecta: se esperaba %q, se obtuvo %q", esperada, *ruta)
+		if len(interfaces) != 1 || len(interfaces[0].Direcciones) != 1 {
+			t.Fatalf("Se esperaba la dirección de inet: %+v", interfaces)
 		}
-		if len(interfaces) != 0 {
-			t.Errorf("Un contenedor detenido debe devolver una lista vacía, se obtuvo: %+v", interfaces)
+		esperada := ports.DireccionIP{IP: "192.168.1.50", Prefijo: 24, Version: 4}
+		if interfaces[0].Direcciones[0] != esperada {
+			t.Errorf("Dirección CIDR incorrecta: %+v", interfaces[0].Direcciones[0])
+		}
+	})
+
+	for nombre, payload := range map[string]string{
+		"data nulo":    `{"data":null}`,
+		"data ausente": `{}`,
+		"data vacío":   `{"data":[]}`,
+	} {
+		t.Run(nombre, func(t *testing.T) {
+			server, ruta := nuevoProxmoxSimuladoInterfaces(t, http.StatusOK, payload)
+			client := proxmox.NewClient(server.URL, tokenIDValido, tokenSecretValido, nil)
+
+			interfaces, err := client.ObtenerInterfaces(context.Background(), "pve1", ports.TipoInstanciaLXC, 101)
+			if err != nil {
+				t.Fatalf("Una respuesta sin interfaces no debe devolver error: %v", err)
+			}
+			if esperada := "/api2/json/nodes/pve1/lxc/101/interfaces"; *ruta != esperada {
+				t.Errorf("Ruta llamada incorrecta: se esperaba %q, se obtuvo %q", esperada, *ruta)
+			}
+			if len(interfaces) != 0 {
+				t.Errorf("Se esperaba una lista vacía, se obtuvo: %+v", interfaces)
+			}
+		})
+	}
+
+	t.Run("ip-addresses ausente", func(t *testing.T) {
+		const payload = `{"data":[{"name":"eth0","hwaddr":"BC:24:11:AA:BB:CC"}]}`
+		server, _ := nuevoProxmoxSimuladoInterfaces(t, http.StatusOK, payload)
+		client := proxmox.NewClient(server.URL, tokenIDValido, tokenSecretValido, nil)
+
+		interfaces, err := client.ObtenerInterfaces(context.Background(), "pve1", ports.TipoInstanciaLXC, 101)
+		if err != nil {
+			t.Fatalf("ip-addresses ausente no debe devolver error: %v", err)
+		}
+		if len(interfaces) != 1 || len(interfaces[0].Direcciones) != 0 {
+			t.Fatalf("Se esperaba una interfaz sin direcciones: %+v", interfaces)
 		}
 	})
 }
@@ -957,9 +994,9 @@ func TestObtenerConfig_QemuYLXC(t *testing.T) {
 	var consultas []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		consultas = append(consultas, r.URL.Path+"?"+r.URL.RawQuery)
-		data := map[string]any{"memory": "2048", "cores": 2, "digest": "abc"}
+		data := map[string]any{"memory": "4096", "cores": 2, "digest": "abc"}
 		if strings.Contains(r.URL.Path, "/lxc/") {
-			data = map[string]any{"memory": 512, "cores": 1, "digest": "def"}
+			data = map[string]any{"memory": 4096, "cores": 1, "digest": "def"}
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"data": data})
 	}))
@@ -967,11 +1004,11 @@ func TestObtenerConfig_QemuYLXC(t *testing.T) {
 	client := proxmox.NewClient(server.URL, tokenIDValido, tokenSecretValido, nil)
 
 	vm, err := client.ObtenerConfig(context.Background(), "pve1", "qemu", 110, true)
-	if err != nil || vm.MemoriaMB != 2048 || vm.Cores != 2 || vm.Digest != "abc" {
+	if err != nil || vm.MemoriaMB != 4096 || vm.Cores != 2 || vm.Digest != "abc" {
 		t.Errorf("qemu: %+v %v", vm, err)
 	}
 	ct, err := client.ObtenerConfig(context.Background(), "pve1", "lxc", 201, false)
-	if err != nil || ct.MemoriaMB != 512 || ct.Cores != 1 {
+	if err != nil || ct.MemoriaMB != 4096 || ct.Cores != 1 || ct.Digest != "def" {
 		t.Errorf("lxc: %+v %v", ct, err)
 	}
 	if len(consultas) != 2 || !strings.HasSuffix(consultas[0], "/qemu/110/config?current=1") || strings.Contains(consultas[1], "current") {

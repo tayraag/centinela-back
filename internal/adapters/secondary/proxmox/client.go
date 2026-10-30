@@ -1,7 +1,6 @@
 package proxmox
 
 import (
-	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/json"
@@ -644,6 +643,32 @@ func (p *prefijoFlexible) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
+// enteroFlexible tolera los enteros que Proxmox serializa como número o como
+// string según el endpoint y la versión. null, "" y un campo ausente se
+// interpretan como cero.
+type enteroFlexible int
+
+func (i *enteroFlexible) UnmarshalJSON(b []byte) error {
+	texto := strings.TrimSpace(string(b))
+	if texto == "" || texto == "null" || texto == `""` {
+		*i = 0
+		return nil
+	}
+	if strings.HasPrefix(texto, `"`) {
+		var valor string
+		if err := json.Unmarshal(b, &valor); err != nil {
+			return fmt.Errorf("entero inválido %s: %w", b, err)
+		}
+		texto = strings.TrimSpace(valor)
+	}
+	n, err := strconv.Atoi(texto)
+	if err != nil {
+		return fmt.Errorf("entero inválido %s: %w", b, err)
+	}
+	*i = enteroFlexible(n)
+	return nil
+}
+
 type direccionCruda struct {
 	IP      string          `json:"ip-address"`
 	Tipo    string          `json:"ip-address-type"` // qemu: ipv4/ipv6 · lxc: inet/inet6
@@ -1027,18 +1052,16 @@ func (c *Client) ObtenerConfig(ctx context.Context, nodo, tipo string, vmid int,
 	}
 	var parsed struct {
 		Data struct {
-			Cores  json.Number `json:"cores"`
-			Memory json.Number `json:"memory"`
-			Digest string      `json:"digest"`
+			Cores  enteroFlexible `json:"cores"`
+			Memory enteroFlexible `json:"memory"`
+			Digest string         `json:"digest"`
 		} `json:"data"`
 	}
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.UseNumber()
-	if err := decoder.Decode(&parsed); err != nil {
+	if err := json.Unmarshal(raw, &parsed); err != nil {
 		return nil, fmt.Errorf("%w: respuesta de config inválida: %v", ports.ErrProxmoxNoDisponible, err)
 	}
-	cores, _ := strconv.Atoi(parsed.Data.Cores.String())
-	memoria, _ := strconv.Atoi(parsed.Data.Memory.String())
+	cores := int(parsed.Data.Cores)
+	memoria := int(parsed.Data.Memory)
 	if cores == 0 && tipoPVE == ports.TipoInstanciaQemu {
 		cores = 1 // en qemu, sin "cores" en la config Proxmox usa 1
 	}
