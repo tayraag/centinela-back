@@ -1,5 +1,7 @@
 # Contrato HTTP de etapa 1: estado e inventario
 
+> Este documento también es utilizado por una prueba automatizada que verifica su contenido.
+
 ## Estado actual y objetivo
 
 La lectura de inventario `GET /api/instances` está **operativa**. Devuelve las
