@@ -42,7 +42,7 @@ func nuevoEntorno(t *testing.T, falla string) *entorno {
 func nuevoEntornoConVersion(t *testing.T, falla, version string) *entorno {
 	t.Helper()
 	e := &entorno{t: t, reloj: time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)}
-	cfg := Config{Nodo: "proxmox", TokenID: tokenID, TokenSecret: tokenSecret, DuracionTarea: 3 * time.Second, Falla: falla, Version: version}
+	cfg := Config{Nodo: "proxmox", TokenID: tokenID, TokenSecret: tokenSecret, DuracionTarea: 3 * time.Second, Falla: falla, TargetVersion: version}
 	e.sim = NuevoSimulador(cfg)
 	e.sim.ahora = func() time.Time { return e.reloj }
 	e.sim.inicio = e.reloj
@@ -205,7 +205,7 @@ func TestContrato_ClienteDelBackend_NodosYVersion(t *testing.T) {
 // ==========================================
 
 func TestPerfilDeVersion(t *testing.T) {
-	for raw, esperada := range map[string]string{"": "9.2.2", " 9.2.2 ": "9.2.2", "8.4.21": "8.4.21"} {
+	for raw, esperada := range map[string]string{"": "8.4.21", " 9.2.2 ": "9.2.2", "8.4.21": "8.4.21"} {
 		if perfil, err := PerfilDeVersion(raw); err != nil || perfil.Version != esperada {
 			t.Errorf("%q: perfil %q err=%v", raw, perfil.Version, err)
 		}
@@ -218,15 +218,15 @@ func TestPerfilDeVersion(t *testing.T) {
 }
 
 // DoD: cada perfil emite su firma en /version y en /nodes/{node}/status; sin
-// la variable se imita 9.2.2, igual que antes; la estructura y los tipos del
+// la variable se imita 8.4.21; la estructura y los tipos del
 // estado del nodo no cambian entre perfiles; la API lee las dos como corresponde.
 func TestPerfilesDeVersion(t *testing.T) {
 	casos := []struct {
 		variable, versionAPI, release, pveManager, kernel, deLaAPI string
 	}{
-		{"", "9.2.2", "9.2", "pve-manager/9.2.2/", "Linux 7.0.2-6-pve ", "9.2.2"},
-		{"9.2.2", "9.2.2", "9.2", "pve-manager/9.2.2/", "Linux 7.0.2-6-pve ", "9.2.2"},
-		{"8.4.21", "8.4", "21", "pve-manager/8.4-21/", "Linux 6.8.", "8.4.21"},
+		{"", "8.4", "21", "pve-manager/8.4-21/", "Linux 6.8.8-2-pve ", "8.4.21"},
+		{"9.2.2", "9.2.2", "9.2", "pve-manager/9.2-2/", "Linux 7.0.2-6-pve ", "9.2.2"},
+		{"8.4.21", "8.4", "21", "pve-manager/8.4-21/", "Linux 6.8.8-2-pve ", "8.4.21"},
 	}
 	estructuras := map[string]string{}
 	for _, caso := range casos {
@@ -256,7 +256,7 @@ func TestPerfilesDeVersion(t *testing.T) {
 			t.Errorf("%q: el estado del nodo cambió para la API: %+v err=%v", caso.variable, estado, err)
 		}
 	}
-	if estructuras["8.4.21"] != estructuras["9.2.2"] || estructuras[""] != estructuras["9.2.2"] {
+	if estructuras["8.4.21"] != estructuras["9.2.2"] || estructuras[""] != estructuras["8.4.21"] {
 		t.Errorf("La estructura del estado del nodo cambió entre perfiles:\n9.2.2:  %s\n8.4.21: %s", estructuras["9.2.2"], estructuras["8.4.21"])
 	}
 }
@@ -569,6 +569,7 @@ func TestCrearInstancias(t *testing.T) {
 	// Los mismos parámetros que la captura de RF-07.
 	s, upid, _ := e.pedir("POST", "/nodes/proxmox/qemu", url.Values{
 		"vmid": {"115"}, "name": {"VM-Postman"}, "memory": {"2048"}, "cores": {"2"},
+		"ostype": {"l26"}, "agent": {"1"},
 		"net0": {"virtio,bridge=vmbr0"}, "scsihw": {"virtio-scsi-pci"}, "scsi0": {"local-lvm:20"},
 		"ide2": {"local:iso/debian-13.6.0-amd64-netinst.iso,media=cdrom"},
 	})
@@ -590,6 +591,34 @@ func TestCrearInstancias(t *testing.T) {
 	}
 	if s, _, cuerpo := e.pedir("POST", "/nodes/proxmox/lxc", url.Values{"vmid": {"202"}, "hostname": {"sin-template"}}); s != 400 || cuerpo["errors"].(map[string]any)["ostemplate"] == nil {
 		t.Errorf("LXC sin ostemplate debe dar 400: %d %v", s, cuerpo)
+	}
+}
+
+func TestCrearQEMU_ReglasSegunPerfil(t *testing.T) {
+	e84 := nuevoEntornoConVersion(t, "", "8.4.21")
+	casosInvalidos := []struct {
+		nombre string
+		form   url.Values
+		campo  string
+	}{
+		{"sin ostype", url.Values{"vmid": {"120"}, "agent": {"1"}}, "ostype"},
+		{"sin agent", url.Values{"vmid": {"120"}, "ostype": {"l26"}}, "agent"},
+		{"agent deshabilitado", url.Values{"vmid": {"120"}, "ostype": {"l26"}, "agent": {"0"}}, "agent"},
+	}
+	for _, caso := range casosInvalidos {
+		t.Run("8.4.21 "+caso.nombre, func(t *testing.T) {
+			s, _, cuerpo := e84.pedir(http.MethodPost, "/nodes/proxmox/qemu", caso.form)
+			errores, _ := cuerpo["errors"].(map[string]any)
+			if s != http.StatusBadRequest || errores[caso.campo] == nil {
+				t.Errorf("se esperaba 400 por %s: status=%d cuerpo=%v", caso.campo, s, cuerpo)
+			}
+		})
+	}
+
+	// El perfil 9.2.2 conserva la tolerancia histórica del simulador.
+	e92 := nuevoEntornoConVersion(t, "", "9.2.2")
+	if s, upid, _ := e92.pedir(http.MethodPost, "/nodes/proxmox/qemu", url.Values{"vmid": {"120"}}); s != http.StatusOK || !strings.Contains(fmt.Sprint(upid), ":qmcreate:120:") {
+		t.Errorf("9.2.2 debe aceptar la creación sin las directivas de 8.4: %d %v", s, upid)
 	}
 }
 
@@ -759,7 +788,7 @@ func TestFidelidad_NextID(t *testing.T) {
 	if s, data, _ := e.pedir("GET", "/cluster/nextid", nil); s != 200 || data != "102" {
 		t.Fatalf("nextid = %d %v, se esperaba 200 \"102\" (100 y 101 están ocupados)", s, data)
 	}
-	e.pedir("POST", "/nodes/proxmox/qemu", url.Values{"vmid": {"102"}})
+	e.pedir("POST", "/nodes/proxmox/qemu", url.Values{"vmid": {"102"}, "ostype": {"l26"}, "agent": {"1"}})
 	if _, data, _ := e.pedir("GET", "/cluster/nextid", nil); data != "103" {
 		t.Errorf("Después de crear la 102, nextid debe ser \"103\": %v", data)
 	}
@@ -939,7 +968,7 @@ func TestBorrar_Rechazos(t *testing.T) {
 	// La 100 está en HA: apagada tampoco se puede borrar sin purge=1.
 	e.pedir("POST", "/nodes/proxmox/qemu/100/status/stop", url.Values{})
 	e.avanzar(3 * time.Second)
-	if s, _, cuerpo := e.pedir("DELETE", "/nodes/proxmox/qemu/100", nil); s != 500 || !strings.Contains(cuerpo["message"].(string), "used in HA resources and purge parameter not set") {
+	if s, _, cuerpo := e.pedir("DELETE", "/nodes/proxmox/qemu/100", nil); s != 500 || !strings.Contains(cuerpo["message"].(string), "VM is configured in HA and purge flag is not set") {
 		t.Errorf("Borrar una instancia HA sin purge: %d %v", s, cuerpo)
 	}
 	if s, upid, _ := e.pedir("DELETE", "/nodes/proxmox/qemu/100?purge=1", nil); s != 200 || !strings.Contains(upid.(string), ":qmdestroy:100:") {
@@ -950,6 +979,27 @@ func TestBorrar_Rechazos(t *testing.T) {
 	e.pedir("POST", "/nodes/proxmox/qemu/110/status/start", url.Values{})
 	if s, _, cuerpo := e.pedir("DELETE", "/nodes/proxmox/qemu/110", nil); s != 500 || !strings.Contains(cuerpo["message"].(string), "can't lock file") {
 		t.Errorf("Borrar con una tarea en curso: %d %v", s, cuerpo)
+	}
+}
+
+func TestBorrar_HA_ReglaSegunPerfil(t *testing.T) {
+	for _, version := range []string{"8.4.21", "9.2.2"} {
+		t.Run(version, func(t *testing.T) {
+			e := nuevoEntornoConVersion(t, "", version)
+			e.pedir(http.MethodPost, "/nodes/proxmox/qemu/100/status/stop", url.Values{})
+			e.avanzar(3 * time.Second)
+
+			s, upid, cuerpo := e.pedir(http.MethodDelete, "/nodes/proxmox/qemu/100", nil)
+			if version == "8.4.21" {
+				if s != http.StatusInternalServerError || !strings.Contains(fmt.Sprint(cuerpo["message"]), "VM is configured in HA and purge flag is not set") {
+					t.Errorf("8.4.21 debe exigir purge=1: %d %v", s, cuerpo)
+				}
+				return
+			}
+			if s != http.StatusOK || !strings.Contains(fmt.Sprint(upid), ":qmdestroy:100:") {
+				t.Errorf("9.2.2 debe conservar el borrado sin la regla específica de 8.4: %d %v", s, upid)
+			}
+		})
 	}
 }
 
@@ -1351,6 +1401,8 @@ func TestAprovisionamientoYEdicionRecursos(t *testing.T) {
 	s, upidQemu, _ := e.pedir("POST", "/nodes/proxmox/qemu", url.Values{
 		"vmid":   {"501"},
 		"name":   {"vm-etapa2-test"},
+		"ostype": {"l26"},
+		"agent":  {"1"},
 		"memory": {"4096"},
 		"cores":  {"4"},
 		"scsi0":  {"local-lvm:30"},

@@ -36,7 +36,7 @@ func main() {
 		TokenSecret:   os.Getenv("PROXMOX_TOKEN_SECRET"),
 		DuracionTarea: time.Duration(entero(os.Getenv("PROXMOX_SIM_DURACION_TAREA"), 3)) * time.Second,
 		Falla:         os.Getenv("PROXMOX_SIM_FALLA"),
-		Version:       os.Getenv("PROXMOX_SIM_TARGET_VERSION"),
+		TargetVersion: os.Getenv("PROXMOX_SIM_TARGET_VERSION"),
 	}
 	if cfg.TokenID == "" || cfg.TokenSecret == "" {
 		log.Fatal("❌ Definí PROXMOX_TOKEN_ID y PROXMOX_TOKEN_SECRET en el .env: el simulador los exige igual que el Proxmox real")
@@ -44,7 +44,7 @@ func main() {
 	if cfg.Falla != "" && !fallasValidas[cfg.Falla] {
 		log.Fatalf("❌ PROXMOX_SIM_FALLA=%q no es válida (opciones: caido, token, lento)", cfg.Falla)
 	}
-	perfil, err := PerfilDeVersion(cfg.Version)
+	perfil, err := PerfilDeVersion(cfg.TargetVersion)
 	if err != nil {
 		log.Fatalf("❌ %v", err)
 	}

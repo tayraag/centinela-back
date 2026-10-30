@@ -42,6 +42,14 @@ func (s *Simulador) crearInstancia(w http.ResponseWriter, r *http.Request) {
 	if tipo == tipoLXC && params["ostemplate"] == "" {
 		errores["ostemplate"] = "property is missing and it is not optional"
 	}
+	if tipo == tipoQemu && s.obtenerPerfilVersion().Version == "8.4.21" {
+		if params["ostype"] == "" {
+			errores["ostype"] = "property is missing and it is not optional"
+		}
+		if params["agent"] != "1" {
+			errores["agent"] = "property is missing or must be set to 1"
+		}
+	}
 	defectoMem := 512
 	memoria := enteroParam(params, "memory", defectoMem, 16, errores)
 	cores := enteroParam(params, "cores", 1, 1, errores)
@@ -257,8 +265,8 @@ func (s *Simulador) borrarInstancia(w http.ResponseWriter, r *http.Request) {
 		errorPVE(w, http.StatusInternalServerError, inst.etiqueta()+" is running - destroy failed")
 		return
 	}
-	if inst.HA && !purge {
-		errorPVE(w, http.StatusInternalServerError, fmt.Sprintf("unable to remove %s - used in HA resources and purge parameter not set.", inst.etiqueta()))
+	if s.obtenerPerfilVersion().Version == "8.4.21" && inst.HA && !purge {
+		errorPVE(w, http.StatusInternalServerError, "can't remove VM - VM is configured in HA and purge flag is not set")
 		return
 	}
 

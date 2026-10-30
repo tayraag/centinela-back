@@ -30,26 +30,26 @@ func (p PerfilVersion) Kversion() string {
 	return "Linux " + p.KernelRelease + " " + p.KernelBuild
 }
 
-// VersionSimPorDefecto es el perfil sin PROXMOX_SIM_TARGET_VERSION: el de las
-// capturas de "API proxmox respuestas/", el que imitaba el simulador antes.
-const VersionSimPorDefecto = "9.2.2"
+// VersionSimPorDefecto es el perfil sin PROXMOX_SIM_TARGET_VERSION: el del
+// servidor físico de destino.
+const VersionSimPorDefecto = "8.4.21"
 
 var perfilesVersion = map[string]PerfilVersion{
 	// Contrastado con las capturas de Proxmox VE 9.2.2.
 	"9.2.2": {
 		Version:    "9.2.2",
 		VersionAPI: "9.2.2", ReleaseAPI: "9.2", RepoID: "b9984c6d90a4bd80",
-		PVEManager:    "pve-manager/9.2.2/b9984c6d90a4bd80",
+		PVEManager:    "pve-manager/9.2-2/b9984c6d90a4bd80",
 		KernelRelease: "7.0.2-6-pve",
 		KernelBuild:   "#1 SMP PREEMPT_DYNAMIC PMX 7.0.2-6 (2026-05-20T08:55Z)",
 	},
 	// Servidor de destino, PVE 8.4.21 con kernel 6.8.
 	"8.4.21": {
 		Version:    "8.4.21",
-		VersionAPI: "8.4", ReleaseAPI: "21", RepoID: "c5b55b84d1f84ea6",
-		PVEManager:    "pve-manager/8.4-21/c5b55b84d1f84ea6",
-		KernelRelease: "6.8.12-11-pve",
-		KernelBuild:   "#1 SMP PREEMPT_DYNAMIC PMX 6.8.12-11 (2025-05-22T09:39Z)",
+		VersionAPI: "8.4", ReleaseAPI: "21", RepoID: "12345678",
+		PVEManager:    "pve-manager/8.4-21/12345678",
+		KernelRelease: "6.8.8-2-pve",
+		KernelBuild:   "#1 SMP PREEMPT_DYNAMIC PMX 6.8.8-2",
 	},
 }
 

@@ -18,7 +18,7 @@ type Config struct {
 	TokenSecret   string        // PROXMOX_TOKEN_SECRET
 	DuracionTarea time.Duration // cuánto tarda cada tarea asíncrona (start, stop, snapshot...)
 	Falla         string        // modo falla para probar errores: "", "caido", "token", "lento"
-	Version       string        // perfil de versión de PVE (PROXMOX_SIM_TARGET_VERSION); vacío = 9.2.2
+	TargetVersion string        // perfil de versión de PVE (PROXMOX_SIM_TARGET_VERSION); vacío = 8.4.21
 }
 
 // Modos de falla (PROXMOX_SIM_FALLA), para probar cómo reacciona el backend:
@@ -48,9 +48,9 @@ type Simulador struct {
 }
 
 // NuevoSimulador arma el simulador con el inventario inicial de las capturas.
-// Un cfg.Version no soportado usa el perfil por defecto: main lo valida antes.
+// Un cfg.TargetVersion no soportado usa el perfil por defecto: main lo valida antes.
 func NuevoSimulador(cfg Config) *Simulador {
-	perfil, err := PerfilDeVersion(cfg.Version)
+	perfil, err := PerfilDeVersion(cfg.TargetVersion)
 	if err != nil {
 		perfil = perfilesVersion[VersionSimPorDefecto]
 	}

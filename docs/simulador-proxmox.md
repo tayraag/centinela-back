@@ -230,18 +230,25 @@ También podés simplemente **apagar el simulador**: la API responde `502` y en 
 
 ## Perfil de versión: imitar PVE 9.2.2 o 8.4.21
 
-Por defecto el simulador imita **Proxmox VE 9.2.2**, la versión de las capturas. Para probar contra lo que responde el servidor de destino (**PVE 8.4.21**), arrancalo con `PROXMOX_SIM_TARGET_VERSION`:
+Por defecto el simulador imita el servidor de destino, **Proxmox VE 8.4.21**.
+Para reproducir las capturas de PVE 9.2.2, arrancalo con
+`PROXMOX_SIM_TARGET_VERSION=9.2.2`:
 
 ```bash
-PROXMOX_SIM_TARGET_VERSION=8.4.21 go run ./cmd/proxmox-simulador
+PROXMOX_SIM_TARGET_VERSION=9.2.2 go run ./cmd/proxmox-simulador
 ```
 
 | Perfil | `GET /version` | `pveversion` en `/nodes/{node}/status` | Kernel (`kversion`, `current-kernel`) |
 | ------ | -------------- | -------------------------------------- | ------------------------------------- |
-| `9.2.2` *(por defecto)* | `"version": "9.2.2"`, `"release": "9.2"` | `pve-manager/9.2.2/b9984c6d90a4bd80` | `Linux 7.0.2-6-pve ...` |
-| `8.4.21` | `"version": "8.4"`, `"release": "21"` | `pve-manager/8.4-21/c5b55b84d1f84ea6` | `Linux 6.8.12-11-pve ...` |
+| `8.4.21` *(por defecto)* | `"version": "8.4"`, `"release": "21"` | `pve-manager/8.4-21/12345678` | `Linux 6.8.8-2-pve ...` |
+| `9.2.2` | `"version": "9.2.2"`, `"release": "9.2"` | `pve-manager/9.2-2/b9984c6d90a4bd80` | `Linux 7.0.2-6-pve ...` |
 
-El resto de las respuestas, y la estructura y los tipos de `/nodes/{node}/status`, son iguales en los dos perfiles. El log de arranque muestra el perfil activo. Otro valor (ej. `8.4`) no deja arrancar el simulador.
+En el perfil 8.4.21, crear una VM QEMU exige `ostype` y `agent=1`, y
+eliminar una instancia administrada por HA exige `purge=1`. Estas validaciones
+permiten detectar localmente peticiones que fallarían en el servidor físico.
+El resto de las respuestas, y la estructura y los tipos de
+`/nodes/{node}/status`, son iguales en los dos perfiles. El log de arranque
+muestra el perfil activo. Otro valor (ej. `8.4`) no deja arrancar el simulador.
 
 Para que una respuesta cambie según la versión, el handler lee `s.obtenerPerfilVersion()` (en `perfil.go`). Ahí se suman las variaciones de cada versión (por ejemplo, formatos de discos o storages).
 
@@ -258,7 +265,7 @@ Todas se leen del mismo `.env` del backend.
 | `PROXMOX_SIM_PORT` | `8081` | Puerto donde escucha. |
 | `PROXMOX_SIM_DURACION_TAREA` | `3` | Segundos que tarda cada tarea (start, stop, snapshot...). |
 | `PROXMOX_SIM_FALLA` | *(vacío)* | Modo falla: `caido`, `token` o `lento`. |
-| `PROXMOX_SIM_TARGET_VERSION` | `9.2.2` | Versión de Proxmox VE que imita: `9.2.2` u `8.4.21`. Ver *Perfil de versión*. |
+| `PROXMOX_SIM_TARGET_VERSION` | `8.4.21` | Versión de Proxmox VE que imita: `8.4.21` o `9.2.2`. Ver *Perfil de versión*. |
 
 ---
 
