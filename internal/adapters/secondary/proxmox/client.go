@@ -259,6 +259,8 @@ func parametrosCreacion(vmid int, input ports.CrearInstanciaProxmoxInput) url.Va
 
 	if strings.EqualFold(input.Tipo, ports.TipoInstanciaLXC) {
 		params.Set("hostname", input.Nombre)
+		params.Set("unprivileged", "1")
+		params.Set("features", "nesting=1")
 		if input.Password != "" {
 			params.Set("password", input.Password)
 		}
@@ -278,6 +280,8 @@ func parametrosCreacion(vmid int, input ports.CrearInstanciaProxmoxInput) url.Va
 	}
 
 	params.Set("name", input.Nombre)
+	params.Set("ostype", "l26")
+	params.Set("agent", "1")
 	params.Set("scsi0", fmt.Sprintf("%s:%d", input.StorageID, input.DiscoGB))
 	params.Set("scsihw", "virtio-scsi-pci")
 	params.Set("ide2", input.TemplateID+",media=cdrom")
