@@ -253,6 +253,53 @@ func TestClient_AprovisionarInstancia_MarcaFalloPrevioAlDespacho(t *testing.T) {
 	}
 }
 
+func TestClient_EliminarInstancia(t *testing.T) {
+	casos := []struct {
+		nombre string
+		tipo   string
+		path   string
+		upid   string
+	}{
+		{"QEMU", ports.TipoInstanciaQemu, "/api2/json/nodes/pve1/qemu/501", "UPID:pve1:1:2:3:qmdestroy:501:root@pam:"},
+		{"LXC", ports.TipoInstanciaLXC, "/api2/json/nodes/pve1/lxc/501", "UPID:pve1:1:2:3:vzdestroy:501:root@pam:"},
+	}
+
+	for _, caso := range casos {
+		t.Run(caso.nombre, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodDelete {
+					t.Errorf("método = %s, se esperaba DELETE", r.Method)
+				}
+				if r.URL.Path != caso.path {
+					t.Errorf("path = %q, se esperaba %q", r.URL.Path, caso.path)
+				}
+				query := r.URL.Query()
+				if query.Get("purge") != "1" {
+					t.Errorf("purge = %q, se esperaba 1", query.Get("purge"))
+				}
+				if query.Get("destroy-unreferenced-disks") != "1" {
+					t.Errorf("destroy-unreferenced-disks = %q, se esperaba 1", query.Get("destroy-unreferenced-disks"))
+				}
+				if len(query) != 2 {
+					t.Errorf("query inesperada: %v", query)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]any{"data": caso.upid})
+			}))
+			t.Cleanup(server.Close)
+
+			client := proxmox.NewClient(server.URL, tokenIDValido, tokenSecretValido, nil)
+			upid, err := client.EliminarInstancia(context.Background(), "pve1", 501, caso.tipo)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if upid != caso.upid {
+				t.Errorf("UPID = %q, se esperaba %q", upid, caso.upid)
+			}
+		})
+	}
+}
+
 func TestClient_ListarInstancias_ProxmoxCaido(t *testing.T) {
 	// Servidor que responde con error 500
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -448,7 +448,9 @@ func (c *Client) Reboot(ctx context.Context, node string, vmid int, vmType strin
 }
 
 // EliminarInstancia elimina de forma permanente una VM o contenedor de Proxmox.
-// Proxmox usa DELETE /nodes/{node}/{tipo}/{vmid}.
+// Proxmox usa DELETE /nodes/{node}/{tipo}/{vmid} con purga profunda para
+// desvincular configuraciones HA y eliminar discos que hayan quedado sin
+// referencia.
 // El control de que la instancia esté apagada se resuelve previamente en el handler HTTP
 // (respondiendo 409 INSTANCE_INVALID_STATE si sigue encendida o INSTANCE_BUSY si hay tareas activas).
 // Devuelve el UPID de la tarea de borrado, que se sigue como cualquier otra acción.
@@ -464,7 +466,11 @@ func (c *Client) EliminarInstancia(ctx context.Context, node string, vmid int, v
 		tipoProxmox = "lxc"
 	}
 
-	path := fmt.Sprintf("/api2/json/nodes/%s/%s/%d", url.PathEscape(node), tipoProxmox, vmid)
+	query := url.Values{
+		"purge":                      {"1"},
+		"destroy-unreferenced-disks": {"1"},
+	}
+	path := fmt.Sprintf("/api2/json/nodes/%s/%s/%d?%s", url.PathEscape(node), tipoProxmox, vmid, query.Encode())
 	raw, err := c.doRequest(ctx, http.MethodDelete, path, nil)
 	if err != nil {
 		return "", err
