@@ -111,24 +111,34 @@ func GenerarContrasenaTemp() (string, error) {
 	return string(resultado), nil
 }
 
+// CaracteresEspeciales son los símbolos que cuentan como carácter especial en
+// una contraseña: la puntuación que generan los gestores de claves (1Password,
+// Bitwarden, KeePass), según NIST SP 800-63B. El validador del frontend
+// (validatePasswordComplexity.ts) debe aceptar exactamente el mismo conjunto.
+const CaracteresEspeciales = `!@#$%^&*-_=+.~,;:'"()[]{}<>\/|?`
+
+// largoMinimoFraseConEspacio: en contraseñas de más de 12 caracteres (frases de
+// paso) el espacio también cuenta como carácter especial.
+const largoMinimoFraseConEspacio = 12
+
 // ValidarComplejidadContrasena verifica que la contraseña cumpla las reglas de seguridad:
 // - Entre 8 y 128 caracteres
 // - Al menos una letra mayúscula
 // - Al menos un dígito numérico
-// - Al menos un carácter especial (!@#$%^&*-_=+)
+// - Al menos un carácter especial (CaracteresEspeciales; en frases de más de 12, el espacio)
 // Retorna un error descriptivo si alguna regla no se cumple.
 func ValidarComplejidadContrasena(contrasena string) error {
-	if utf8.RuneCountInString(contrasena) < 8 {
+	largo := utf8.RuneCountInString(contrasena)
+	if largo < 8 {
 		return fmt.Errorf("la contraseña debe tener al menos 8 caracteres")
 	}
-	if utf8.RuneCountInString(contrasena) > 128 {
+	if largo > 128 {
 		return fmt.Errorf("la contraseña no puede superar los 128 caracteres")
 	}
 
 	tieneMayuscula := false
 	tieneDigito := false
 	tieneEspecial := false
-	especiales := "!@#$%^&*-_=+"
 
 	for _, c := range contrasena {
 		switch {
@@ -136,7 +146,9 @@ func ValidarComplejidadContrasena(contrasena string) error {
 			tieneMayuscula = true
 		case c >= '0' && c <= '9':
 			tieneDigito = true
-		case containsRune(especiales, c):
+		case containsRune(CaracteresEspeciales, c):
+			tieneEspecial = true
+		case c == ' ' && largo > largoMinimoFraseConEspacio:
 			tieneEspecial = true
 		}
 	}
@@ -148,7 +160,8 @@ func ValidarComplejidadContrasena(contrasena string) error {
 		return fmt.Errorf("la contraseña debe contener al menos un número")
 	}
 	if !tieneEspecial {
-		return fmt.Errorf("la contraseña debe contener al menos un carácter especial (!@#$%%^&*-_=+)")
+		return fmt.Errorf("la contraseña debe contener al menos un carácter especial (%s, o un espacio si tiene más de %d caracteres)",
+			CaracteresEspeciales, largoMinimoFraseConEspacio)
 	}
 
 	return nil

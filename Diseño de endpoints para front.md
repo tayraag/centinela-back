@@ -41,6 +41,13 @@ El backend recibe el email, el código de verificación y la nueva contraseña. 
 }
 ```
 
+> **Reglas de contraseña** (las mismas para `/auth/password/reset` y `PUT /api/account/password`): entre 8 y 128 caracteres, al menos una mayúscula, un número y un carácter especial. Cuenta como especial cualquiera de `` !@#$%^&*-_=+.~,;:'"()[]{}<>\/|? `` (la puntuación que generan 1Password, Bitwarden o KeePass, NIST SP 800-63B). En contraseñas de **más de 12 caracteres** el espacio también cuenta (frases de paso como `correcto caballo Bateria 9`). El validador del front (`validatePasswordComplexity.ts`) tiene que aceptar exactamente lo mismo:
+>
+> ```ts
+> const specialCharRegex = /[!@#$%^&*\-_=+.~,;:'"()[\]{}<>\\\/|?]/; // el guion va escapado: "*-_" sin escapar es un rango que incluye dígitos y mayúsculas
+> const tieneEspecial = specialCharRegex.test(pw) || ([...pw].length > 12 && pw.includes(" "));
+> ```
+
 &nbsp;
 
 **2\. Respuesta (Backend ➡️ Frontend)**&nbsp;

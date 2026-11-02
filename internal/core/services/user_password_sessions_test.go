@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -123,5 +124,32 @@ func TestCambiarContrasena_RevocaOtrasSesionesYConservaLaActual(t *testing.T) {
 	registro := auditoria.buscar(ports.AccionCambiarContrasena)
 	if registro == nil || registro.Accion != "PASSWORD_CHANGED" || registro.Detalles["sesionesRevocadas"] != true || registro.Detalles["sesionConservada"] != sidActual.String() {
 		t.Fatalf("auditoría incompleta: %+v", registro)
+	}
+}
+
+// DoD RF-01: el cambio autenticado acepta claves con la puntuación de los
+// gestores de contraseñas y frases de paso con espacios.
+func TestCambiarContrasena_AceptaPuntuacionExtendida(t *testing.T) {
+	e := nuevoEntornoAuth(t)
+	actual, _ := e.login(t)
+	sid := uuid.MustParse(claimsDe(t, actual.AccessToken).SesionID)
+	servicio := services.NewUserService(&repoUsuarioCambioContrasena{repo: e.repo}, e.repo, e.kv, &auditoriaGrabadora{}, nil, nil, nil)
+
+	anterior := contrasenaPrueba
+	for _, nueva := range []string{"Xq7.R,v/M?k~2;p:T", `Cita"Barra\8(x)`, "correcto caballo Bateria 9"} {
+		if err := servicio.CambiarContrasena(context.Background(), e.repo.usuario.ID, sid, ports.CambiarContrasenaInput{
+			ContrasenaActual: anterior, ContrasenaNueva: nueva,
+		}); err != nil {
+			t.Fatalf("%q: %v", nueva, err)
+		}
+		if !crypto.VerificarContrasena(e.repo.usuario.ContrasenaHash, nueva) {
+			t.Fatalf("%q no quedó guardada", nueva)
+		}
+		anterior = nueva
+	}
+	if err := servicio.CambiarContrasena(context.Background(), e.repo.usuario.ID, sid, ports.CambiarContrasenaInput{
+		ContrasenaActual: anterior, ContrasenaNueva: "Clave 123456",
+	}); err == nil || !strings.Contains(err.Error(), "carácter especial") {
+		t.Fatalf("Un espacio en 12 caracteres no alcanza: %v", err)
 	}
 }

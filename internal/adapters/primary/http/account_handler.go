@@ -95,7 +95,7 @@ func (h *AccountHandler) ActualizarPerfil(c *gin.Context) {
 // CambiarContrasena valida la contraseña actual y aplica la nueva.
 //
 // @Summary      Cambiar mi contraseña
-// @Description  Valida la contraseña actual y aplica la nueva. Conserva la sesión solicitante y revoca inmediatamente todas las demás sesiones activas del usuario: sus access/refresh tokens reciben `401 TOKEN_REVOKED` y sus canales SSE/WebSocket se cierran con `SESSIONS_REVOKED`. Reglas de complejidad: entre 8 y 128 caracteres, al menos una mayúscula, un número y un carácter especial (!@#$%^&*-_=+). Si la contraseña era temporal (`cambioContrasenaRequerido=true`), este cambio limpia ese flag y desbloquea el acceso al resto de la plataforma.
+// @Description  Valida la contraseña actual y aplica la nueva. Conserva la sesión solicitante y revoca inmediatamente todas las demás sesiones activas del usuario: sus access/refresh tokens reciben `401 TOKEN_REVOKED` y sus canales SSE/WebSocket se cierran con `SESSIONS_REVOKED`. Reglas de complejidad: entre 8 y 128 caracteres, al menos una mayúscula, un número y un carácter especial (puntuación ASCII: !@#$%^&*-_=+.~,;:'"()[]{}<>\/|?, o un espacio si tiene más de 12 caracteres). Si la contraseña era temporal (`cambioContrasenaRequerido=true`), este cambio limpia ese flag y desbloquea el acceso al resto de la plataforma.
 // @Tags         Mi cuenta
 // @Accept       json
 // @Produce      json
