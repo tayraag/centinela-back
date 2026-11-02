@@ -571,7 +571,7 @@ func TestCrearInstancias(t *testing.T) {
 		"vmid": {"115"}, "name": {"VM-Postman"}, "memory": {"2048"}, "cores": {"2"},
 		"ostype": {"l26"}, "agent": {"1"},
 		"net0": {"virtio,bridge=vmbr0"}, "scsihw": {"virtio-scsi-pci"}, "scsi0": {"local-lvm:20"},
-		"ide2": {"local:iso/debian-13.6.0-amd64-netinst.iso,media=cdrom"},
+		"ide2": {"local:iso/debian-12.7.0-amd64-netinst.iso,media=cdrom"},
 	})
 	if s != 200 || !strings.Contains(upid.(string), ":qmcreate:115:") {
 		t.Fatalf("Crear VM: %d %v", s, upid)
@@ -1352,7 +1352,7 @@ func TestStorage_ListarYContenido(t *testing.T) {
 				t.Errorf("ISO canónico inválido: %+v", m)
 			}
 		}
-		if m["volid"] == "local:vztmpl/debian-12-standard_12.2-1_amd64.tar.zst" {
+		if m["volid"] == "local:vztmpl/debian-12-standard_12.7-1_amd64.tar.zst" {
 			tieneVztmplCanonico = true
 			if m["format"] != "tar.zst" || int64(m["size"].(float64)) != 134217728 {
 				t.Errorf("vztmpl canónico inválido: %+v", m)
@@ -1369,7 +1369,7 @@ func TestStorage_ListarYContenido(t *testing.T) {
 		t.Error("Falta el ISO canónico local:iso/ubuntu-24.04-live-server.iso")
 	}
 	if !tieneVztmplCanonico {
-		t.Error("Falta la plantilla canónica local:vztmpl/debian-12-standard_12.2-1_amd64.tar.zst")
+		t.Error("Falta la plantilla canónica local:vztmpl/debian-12-standard_12.7-1_amd64.tar.zst")
 	}
 
 	// 4. Filtro por ?content=iso en contenido
@@ -1391,6 +1391,74 @@ func TestStorage_ListarYContenido(t *testing.T) {
 	sNodo, _, _ := e.pedir("GET", "/nodes/nodo-invalido/storage", nil)
 	if sNodo != 500 {
 		t.Errorf("Nodo inválido debe responder 500, vino %d", sNodo)
+	}
+}
+
+// DoD RF-07: el catálogo de local es el de los repositorios de PVE 8.4 (Debian
+// 12 Bookworm y Ubuntu 22.04), local no ofrece "import" y ninguna respuesta del
+// simulador menciona Debian 13.
+func TestStorage_CatalogoDebian12Bookworm(t *testing.T) {
+	e := nuevoEntorno(t, "")
+
+	_, data, _ := e.pedir("GET", "/nodes/proxmox/storage", nil)
+	for _, item := range data.([]any) {
+		st := item.(map[string]any)
+		if st["storage"] == "local" && st["content"] != "iso,vztmpl,backup" {
+			t.Errorf("local debe declarar exactamente iso,vztmpl,backup, declara %q", st["content"])
+		}
+		if strings.Contains(st["content"].(string), "import") {
+			t.Errorf("%s no debe ofrecer el content type import (no existe en PVE 8.4): %q", st["storage"], st["content"])
+		}
+	}
+
+	esperados := map[string]struct {
+		content, format string
+		size            int64
+	}{
+		"local:vztmpl/debian-12-standard_12.7-1_amd64.tar.zst":     {"vztmpl", "tar.zst", 134217728},
+		"local:vztmpl/ubuntu-22.04-standard_22.04-1_amd64.tar.zst": {"vztmpl", "tar.zst", 140000000},
+		"local:iso/debian-12.7.0-amd64-netinst.iso":                {"iso", "iso", 650117120},
+	}
+	_, data, _ = e.pedir("GET", "/nodes/proxmox/storage/local/content", nil)
+	encontrados := map[string]bool{}
+	for _, item := range data.([]any) {
+		m := item.(map[string]any)
+		volid, _ := m["volid"].(string)
+		if esp, ok := esperados[volid]; ok {
+			encontrados[volid] = true
+			if m["content"] != esp.content || m["format"] != esp.format || int64(m["size"].(float64)) != esp.size {
+				t.Errorf("%s: %+v, se esperaba %+v", volid, m, esp)
+			}
+		}
+	}
+	for volid := range esperados {
+		if !encontrados[volid] {
+			t.Errorf("Falta %s en local", volid)
+		}
+	}
+	_, data, _ = e.pedir("GET", "/nodes/proxmox/storage/local/content?content=vztmpl", nil)
+	if plantillas := data.([]any); len(plantillas) != 2 {
+		t.Errorf("local debe ofrecer las 2 plantillas (Debian 12 y Ubuntu 22.04), ofrece %v", plantillas)
+	}
+
+	// Ninguna respuesta del simulador menciona Debian 13: storages, contenidos,
+	// inventario y la config de cada instancia.
+	rutas := []string{"/nodes/proxmox/storage", "/cluster/resources"}
+	for _, storage := range []string{"local", "local-lvm", "shared-nfs"} {
+		rutas = append(rutas, "/nodes/proxmox/storage/"+storage+"/content")
+	}
+	_, data, _ = e.pedir("GET", "/cluster/resources?type=vm", nil)
+	for _, item := range data.([]any) {
+		vm := item.(map[string]any)
+		rutas = append(rutas, fmt.Sprintf("/nodes/proxmox/%s/%d/config", vm["type"], int(vm["vmid"].(float64))))
+	}
+	for _, ruta := range rutas {
+		s, _, completo := e.pedir("GET", ruta, nil)
+		crudo, _ := json.Marshal(completo)
+		texto := strings.ToLower(string(crudo))
+		if s != 200 || strings.Contains(texto, "debian-13") || strings.Contains(texto, "debian 13") || strings.Contains(texto, "trixie") {
+			t.Errorf("%s (%d) menciona Debian 13: %s", ruta, s, crudo)
+		}
 	}
 }
 
@@ -1417,7 +1485,7 @@ func TestAprovisionamientoYEdicionRecursos(t *testing.T) {
 	s, upidLxc, _ := e.pedir("POST", "/nodes/proxmox/lxc", url.Values{
 		"vmid":       {"502"},
 		"hostname":   {"ct-etapa2-test"},
-		"ostemplate": {"local:vztmpl/debian-12-standard_12.2-1_amd64.tar.zst"},
+		"ostemplate": {"local:vztmpl/debian-12-standard_12.7-1_amd64.tar.zst"},
 		"memory":     {"1024"},
 		"swap":       {"256"},
 		"cores":      {"2"},

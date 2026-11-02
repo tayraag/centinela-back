@@ -138,7 +138,7 @@ Todos bajo `/api2/json`, con el formato de Proxmox (`{"data": ...}`).
 | Inventario | `GET /nodes/{node}/lxc/{vmid}/interfaces` | IPs del contenedor: `lo` y `eth0`, con `hwaddr`, `inet`, `inet6` e `ip-addresses`. **Apagado: `200` con `{"data": null}`**, no es un error. Contrastado con Proxmox VE 9.2.2. |
 | Inventario | `GET /nodes/{node}/qemu/{vmid}/agent/network-get-interfaces` | IPs de una VM según el **QEMU Guest Agent**: `{"data": {"result": [...]}}` con `name`, `hardware-address`, `ip-addresses` y `statistics`. |
 | RF-07 | `GET /nodes/{node}/storage` | Catálogo de almacenamiento del nodo (`local`, `local-lvm`, `shared-nfs`) con tipos, capacidades canónicas y flags de contenido. |
-| RF-07 | `GET /nodes/{node}/storage/{storage}/content` | Catálogo de contenidos del storage: plantillas LXC (`vztmpl`) e imágenes ISO (`iso`), con soporte de filtrado por `?content=...`. |
+| RF-07 | `GET /nodes/{node}/storage/{storage}/content` | Catálogo de contenidos del storage: plantillas LXC (`vztmpl`) e imágenes ISO (`iso`), con soporte de filtrado por `?content=...`. En `local`, las de los repositorios de PVE 8.4: `debian-12-standard_12.7-1_amd64.tar.zst`, `ubuntu-22.04-standard_22.04-1_amd64.tar.zst`, `debian-12.7.0-amd64-netinst.iso` y `ubuntu-24.04-live-server.iso`. `local` declara `content: iso,vztmpl,backup` (sin `import`, que no existe en PVE 8.4). |
 
 Cualquier otra ruta responde `501 Method '...' not implemented`, como Proxmox.
 

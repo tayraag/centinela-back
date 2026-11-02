@@ -87,7 +87,9 @@ func (s *Simulador) storagesDisponibles() []storageInfo {
 	}
 }
 
-// catalogoContenidos contiene las plantillas LXC (vztmpl) e imágenes ISO (iso) disponibles.
+// catalogoContenidos contiene las plantillas LXC (vztmpl) e imágenes ISO (iso)
+// disponibles. Son las de los repositorios oficiales de PVE 8.4 (base Debian 12
+// Bookworm): no hay imágenes de Debian 13.
 var catalogoContenidos = map[string][]storageContentItem{
 	"local": {
 		{
@@ -98,24 +100,24 @@ var catalogoContenidos = map[string][]storageContentItem{
 			CTime:   1786823100,
 		},
 		{
-			Volid:   "local:vztmpl/debian-12-standard_12.2-1_amd64.tar.zst",
+			Volid:   "local:vztmpl/debian-12-standard_12.7-1_amd64.tar.zst",
 			Content: "vztmpl",
 			Format:  "tar.zst",
 			Size:    134217728, // 128 MB
 			CTime:   1786823200,
 		},
 		{
-			Volid:   "local:iso/debian-13.6.0-amd64-netinst.iso",
+			Volid:   "local:iso/debian-12.7.0-amd64-netinst.iso",
 			Content: "iso",
 			Format:  "iso",
-			Size:    791674880, // ~755 MB
+			Size:    650117120, // 620 MB
 			CTime:   1786823000,
 		},
 		{
 			Volid:   "local:vztmpl/ubuntu-22.04-standard_22.04-1_amd64.tar.zst",
 			Content: "vztmpl",
 			Format:  "tar.zst",
-			Size:    141557760, // ~135 MB
+			Size:    140000000, // ~134 MB
 			CTime:   1786823250,
 		},
 	},

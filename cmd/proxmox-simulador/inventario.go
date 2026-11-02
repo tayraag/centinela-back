@@ -68,7 +68,7 @@ func inventarioInicial(ahora time.Time) []*instancia {
 				"boot":    "order=scsi0;ide2;net0",
 				"scsihw":  "virtio-scsi-single",
 				"numa":    "0",
-				"ide2":    "local:iso/debian-13.6.0-amd64-netinst.iso,media=cdrom,size=755M",
+				"ide2":    "local:iso/debian-12.7.0-amd64-netinst.iso,media=cdrom,size=620M",
 				"sockets": "1",
 			},
 			Snapshots: []*snapshot{
