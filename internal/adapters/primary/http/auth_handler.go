@@ -268,6 +268,7 @@ type solicitarRecuperacionRequest struct {
 // @Produce      json
 // @Param        body body solicitarRecuperacionRequest true "Email del usuario"
 // @Success      200 {object} map[string]string
+// @Header       200 {string} X-Centinela-Email-Provider "mock cuando el correo es simulado (EMAIL_PROVIDER=mock): no se envió, el código o la clave quedan en el log del backend. Ausente con SMTP. Ver GET /api/version"
 // @Failure      400 {object} ErrorResponse "Email inválido | INVALID_REQUEST — formato inválido, o el cuerpo no es un objeto JSON plano (sin objetos ni listas anidadas), trae caracteres de control (CR, LF, NUL) o supera 16 KB; también una cabecera con caracteres de control"
 // @Failure      429 {object} ErrorResponse "RATE_LIMIT_EXCEEDED — más de 5 pedidos por minuto desde la misma IP | TOO_MANY_ATTEMPTS — máximo 3 solicitudes por IP o correo cada 60 minutos. Ambos traen Retry-After"
 // @Failure      503 {object} ErrorResponse "RATE_LIMIT_UNAVAILABLE — Redis no permite aplicar el límite distribuido"

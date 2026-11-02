@@ -62,6 +62,7 @@ func (h *AccountHandler) ObtenerPerfil(c *gin.Context) {
 // @Security     BearerAuth
 // @Param        body body ports.ActualizarPerfilInput true "Datos a actualizar"
 // @Success      200 {object} ports.UsuarioResumenDTO
+// @Header       200 {string} X-Centinela-Email-Provider "mock cuando el correo es simulado (EMAIL_PROVIDER=mock): no se envió, el código o la clave quedan en el log del backend. Ausente con SMTP. Ver GET /api/version"
 // @Failure      400 {object} map[string]string
 // @Failure      401 {object} map[string]string
 // @Failure      409 {object} ErrorResponse "Email ya en uso"

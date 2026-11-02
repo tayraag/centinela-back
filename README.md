@@ -124,6 +124,7 @@ centinela-back/
 │   │   │           ├── ratelimit.go          # Límites de autenticación: ráfagas por IP (5/min) y intentos fallidos (login, 2FA, recuperación)
 │   │   │           ├── sanitizacion.go       # Cabeceras sin CR/LF/NUL y cuerpos JSON de /api/auth planos y sin caracteres de control
 │   │   │           ├── cors_middleware.go    # CORS (ALLOWED_ORIGINS; también lo usa el WebSocket de métricas)
+│   │   │           ├── email_provider.go     # X-Centinela-Email-Provider: mock en las rutas que mandan correo
 │   │   │           ├── security_headers_middleware.go # Headers de seguridad
 │   │   │           └── logger_middleware.go  # Logger de peticiones HTTP
 │   │   │

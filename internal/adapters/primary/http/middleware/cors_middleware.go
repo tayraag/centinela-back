@@ -38,6 +38,8 @@ func OrigenesPermitidos() map[string]struct{} {
 //   - Access-Control-Allow-Credentials: true  (necesario para cookies HttpOnly)
 //   - Access-Control-Allow-Methods:     GET, POST, PUT, DELETE, OPTIONS
 //   - Access-Control-Allow-Headers:     Authorization, Content-Type, Accept, Origin
+//   - Access-Control-Expose-Headers:    Retry-After, X-Centinela-Email-Provider
+//     (el navegador solo deja leer al front las cabeceras propias que se exponen)
 //   - Vary: Origin  (indica a cachés que la respuesta varía por origen)
 //
 // Las peticiones OPTIONS (preflight) se responden con 204 No Content
@@ -63,6 +65,7 @@ func CORS() gin.HandlerFunc {
 			c.Header("Access-Control-Allow-Credentials", "true")
 			c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 			c.Header("Access-Control-Allow-Headers", "Authorization, Content-Type, Accept, Origin")
+			c.Header("Access-Control-Expose-Headers", "Retry-After, "+CabeceraProveedorEmail)
 			// Vary: Origin es obligatorio cuando el Allow-Origin no es comodín,
 			// para que los proxies/CDN no sirvan la respuesta de un origen a otro.
 			c.Header("Vary", "Origin")

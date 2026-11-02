@@ -41,6 +41,8 @@ El backend recibe el email, el código de verificación y la nueva contraseña. 
 }
 ```
 
+> **Correo simulado (entornos de prueba):** si el backend corre sin SMTP (`EMAIL_PROVIDER=mock`), el correo **no se envía** aunque la respuesta sea 200: el código queda en el log del backend. En ese caso `POST /api/auth/password/forgot` (y también el alta de usuarios, el reset administrativo de contraseña y `PUT /api/account/profile` con cambio de email) responden con la cabecera `X-Centinela-Email-Provider: mock`, y `GET /api/version` devuelve `"emailProvider": "mock"` (o `"smtp"`). El front puede usarlo para avisar "el correo es simulado, pedile el código a quien maneja el backend".
+
 > **Reglas de contraseña** (las mismas para `/auth/password/reset` y `PUT /api/account/password`): entre 8 y 128 caracteres, al menos una mayúscula, un número y un carácter especial. Cuenta como especial cualquiera de `` !@#$%^&*-_=+.~,;:'"()[]{}<>\/|? `` (la puntuación que generan 1Password, Bitwarden o KeePass, NIST SP 800-63B). En contraseñas de **más de 12 caracteres** el espacio también cuenta (frases de paso como `correcto caballo Bateria 9`). El validador del front (`validatePasswordComplexity.ts`) tiene que aceptar exactamente lo mismo:
 >
 > ```ts

@@ -3,8 +3,11 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"log"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -12,6 +15,8 @@ import (
 	"el-centinela/internal/adapters/secondary/memoria"
 	redisstore "el-centinela/internal/adapters/secondary/redis"
 	"el-centinela/internal/core/ports"
+
+	"github.com/gin-gonic/gin"
 )
 
 func TestAprovisionadorSeguroRechazaFallbackLocal(t *testing.T) {
@@ -125,5 +130,41 @@ func TestInicializarServicioEmail(t *testing.T) {
 				t.Fatalf("log = %q; se esperaba que contuviera %q", logs.String(), tt.wantLog)
 			}
 		})
+	}
+}
+
+// DoD: GET /api/version informa el proveedor de correo que quedó activo.
+func TestVersionInformaProveedorEmail(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, caso := range []struct {
+		provider, esperado string
+		smtp               bool
+	}{
+		{"mock", "mock", false},
+		{"", "mock", false},
+		{"otro", "mock", false},
+		{"smtp", "smtp", true},
+	} {
+		t.Setenv("EMAIL_PROVIDER", caso.provider)
+		t.Setenv("APP_ENV", "")
+		for nombre, valor := range map[string]string{"SMTP_HOST": "smtp.example.com", "SMTP_PORT": "587", "SMTP_USER": "user", "SMTP_PASS": "secret", "SMTP_FROM": "no-reply@example.com"} {
+			if !caso.smtp {
+				valor = ""
+			}
+			t.Setenv(nombre, valor)
+		}
+		svc, err := inicializarServicioEmail()
+		if err != nil {
+			t.Fatal(err)
+		}
+		r := gin.New()
+		r.GET("/api/version", versionHandler(email.Proveedor(svc)))
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/version", nil))
+		var cuerpo map[string]string
+		_ = json.Unmarshal(w.Body.Bytes(), &cuerpo)
+		if w.Code != http.StatusOK || cuerpo["emailProvider"] != caso.esperado || cuerpo["commit"] == "" {
+			t.Errorf("EMAIL_PROVIDER=%q: %d %s, se esperaba emailProvider=%q", caso.provider, w.Code, w.Body.String(), caso.esperado)
+		}
 	}
 }

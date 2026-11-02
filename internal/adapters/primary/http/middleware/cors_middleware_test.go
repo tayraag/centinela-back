@@ -46,6 +46,10 @@ func TestCORS_OrigenPermitido(t *testing.T) {
 	if got := w.Header().Get("Access-Control-Allow-Credentials"); got != "true" {
 		t.Errorf("Access-Control-Allow-Credentials = %q; quería \"true\"", got)
 	}
+	// Sin exponerlas, el front no puede leer Retry-After ni el aviso de correo simulado.
+	if got := w.Header().Get("Access-Control-Expose-Headers"); got != "Retry-After, X-Centinela-Email-Provider" {
+		t.Errorf("Access-Control-Expose-Headers = %q", got)
+	}
 	if w.Code != http.StatusOK {
 		t.Errorf("status = %d; quería %d", w.Code, http.StatusOK)
 	}

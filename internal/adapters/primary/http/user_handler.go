@@ -104,6 +104,7 @@ func (h *UserHandler) ListarUsuarios(c *gin.Context) {
 // @Security     BearerAuth
 // @Param        body body ports.CrearUsuarioInput true "Datos del nuevo usuario"
 // @Success      201 {object} ports.CrearUsuarioResult
+// @Header       201 {string} X-Centinela-Email-Provider "mock cuando el correo es simulado (EMAIL_PROVIDER=mock): no se envió, el código o la clave quedan en el log del backend. Ausente con SMTP. Ver GET /api/version"
 // @Failure      400 {object} ErrorResponse "Datos inválidos"
 // @Failure      401 {object} map[string]string
 // @Failure      403 {object} map[string]string
@@ -453,6 +454,7 @@ func (h *UserHandler) ResetearTotp(c *gin.Context) {
 // @Security     BearerAuth
 // @Param        id path string true "UUID del usuario"
 // @Success      200 {object} map[string]string
+// @Header       200 {string} X-Centinela-Email-Provider "mock cuando el correo es simulado (EMAIL_PROVIDER=mock): no se envió, el código o la clave quedan en el log del backend. Ausente con SMTP. Ver GET /api/version"
 // @Failure      401 {object} map[string]string
 // @Failure      403 {object} ErrorResponse "OPERATOR recibe 403 Forbidden"
 // @Failure      404 {object} ErrorResponse "USER_NOT_FOUND — no existe en la organización o fue eliminado"

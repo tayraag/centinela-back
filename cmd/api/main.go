@@ -92,6 +92,13 @@ func main() {
 	if err != nil {
 		log.Fatalf("[FATAL] %v", err)
 	}
+	// Con el correo simulado, las respuestas de los flujos que mandan correo
+	// llevan X-Centinela-Email-Provider: mock y GET /api/version lo informa.
+	proveedorEmail := email.Proveedor(emailService)
+	avisoEmail := middleware.AvisarProveedorEmail(proveedorEmail)
+	if proveedorEmail == email.ProveedorMock {
+		log.Println("[WARN] ⚠️  ⚠️  ⚠️  CORREO SIMULADO: ningún correo sale a la red. Los códigos y claves provisorias quedan en este log; las respuestas llevan X-Centinela-Email-Provider: mock")
+	}
 
 	// 2. Inicializar la base de datos
 	db, err := postgres.InitDB()
@@ -253,13 +260,12 @@ func main() {
 		//
 		// Prueba de deploy: este comentario se agrego a proposito para verificar que
 		// un push a main del back actualiza la linea "Back:" del login.
+		//
+		// emailProvider (mock | smtp) NO es de infraestructura: lo consultan las
+		// pruebas para saber si los correos salen de verdad. Si se borra este
+		// bloque, conservar un GET /api/version con emailProvider.
 		// ========================================================================
-		api.GET("/version", func(c *gin.Context) {
-			c.JSON(http.StatusOK, gin.H{
-				"commit":  buildCommit,
-				"builtAt": buildTime,
-			})
-		})
+		api.GET("/version", versionHandler(proveedorEmail))
 
 		// ==========================================
 		// Rutas de Autenticación (RF-01)
@@ -278,7 +284,7 @@ func main() {
 			auth.POST("/ws-ticket", middleware.RequireAuth(authService), authHandler.EmitirWsTicket)
 
 			// Recuperación de contraseña (públicas)
-			auth.POST("/password/forgot", middleware.LimitarRafagas(kvStore, "forgot"), middleware.LimitarSolicitudRecuperacion(kvStore), authHandler.SolicitarRecuperacion)
+			auth.POST("/password/forgot", avisoEmail, middleware.LimitarRafagas(kvStore, "forgot"), middleware.LimitarSolicitudRecuperacion(kvStore), authHandler.SolicitarRecuperacion)
 			auth.POST("/password/reset", middleware.LimitarRafagas(kvStore, "reset"), authHandler.ConfirmarRecuperacion)
 
 			// Rutas del flujo 2FA (requieren JWT temporal pre-auth)
@@ -301,7 +307,7 @@ func main() {
 			users := admin.Group("/users")
 			{
 				users.GET("", userHandler.ListarUsuarios)
-				users.POST("", userHandler.CrearUsuario)
+				users.POST("", avisoEmail, userHandler.CrearUsuario)
 				users.GET("/:id", userHandler.ObtenerUsuario)
 				users.PUT("/:id", userHandler.ActualizarUsuario)
 				users.DELETE("/:id", userHandler.EliminarUsuario)
@@ -315,7 +321,7 @@ func main() {
 
 				// Acciones de seguridad del usuario
 				users.POST("/:id/2fa/reset", userHandler.ResetearTotp)
-				users.POST("/:id/password/reset", userHandler.ResetearContrasena)
+				users.POST("/:id/password/reset", avisoEmail, userHandler.ResetearContrasena)
 			}
 
 			// ==========================================
@@ -331,7 +337,7 @@ func main() {
 		account := api.Group("/account", middleware.RequireAuth(authService))
 		{
 			account.GET("/profile", accountHandler.ObtenerPerfil)
-			account.PUT("/profile", accountHandler.ActualizarPerfil)
+			account.PUT("/profile", avisoEmail, accountHandler.ActualizarPerfil) // un cambio de email manda correos
 			account.POST("/profile/email/confirm", accountHandler.ConfirmarEmail)
 			account.PUT("/password", accountHandler.CambiarContrasena)
 		}
@@ -490,6 +496,18 @@ func inicializarServicioEmail() (ports.EmailService, error) {
 		}
 		log.Printf("[WARN] EMAIL_PROVIDER desconocido (%q). Usando MOCK por defecto", provider)
 		return email.NewMockEmailService(), nil
+	}
+}
+
+// versionHandler responde GET /api/version: el build desplegado (commit y
+// fecha) y el proveedor de correo activo (mock | smtp).
+func versionHandler(proveedorEmail string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{
+			"commit":        buildCommit,
+			"builtAt":       buildTime,
+			"emailProvider": proveedorEmail,
+		})
 	}
 }
 

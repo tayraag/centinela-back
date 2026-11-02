@@ -66,6 +66,20 @@ real de correos. En CI declaralo de manera explícita:
 APP_ENV=test EMAIL_PROVIDER=mock go test ./...
 ```
 
+**Cómo saber si los correos salen de verdad.** Con el correo simulado, un
+`200 "correo enviado"` no significa que el correo haya salido:
+
+- `GET /api/version` informa `"emailProvider": "mock"` o `"smtp"`. Las pruebas
+  de integración pueden consultarlo antes de esperar un correo.
+- Las respuestas de los flujos que mandan correo (`POST /api/auth/password/forgot`,
+  `POST /api/admin/users`, `POST /api/admin/users/:id/password/reset` y
+  `PUT /api/account/profile`) llevan la cabecera `X-Centinela-Email-Provider: mock`.
+  Con SMTP no aparece. El front la puede leer: CORS la expone en
+  `Access-Control-Expose-Headers`, junto con `Retry-After`.
+- En el log, cada correo simulado sale en un recuadro de `#####` con
+  `ESTE CORREO NO SE ENVIÓ` y el código OTP o la clave provisoria entre
+  `👉👉👉 ... 👈👈👈`. Al arrancar aparece `CORREO SIMULADO: ningún correo sale a la red`.
+
 ### Proxmox VE
 
 Configuración oficial pasada por la PM. El backend se autentica **solo** con el API Token del usuario de servicio `centinela-api@pve` (mínimo privilegio, RNF-01, con separación de privilegios activa). No hay login con usuario/contraseña ni tokens de `root`.

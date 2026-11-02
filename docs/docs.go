@@ -146,6 +146,12 @@ const docTemplate = `{
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/ports.UsuarioResumenDTO"
+                        },
+                        "headers": {
+                            "X-Centinela-Email-Provider": {
+                                "type": "string",
+                                "description": "mock cuando el correo es simulado (EMAIL_PROVIDER=mock): no se envió, el código o la clave quedan en el log del backend. Ausente con SMTP. Ver GET /api/version"
+                            }
                         }
                     },
                     "400": {
@@ -636,6 +642,12 @@ const docTemplate = `{
                         "description": "Created",
                         "schema": {
                             "$ref": "#/definitions/ports.CrearUsuarioResult"
+                        },
+                        "headers": {
+                            "X-Centinela-Email-Provider": {
+                                "type": "string",
+                                "description": "mock cuando el correo es simulado (EMAIL_PROVIDER=mock): no se envió, el código o la clave quedan en el log del backend. Ausente con SMTP. Ver GET /api/version"
+                            }
                         }
                     },
                     "400": {
@@ -1072,6 +1084,12 @@ const docTemplate = `{
                             "additionalProperties": {
                                 "type": "string"
                             }
+                        },
+                        "headers": {
+                            "X-Centinela-Email-Provider": {
+                                "type": "string",
+                                "description": "mock cuando el correo es simulado (EMAIL_PROVIDER=mock): no se envió, el código o la clave quedan en el log del backend. Ausente con SMTP. Ver GET /api/version"
+                            }
                         }
                     },
                     "401": {
@@ -1454,6 +1472,12 @@ const docTemplate = `{
                             "type": "object",
                             "additionalProperties": {
                                 "type": "string"
+                            }
+                        },
+                        "headers": {
+                            "X-Centinela-Email-Provider": {
+                                "type": "string",
+                                "description": "mock cuando el correo es simulado (EMAIL_PROVIDER=mock): no se envió, el código o la clave quedan en el log del backend. Ausente con SMTP. Ver GET /api/version"
                             }
                         }
                     },
