@@ -934,12 +934,13 @@ Petición (Frontend ➡️ Backend), al menos uno de los dos campos, enteros pos
 }
 ```
 
-Los incrementos se validan contra el margen del nodo (RAM con 15% de headroom y vCPU), comparando con lo que la instancia ya tiene asignado: se valida solo la diferencia (DeltaRAM). Las reducciones no se validan.
+Un aumento de RAM se valida contra el margen del nodo (15% de headroom), comparando con lo que la instancia ya tiene asignado: se valida solo la diferencia (DeltaRAM). Las vCPU admiten sobreasignación (CPU overcommit, RF-10): subir cores sin subir la RAM se aplica aunque el nodo ya tenga más vCPU asignadas que núcleos; el único tope es que una instancia no tenga más cores que los hilos lógicos del nodo. Las reducciones no se validan.
 
 Respuesta `200` si el cambio quedó aplicado: la instancia estaba apagada, o es un LXC / admite hot-plug y se aplicó en caliente.
 
 ```json
 {
+  "applied": true,
   "requiresReboot": false
 }
 ```
@@ -948,6 +949,7 @@ Respuesta `200` si la instancia está encendida y Proxmox dejó el cambio pendie
 
 ```json
 {
+  "applied": true,
   "requiresReboot": true,
   "message": "Recursos modificados; los cambios se aplicarán tras reiniciar la instancia."
 }
@@ -961,7 +963,7 @@ Errores (sobre `{ "errorCode", "message" }`):
 | 403 | `INSTANCE_ACCESS_DENIED` | El usuario no tiene `FULL_ACCESS` sobre la instancia |
 | 403 | `INSTANCE_PROTECTED` | Es una instancia de infraestructura de El Centinela |
 | 404 | `RESOURCE_NOT_FOUND` | La referencia no es válida o la instancia no existe (misma respuesta) |
-| 409 | `RESOURCE_QUOTA_EXCEEDED` | El incremento no entra en el margen del nodo; no se escribió nada en Proxmox |
+| 409 | `RESOURCE_QUOTA_EXCEEDED` | El aumento de RAM no entra en el margen del nodo, o los cores superan los hilos lógicos del nodo; no se escribió nada en Proxmox |
 | 409 | `INSTANCE_BUSY` | La instancia tiene otra operación en curso, o su configuración cambió en el medio |
 | 502 / 504 | `PROXMOX_UNAVAILABLE` / `PROXMOX_TIMEOUT` | Proxmox caído o sin respuesta |
 | 503 | `INSTANCE_LOCK_UNAVAILABLE` / `PROVISIONING_COORDINATION_UNAVAILABLE` | No se pudo coordinar la operación; se puede reintentar |
@@ -1463,7 +1465,9 @@ o venció, lee desde Proxmox el estado del nodo, las instancias ya asignadas y
 los storages, y guarda la nueva foto durante 10 segundos. Dentro de esa misma
 sección crítica valida:
 
-- vCPU solicitadas contra las disponibles en el nodo;
+- que la instancia no tenga más vCPU que los hilos lógicos del nodo (las vCPU
+  admiten sobreasignación, CPU overcommit: no se suman las de las demás
+  instancias);
 - RAM solicitada contra la capacidad todavía no comprometida, después de
   reservar estrictamente el 15% de la RAM física para Proxmox;
 - disco solicitado contra `avail` del storage;

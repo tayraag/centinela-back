@@ -175,8 +175,10 @@ func TestAprovisionamiento_DosClientesRedisVeinticuatroSolicitudes(t *testing.T)
 			t.Errorf("unexpected result: %v", err)
 		}
 	}
-	if aceptadas != 6 || rechazadas != 18 || px.creaciones != 6 {
-		t.Fatalf("accepted=%d rejected=%d Proxmox=%d, want 6/18/6", aceptadas, rechazadas, px.creaciones)
+	// El límite es la RAM (las vCPU admiten overcommit, RF-10): margen de
+	// 8 GiB - 2 GiB asignados - 15% de headroom = 4,8 GiB → entran 9 de 512 MiB.
+	if aceptadas != 9 || rechazadas != 15 || px.creaciones != 9 {
+		t.Fatalf("accepted=%d rejected=%d Proxmox=%d, want 9/15/9", aceptadas, rechazadas, px.creaciones)
 	}
 }
 

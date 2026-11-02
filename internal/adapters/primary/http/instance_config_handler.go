@@ -32,6 +32,7 @@ type ConfigInstanciaRequest struct {
 
 // ConfigInstanciaResponse es la respuesta 200 del cambio de configuración.
 type ConfigInstanciaResponse struct {
+	Applied        bool   `json:"applied" binding:"required" example:"true"` // siempre true en el 200: el cambio quedó escrito en Proxmox
 	RequiresReboot bool   `json:"requiresReboot" binding:"required" example:"true"`
 	Message        string `json:"message,omitempty" example:"Recursos modificados; los cambios se aplicarán tras reiniciar la instancia."`
 }
@@ -39,7 +40,7 @@ type ConfigInstanciaResponse struct {
 // ActualizarConfig cambia los cores y la RAM de una instancia.
 //
 // @Summary      Cambiar CPU y RAM de una instancia
-// @Description  ADMIN o FULL_ACCESS sobre la instancia. Cambia `cores` y/o `ramMb` (al menos uno, enteros positivos; `ramMb` mínimo 16). Los incrementos se validan contra el margen del nodo (RAM con 15% de headroom y vCPU), comparando con lo que la instancia ya tiene asignado (DeltaRAM): si no alcanza responde 409 RESOURCE_QUOTA_EXCEEDED sin escribir en Proxmox. Las reducciones no se validan. Si la instancia está apagada el cambio queda aplicado (`requiresReboot: false`). Si está encendida y Proxmox lo dejó pendiente porque la instancia no admite hot-plug (lo habitual en VMs QEMU), responde `requiresReboot: true`: se aplica al reiniciarla. En LXC, CPU y RAM se aplican en caliente. Pasa por la guarda de exclusión mutua (409 INSTANCE_BUSY si la instancia tiene otra operación en curso).
+// @Description  ADMIN o FULL_ACCESS sobre la instancia. Cambia `cores` y/o `ramMb` (al menos uno, enteros positivos; `ramMb` mínimo 16). Un aumento de RAM se valida contra el margen del nodo (15% de headroom), comparando con lo que la instancia ya tiene asignado (DeltaRAM). Las vCPU admiten sobreasignación (CPU overcommit): subirlas no se compara con las vCPU de las demás instancias; solo se controla que la instancia no supere los hilos lógicos del nodo. Si no se cumple responde 409 RESOURCE_QUOTA_EXCEEDED sin escribir en Proxmox. Las reducciones no se validan. El 200 trae `applied: true`. Si la instancia está apagada el cambio queda aplicado (`requiresReboot: false`). Si está encendida y Proxmox lo dejó pendiente porque la instancia no admite hot-plug (lo habitual en VMs QEMU), responde `requiresReboot: true`: se aplica al reiniciarla. En LXC, CPU y RAM se aplican en caliente. Pasa por la guarda de exclusión mutua (409 INSTANCE_BUSY si la instancia tiene otra operación en curso).
 // @Tags         Instancias Proxmox
 // @Accept       json
 // @Produce      json
@@ -110,7 +111,7 @@ func (h *InstanceConfigHandler) ActualizarConfig(c *gin.Context) {
 		SendError(c, http.StatusInternalServerError, "AUDIT_PERSISTENCE_FAILED", "La configuración fue aplicada, pero no pudo confirmarse su auditoría. Verifique el estado de la instancia antes de reintentar.")
 		return
 	}
-	respuesta := ConfigInstanciaResponse{RequiresReboot: resultado.RequiresReboot}
+	respuesta := ConfigInstanciaResponse{Applied: true, RequiresReboot: resultado.RequiresReboot}
 	if resultado.RequiresReboot {
 		respuesta.Message = "Recursos modificados; los cambios se aplicarán tras reiniciar la instancia."
 	}

@@ -146,12 +146,11 @@ func (s *CuotasService) validarCapacidad(ctx context.Context, input ports.CrearI
 		return ports.StorageDTO{}, fmt.Errorf("%w: el storage %q no está disponible para %s", ports.ErrRecursosInsuficientes, input.StorageID, input.Tipo)
 	}
 
-	memoriaDisponibleSegura, coresDisponibles := margenNodo(capacidad, input.Nodo, reservas)
-	if memoriaPedida > memoriaDisponibleSegura {
+	if memoriaPedida > margenRAMNodo(capacidad, input.Nodo, reservas) {
 		return ports.StorageDTO{}, fmt.Errorf("%w: RAM disponible insuficiente en el nodo %s", ports.ErrRecursosInsuficientes, input.Nodo)
 	}
-	if input.Cores > coresDisponibles {
-		return ports.StorageDTO{}, fmt.Errorf("%w: vCPU disponibles insuficientes en el nodo %s", ports.ErrRecursosInsuficientes, input.Nodo)
+	if err := validarCoresPorInstancia(capacidad, input.Nodo, input.Cores); err != nil {
+		return ports.StorageDTO{}, err
 	}
 	var discoReservado int64
 	for _, reserva := range reservas {
@@ -165,37 +164,33 @@ func (s *CuotasService) validarCapacidad(ctx context.Context, input ports.CrearI
 	return storage, nil
 }
 
-// margenNodo calcula la RAM (bytes) y las vCPU que todavía se pueden asignar en
-// el nodo sin pasarse: lo asignado a las instancias (o lo usado, si es mayor),
-// el headroom del host (15%) y las reservas de creaciones en curso. Lo usan la
+// margenRAMNodo calcula la RAM (bytes) que todavía se puede asignar en el nodo
+// sin pasarse: lo asignado a las instancias (o lo usado, si es mayor), el
+// headroom del host (15%) y las reservas de creaciones en curso. Lo usan la
 // creación (validarCapacidad) y la ampliación de una instancia (AmpliarInstancia).
-func margenNodo(capacidad *capacidadAprovisionamiento, nodo string, reservas []reservaAprovisionamiento) (memoriaDisponible int64, coresDisponibles int) {
+// Las vCPU no tienen margen de nodo: Proxmox admite sobreasignarlas (CPU
+// overcommit), así que solo se acota cada instancia (validarCoresPorInstancia).
+func margenRAMNodo(capacidad *capacidadAprovisionamiento, nodo string, reservas []reservaAprovisionamiento) int64 {
 	var memoriaAsignada int64
-	var coresAsignados int
 	for _, instancia := range capacidad.Instancias {
 		if instancia.Nodo == nodo {
 			memoriaAsignada += instancia.MaxMem
-			coresAsignados += instancia.MaxCpu
 		}
 	}
 	var memoriaReservada int64
-	var coresReservados int
 	for _, reserva := range reservas {
 		if reserva.Nodo != nodo {
 			continue
 		}
 		var memoriaVisible int64
-		var coresVisibles int
 		for _, instancia := range capacidad.Instancias {
 			if reserva.VMID != 0 && instancia.Vmid == reserva.VMID && instancia.Nodo == reserva.Nodo {
 				memoriaVisible = instancia.MaxMem
-				coresVisibles = instancia.MaxCpu
 				break
 			}
 		}
 		// Only subtract the part not already represented by the inventory.
 		memoriaReservada += max(int64(0), reserva.Memoria-memoriaVisible)
-		coresReservados += max(0, reserva.Cores-coresVisibles)
 	}
 
 	memoriaComprometida := memoriaAsignada
@@ -203,18 +198,46 @@ func margenNodo(capacidad *capacidadAprovisionamiento, nodo string, reservas []r
 		memoriaComprometida = capacidad.Nodo.MemUsada
 	}
 	memoriaReservadaHost := porcentajeRedondeadoHaciaArriba(max(int64(0), capacidad.Nodo.MemTotal), headroomRAMPercent)
-	memoriaDisponible = max(int64(0), capacidad.Nodo.MemTotal-memoriaComprometida-memoriaReservadaHost-memoriaReservada)
-	coresDisponibles = capacidad.Nodo.CPUs - coresAsignados - coresReservados
-	return memoriaDisponible, coresDisponibles
+	return max(int64(0), capacidad.Nodo.MemTotal-memoriaComprometida-memoriaReservadaHost-memoriaReservada)
 }
 
-// AmpliarInstancia valida que el nodo tenga margen para sumarle a una instancia
-// existente deltaCores vCPU y deltaMemoria bytes (solo los incrementos: lo que
-// ya tiene asignado ya está contado) y, con el lock de capacidad tomado,
-// ejecuta aplicar (el PUT /config). Así una ampliación y una creación
-// simultáneas no pueden pasar las dos la validación y sobrecargar el nodo. Si
-// no hay margen devuelve ErrRecursosInsuficientes sin llamar a aplicar.
-func (s *CuotasService) AmpliarInstancia(ctx context.Context, nodo string, deltaCores int, deltaMemoria int64, aplicar func() error) error {
+// validarCoresPorInstancia acota las vCPU de UNA instancia a los hilos lógicos
+// del nodo: es el mismo tope que aplica Proxmox al encender una VM ("MAX N vcpus
+// allowed per VM on this node"). No suma las vCPU de las demás instancias
+// (CPU overcommit, RF-10). Sin el dato de CPUs del nodo no se bloquea.
+func validarCoresPorInstancia(capacidad *capacidadAprovisionamiento, nodo string, cores int) error {
+	if capacidad.Nodo.CPUs > 0 && cores > capacidad.Nodo.CPUs {
+		return fmt.Errorf("%w: una instancia no puede tener más de %d vCPU en el nodo %s (sus hilos lógicos)",
+			ports.ErrRecursosInsuficientes, capacidad.Nodo.CPUs, nodo)
+	}
+	return nil
+}
+
+// AmpliarInstancia valida y aplica (aplicar = el PUT /config) un aumento de
+// recursos de una instancia existente (RF-10):
+//   - deltaMemoria > 0: el incremento de RAM (lo ya asignado ya está contado)
+//     tiene que entrar en el margen del nodo. Se valida con el lock de capacidad
+//     tomado, para que una ampliación y una creación simultáneas no pasen las
+//     dos y sobrecarguen el nodo.
+//   - cores > 0 (el total pedido, cuando sube): no puede superar los hilos
+//     lógicos del nodo. No se compara con las vCPU de las demás instancias.
+//
+// Si no se cumple devuelve ErrRecursosInsuficientes sin llamar a aplicar.
+func (s *CuotasService) AmpliarInstancia(ctx context.Context, nodo string, cores int, deltaMemoria int64, aplicar func() error) error {
+	if deltaMemoria <= 0 {
+		// Solo vCPU: no consume margen del nodo, no hace falta el lock.
+		capacidad, err := s.obtenerCapacidad(ctx, nodo)
+		if err != nil {
+			return err
+		}
+		if err := validarCoresPorInstancia(capacidad, nodo, cores); err != nil {
+			return err
+		}
+		err = aplicar()
+		s.invalidarCacheCapacidad(context.WithoutCancel(ctx), nodo)
+		return err
+	}
+
 	lockCtx, cancelarEspera := context.WithTimeout(ctx, esperaLockAprovisionamiento)
 	release, err := s.store.AcquireLock(lockCtx, claveLockAprovisionamiento, ttlLockAprovisionamiento)
 	cancelarEspera()
@@ -237,12 +260,11 @@ func (s *CuotasService) AmpliarInstancia(ctx context.Context, nodo string, delta
 	if err != nil {
 		return err
 	}
-	memoriaDisponible, coresDisponibles := margenNodo(capacidad, nodo, reservas)
-	if deltaMemoria > memoriaDisponible {
+	if deltaMemoria > margenRAMNodo(capacidad, nodo, reservas) {
 		return fmt.Errorf("%w: RAM disponible insuficiente en el nodo %s", ports.ErrRecursosInsuficientes, nodo)
 	}
-	if deltaCores > coresDisponibles {
-		return fmt.Errorf("%w: vCPU disponibles insuficientes en el nodo %s", ports.ErrRecursosInsuficientes, nodo)
+	if err := validarCoresPorInstancia(capacidad, nodo, cores); err != nil {
+		return err
 	}
 	err = aplicar()
 	// La foto de capacidad ya no refleja la instancia: la próxima lectura vuelve a Proxmox.

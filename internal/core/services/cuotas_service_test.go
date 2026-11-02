@@ -108,7 +108,7 @@ func TestCuotas_RechazaCuotasInsuficientesAntesDeCrear(t *testing.T) {
 	}{
 		{"RAM respeta headroom del 15%", inputCreacion(5*1024, 1, 1)},
 		{"RAM", inputCreacion(7*1024, 1, 1)},
-		{"CPU", inputCreacion(512, 1, 7)},
+		{"CPU: más vCPU que hilos tiene el nodo (8)", inputCreacion(512, 1, 9)},
 		{"disco", inputCreacion(512, 21, 1)},
 	}
 	for _, caso := range casos {
@@ -122,6 +122,18 @@ func TestCuotas_RechazaCuotasInsuficientesAntesDeCrear(t *testing.T) {
 				t.Fatal("no debe llamar al POST de Proxmox cuando la cuota es insuficiente")
 			}
 		})
+	}
+}
+
+// RF-10: las vCPU admiten overcommit. El nodo tiene 8 hilos y una instancia con
+// 2 vCPU: crear otra de 7 (9 en total) se acepta; hasta 8 por instancia.
+func TestCuotas_CreacionAdmiteCPUOvercommit(t *testing.T) {
+	for _, cores := range []int{7, 8} {
+		px := &proxmoxAprovisionamiento{}
+		svc := services.NewCuotasService(px, px, memoria.Nuevo())
+		if _, err := svc.AprovisionarInstancia(context.Background(), inputCreacion(512, 1, cores)); err != nil || px.creaciones != 1 {
+			t.Errorf("%d vCPU: se esperaba crear (overcommit), vino %v (creaciones=%d)", cores, err, px.creaciones)
+		}
 	}
 }
 

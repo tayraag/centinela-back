@@ -2007,7 +2007,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "ADMIN o FULL_ACCESS sobre la instancia. Cambia ` + "`" + `cores` + "`" + ` y/o ` + "`" + `ramMb` + "`" + ` (al menos uno, enteros positivos; ` + "`" + `ramMb` + "`" + ` mínimo 16). Los incrementos se validan contra el margen del nodo (RAM con 15% de headroom y vCPU), comparando con lo que la instancia ya tiene asignado (DeltaRAM): si no alcanza responde 409 RESOURCE_QUOTA_EXCEEDED sin escribir en Proxmox. Las reducciones no se validan. Si la instancia está apagada el cambio queda aplicado (` + "`" + `requiresReboot: false` + "`" + `). Si está encendida y Proxmox lo dejó pendiente porque la instancia no admite hot-plug (lo habitual en VMs QEMU), responde ` + "`" + `requiresReboot: true` + "`" + `: se aplica al reiniciarla. En LXC, CPU y RAM se aplican en caliente. Pasa por la guarda de exclusión mutua (409 INSTANCE_BUSY si la instancia tiene otra operación en curso).\nAuditoría RF-08: CONFIG_UPDATED con resultado SUCCESS/FAILED y valores anteriores/nuevos cuando están disponibles.",
+                "description": "ADMIN o FULL_ACCESS sobre la instancia. Cambia ` + "`" + `cores` + "`" + ` y/o ` + "`" + `ramMb` + "`" + ` (al menos uno, enteros positivos; ` + "`" + `ramMb` + "`" + ` mínimo 16). Un aumento de RAM se valida contra el margen del nodo (15% de headroom), comparando con lo que la instancia ya tiene asignado (DeltaRAM). Las vCPU admiten sobreasignación (CPU overcommit): subirlas no se compara con las vCPU de las demás instancias; solo se controla que la instancia no supere los hilos lógicos del nodo. Si no se cumple responde 409 RESOURCE_QUOTA_EXCEEDED sin escribir en Proxmox. Las reducciones no se validan. El 200 trae ` + "`" + `applied: true` + "`" + `. Si la instancia está apagada el cambio queda aplicado (` + "`" + `requiresReboot: false` + "`" + `). Si está encendida y Proxmox lo dejó pendiente porque la instancia no admite hot-plug (lo habitual en VMs QEMU), responde ` + "`" + `requiresReboot: true` + "`" + `: se aplica al reiniciarla. En LXC, CPU y RAM se aplican en caliente. Pasa por la guarda de exclusión mutua (409 INSTANCE_BUSY si la instancia tiene otra operación en curso).\nAuditoría RF-08: CONFIG_UPDATED con resultado SUCCESS/FAILED y valores anteriores/nuevos cuando están disponibles.",
                 "consumes": [
                     "application/json"
                 ],
@@ -3330,9 +3330,15 @@ const docTemplate = `{
         "http.ConfigInstanciaResponse": {
             "type": "object",
             "required": [
+                "applied",
                 "requiresReboot"
             ],
             "properties": {
+                "applied": {
+                    "description": "siempre true en el 200: el cambio quedó escrito en Proxmox",
+                    "type": "boolean",
+                    "example": true
+                },
                 "message": {
                     "type": "string",
                     "example": "Recursos modificados; los cambios se aplicarán tras reiniciar la instancia."

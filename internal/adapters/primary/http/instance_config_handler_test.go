@@ -112,7 +112,7 @@ func TestConfig_PayloadInvalidoEs400SinTocarElServicio(t *testing.T) {
 func TestConfig_Respuestas(t *testing.T) {
 	f := &configuracionFalsa{requiereReinicio: true}
 	s, resp := pedirConfig(f, `{"cores":4,"ramMb":4096}`)
-	if s != http.StatusOK || resp["requiresReboot"] != true || resp["message"] != "Recursos modificados; los cambios se aplicarán tras reiniciar la instancia." {
+	if s != http.StatusOK || resp["applied"] != true || resp["requiresReboot"] != true || resp["message"] != "Recursos modificados; los cambios se aplicarán tras reiniciar la instancia." {
 		t.Errorf("Pendiente de reinicio: %d %v", s, resp)
 	}
 	if f.cores != 4 || f.memoria != 4096 {
@@ -121,7 +121,7 @@ func TestConfig_Respuestas(t *testing.T) {
 
 	f = &configuracionFalsa{}
 	s, resp = pedirConfig(f, `{"ramMb":2048}`)
-	if _, tieneMensaje := resp["message"]; s != http.StatusOK || resp["requiresReboot"] != false || tieneMensaje || f.cores != 0 {
+	if _, tieneMensaje := resp["message"]; s != http.StatusOK || resp["applied"] != true || resp["requiresReboot"] != false || tieneMensaje || f.cores != 0 {
 		t.Errorf("Aplicado (solo RAM): %d %v cores=%d", s, resp, f.cores)
 	}
 }

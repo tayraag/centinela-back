@@ -69,14 +69,14 @@ func (p *proxmoxConfigFalso) ActualizarConfig(_ context.Context, _, _ string, _ 
 // ampliadorFalso registra lo que se le pidió validar.
 type ampliadorFalso struct {
 	llamadas     int
-	deltaCores   int
+	cores        int
 	deltaMemoria int64
 	rechazo      error
 }
 
-func (a *ampliadorFalso) AmpliarInstancia(_ context.Context, _ string, deltaCores int, deltaMemoria int64, aplicar func() error) error {
+func (a *ampliadorFalso) AmpliarInstancia(_ context.Context, _ string, cores int, deltaMemoria int64, aplicar func() error) error {
 	a.llamadas++
-	a.deltaCores, a.deltaMemoria = deltaCores, deltaMemoria
+	a.cores, a.deltaMemoria = cores, deltaMemoria
 	if a.rechazo != nil {
 		return a.rechazo
 	}
@@ -145,8 +145,8 @@ func TestReconfigurar_ValidaSoloElIncremento(t *testing.T) {
 	if _, err := services.NewConfiguracionInstancias(px, cuotas).Reconfigurar(context.Background(), 110, 0, 6144); err != nil {
 		t.Fatal(err)
 	}
-	if cuotas.llamadas != 1 || cuotas.deltaMemoria != 4096*mib || cuotas.deltaCores != 0 {
-		t.Errorf("Debe validar DeltaRAM = 6144 - 2048 MiB y 0 vCPU: llamadas=%d deltaRAM=%d deltaCores=%d", cuotas.llamadas, cuotas.deltaMemoria/mib, cuotas.deltaCores)
+	if cuotas.llamadas != 1 || cuotas.deltaMemoria != 4096*mib || cuotas.cores != 0 {
+		t.Errorf("Debe validar DeltaRAM = 6144 - 2048 MiB y ningún core: llamadas=%d deltaRAM=%d cores=%d", cuotas.llamadas, cuotas.deltaMemoria/mib, cuotas.cores)
 	}
 
 	// Bajar recursos no necesita validación.
@@ -192,7 +192,8 @@ func TestAmpliarInstancia_FueraDelMargenNoAplica(t *testing.T) {
 		memoria int64
 	}{
 		{"RAM (respeta el headroom del 15%)", 0, 5 * 1024 * mib},
-		{"vCPU", 7, 0},
+		{"vCPU: más que los 8 hilos del nodo", 9, 0},
+		{"vCPU con RAM dentro del margen", 9, 1024 * mib},
 	}
 	for _, c := range casos {
 		svc := services.NewCuotasService(&proxmoxAprovisionamiento{}, nil, memoria.Nuevo())
@@ -248,5 +249,60 @@ func TestAmpliarInstancia_ConcurrentesNoSobrecargan(t *testing.T) {
 	wg.Wait()
 	if aplicadas.Load() != 1 || rechazadas.Load() != 1 {
 		t.Errorf("Se esperaba 1 aplicada y 1 rechazada, vinieron %d y %d", aplicadas.Load(), rechazadas.Load())
+	}
+}
+
+// nodoSobreasignado: 8 hilos y 8 GiB. La instancia 110 (2 vCPU, 2 GiB) comparte
+// el nodo con otras que ya suman 30 vCPU y 4 GiB: las vCPU están sobreasignadas
+// (32 > 8) y el margen de RAM es 8 - 6 - 15% de headroom = 0,8 GiB.
+type nodoSobreasignado struct {
+	*proxmoxConfigFalso
+}
+
+func (n nodoSobreasignado) ObtenerEstadoNodo(context.Context, string) (*ports.NodeStatusDTO, error) {
+	return &ports.NodeStatusDTO{CPUs: 8, MemTotal: 8 * 1024 * mib, MemUsada: 1024 * mib}, nil
+}
+
+func (n nodoSobreasignado) ListarInstancias(context.Context) ([]ports.InstanciaProxmoxDTO, error) {
+	return []ports.InstanciaProxmoxDTO{
+		{Vmid: 110, Nodo: "pve1", MaxCpu: 2, MaxMem: 2048 * mib},
+		{Vmid: 120, Nodo: "pve1", MaxCpu: 16, MaxMem: 2048 * mib},
+		{Vmid: 121, Nodo: "pve1", MaxCpu: 14, MaxMem: 2048 * mib},
+	}, nil
+}
+
+func (n nodoSobreasignado) ObtenerStorages(context.Context, string) ([]ports.StorageDTO, error) {
+	return nil, nil
+}
+
+// DoD RF-10: subir vCPU sin subir la RAM se aplica aunque el nodo ya tenga más
+// vCPU asignadas que hilos (CPU overcommit). La RAM se sigue validando contra el
+// margen real, y una instancia no puede superar los hilos del nodo.
+func TestReconfigurar_CPUOvercommit(t *testing.T) {
+	casos := []struct {
+		nombre       string
+		cores, ramMb int
+		aplicada     bool
+	}{
+		{"más vCPU, misma RAM", 6, 0, true},
+		{"más vCPU, misma RAM explícita", 6, 2048, true},
+		{"más vCPU, menos RAM", 8, 1024, true},
+		{"más vCPU y RAM dentro del margen", 6, 2048 + 512, true},
+		{"más vCPU y RAM fuera del margen", 6, 2048 + 1024, false},
+		{"más vCPU que hilos del nodo", 9, 0, false},
+	}
+	for _, caso := range casos {
+		px := vmConfig("stopped", 2, 2048)
+		svc := services.NewConfiguracionInstancias(px, services.NewCuotasService(nodoSobreasignado{px}, nil, memoria.Nuevo()))
+		res, err := svc.Reconfigurar(context.Background(), 110, caso.cores, caso.ramMb)
+		if caso.aplicada {
+			if err != nil || res == nil || !res.Aplicada || px.puts != 1 || px.enUso.Cores != caso.cores {
+				t.Errorf("%s: se esperaba aplicar el PUT, vino err=%v puts=%d cores=%d", caso.nombre, err, px.puts, px.enUso.Cores)
+			}
+			continue
+		}
+		if !errors.Is(err, ports.ErrRecursosInsuficientes) || px.puts != 0 {
+			t.Errorf("%s: se esperaba ErrRecursosInsuficientes sin PUT, vino err=%v puts=%d", caso.nombre, err, px.puts)
+		}
 	}
 }

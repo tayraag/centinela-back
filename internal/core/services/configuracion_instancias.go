@@ -9,7 +9,7 @@ import (
 
 // ampliadorCapacidad es la parte de CuotasService que usa la reconfiguración.
 type ampliadorCapacidad interface {
-	AmpliarInstancia(ctx context.Context, nodo string, deltaCores int, deltaMemoria int64, aplicar func() error) error
+	AmpliarInstancia(ctx context.Context, nodo string, cores int, deltaMemoria int64, aplicar func() error) error
 }
 
 type configuracionInstancias struct {
@@ -24,10 +24,12 @@ func NewConfiguracionInstancias(proxmox ports.ProxmoxPort, cuotas ampliadorCapac
 
 // Reconfigurar:
 //  1. Lee la instancia (nodo, tipo, estado) y la config en uso.
-//  2. Calcula los incrementos contra lo que la instancia usa hoy (DeltaRAM y
-//     Delta de vCPU). Si alguno es positivo, CuotasService valida el margen del
-//     nodo y aplica el cambio con el lock de capacidad tomado; si no alcanza, no
-//     se escribe nada en Proxmox. Las reducciones no necesitan validación.
+//  2. Calcula los incrementos contra lo que la instancia usa hoy (RF-10). Si la
+//     RAM sube (DeltaRAM > 0), CuotasService valida el incremento contra el
+//     margen del nodo y aplica con el lock de capacidad tomado. Si suben las
+//     vCPU, solo se controla que la instancia no supere los hilos lógicos del
+//     nodo: se admite CPU overcommit, nunca se suman las vCPU de las demás. Si
+//     no se cumple, no se escribe nada en Proxmox. Las reducciones no se validan.
 //  3. Hace el PUT /config con el digest leído (si alguien cambió la config en el
 //     medio, Proxmox lo rechaza).
 //  4. Si la instancia está encendida, vuelve a leer la config en uso: si no
@@ -65,10 +67,10 @@ func (s *configuracionInstancias) Reconfigurar(ctx context.Context, vmid, cores,
 
 	// Los incrementos se miden contra lo que el nodo ya tiene contado para la
 	// instancia (MaxCpu y MaxMem del inventario), igual que en la creación.
-	var deltaCores int
+	var coresQueSuben int
 	var deltaMemoria int64
-	if cores > 0 {
-		deltaCores = cores - inst.MaxCpu
+	if cores > inst.MaxCpu {
+		coresQueSuben = cores
 	}
 	if memoriaMB > 0 {
 		deltaMemoria = int64(memoriaMB)*bytesPorMiB - inst.MaxMem
@@ -76,8 +78,8 @@ func (s *configuracionInstancias) Reconfigurar(ctx context.Context, vmid, cores,
 	aplicar := func() error {
 		return s.proxmox.ActualizarConfig(ctx, inst.Nodo, inst.Tipo, vmid, cores, memoriaMB, conPendientes.Digest)
 	}
-	if deltaCores > 0 || deltaMemoria > 0 {
-		err = s.cuotas.AmpliarInstancia(ctx, inst.Nodo, max(0, deltaCores), max(int64(0), deltaMemoria), aplicar)
+	if coresQueSuben > 0 || deltaMemoria > 0 {
+		err = s.cuotas.AmpliarInstancia(ctx, inst.Nodo, coresQueSuben, max(int64(0), deltaMemoria), aplicar)
 	} else {
 		err = aplicar()
 	}
