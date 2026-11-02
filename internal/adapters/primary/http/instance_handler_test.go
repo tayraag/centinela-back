@@ -1211,3 +1211,58 @@ func (m *mockProxmoxPort) EliminarSnapshot(context.Context, string, string, int,
 func (m *mockTareaRepository) HuboTareaDesde(context.Context, int, time.Time) (bool, error) {
 	return false, nil
 }
+
+// DoD: vlan 0, null u omitida es tráfico nativo sin etiquetar (202, sin tag
+// hacia Proxmox); una VLAN efectiva pasa tal cual; fuera de 1-4094, 400.
+func TestCrearInstancia_VLANNeutraEsSinEtiquetar(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cuerpos := map[string]func(vlan string) string{
+		"contrato RF-07": func(vlan string) string {
+			return `{"tipo":"lxc","nombre":"srv-prod-01","cores":1,"ramMb":512,"discoGb":5,"storageId":"local-lvm",` +
+				`"templateOso":"local:vztmpl/debian-12-standard_12.7-1_amd64.tar.zst","password":"ClaveSegura2026!",` +
+				`"red":{"modo":"dhcp","bridge":"vmbr0"` + vlan + `}}`
+		},
+		"formato anterior": func(vlan string) string {
+			return `{"type":"VM","node":"pve1","name":"web","cpu":{"cores":1},"ram":{"memoryMb":512},` +
+				`"disk":{"storageId":"local-lvm","sizeGb":1},"network":{"bridge":"vmbr0","firewall":true,"ipv4":{"type":"dhcp"}` + vlan + `},` +
+				`"os":{"templateId":"local:iso/debian-12.iso"}}`
+		},
+	}
+	casos := []struct {
+		nombre, vlan string
+		codigo       int
+		tag          *int
+	}{
+		{"vlan 0", `,"vlan":0`, http.StatusAccepted, nil},
+		{"vlan null", `,"vlan":null`, http.StatusAccepted, nil},
+		{"sin vlan", ``, http.StatusAccepted, nil},
+		{"vlan 1", `,"vlan":1`, http.StatusAccepted, func() *int { n := 1; return &n }()},
+		{"vlan 4094", `,"vlan":4094`, http.StatusAccepted, func() *int { n := 4094; return &n }()},
+		{"vlan -1", `,"vlan":-1`, http.StatusBadRequest, nil},
+		{"vlan 4095", `,"vlan":4095`, http.StatusBadRequest, nil},
+	}
+	for formato, cuerpo := range cuerpos {
+		for _, caso := range casos {
+			px := &mockProxmoxPort{aprovRes: &ports.ResultadoAprovisionamiento{VMID: 700, UPID: "UPID:pve1:qmcreate:700", Accion: ports.AccionProxmoxCrearVM}}
+			handler := adaptersHttp.NewInstanceHandler(px, &mockUserRepository{}, seguimientoNulo{}, &mockTareaRepository{}, &mockAuditService{}, inventarioNulo{}, adaptersHttp.RefsPrueba, adaptersHttp.TopologiaPrueba)
+			router := gin.New()
+			router.POST("/api/instances", handler.CrearInstancia)
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/instances", strings.NewReader(cuerpo(caso.vlan))))
+			if w.Code != caso.codigo {
+				t.Errorf("%s, %s: se esperaba %d, vino %d %s", formato, caso.nombre, caso.codigo, w.Code, w.Body.String())
+				continue
+			}
+			if caso.codigo == http.StatusBadRequest {
+				if !strings.Contains(w.Body.String(), `"errorCode":"INVALID_REQUEST"`) || px.escrituras != 0 {
+					t.Errorf("%s, %s: 400 INVALID_REQUEST sin llegar a Proxmox: %s (escrituras=%d)", formato, caso.nombre, w.Body.String(), px.escrituras)
+				}
+				continue
+			}
+			recibida := px.aprovInput.VLAN
+			if (recibida == nil) != (caso.tag == nil) || (recibida != nil && *recibida != *caso.tag) {
+				t.Errorf("%s, %s: a Proxmox llegó vlan=%v, se esperaba %v", formato, caso.nombre, recibida, caso.tag)
+			}
+		}
+	}
+}

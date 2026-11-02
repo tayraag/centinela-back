@@ -245,6 +245,12 @@ payload anidado anterior del wizard: `type`, `node`, `name`, `cpu.cores`,
 `network.bridge/vlan/firewall/ipv4` y `os.templateId`. En ese formato, LXC
 requiere `password`. Las integraciones nuevas deben usar el contrato plano.
 
+**VLAN.** `red.vlan` (o `network.vlan` en el formato anterior) es opcional.
+`0`, `null` o la ausencia del campo representan tráfico nativo sin etiquetar
+(IEEE 802.1Q): `net0` se envía a Proxmox sin `tag`, nunca con `tag=0`. Un valor
+de `1` a `4094` se agrega como `,tag=<vlan>`. Cualquier otro valor responde
+`400 INVALID_REQUEST` sin contactar a Proxmox.
+
 **Formatos obligatorios.** Lo que se arma dentro de las directivas de Proxmox
 (`net0`, `scsi0`, `rootfs`, `ide2`) no puede traer caracteres que cambien su
 sentido: en Proxmox la coma separa directivas, y un `bridge` como

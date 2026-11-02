@@ -159,6 +159,7 @@ func TestClient_ObtenerInstancia_VmidInexistente(t *testing.T) {
 }
 
 func TestClient_AprovisionarInstancia_ReservaVMIDYEnviaConfiguracion(t *testing.T) {
+	vlan := func(n int) *int { return &n }
 	casos := []struct {
 		nombre   string
 		input    ports.CrearInstanciaProxmoxInput
@@ -180,6 +181,31 @@ func TestClient_AprovisionarInstancia_ReservaVMIDYEnviaConfiguracion(t *testing.
 			input:    ports.CrearInstanciaProxmoxInput{Tipo: ports.TipoInstanciaLXC, Nodo: "pve1", Nombre: "cache", Cores: 1, MemoriaMB: 1024, StorageID: "local-lvm", DiscoGB: 10, TemplateID: "local:vztmpl/debian.tar.zst", Bridge: "vmbr0", IPv4Tipo: "static", IPv4Address: "192.168.1.50", IPv4Mask: "24", IPv4Gateway: "192.168.1.1"},
 			campos:   map[string]string{"hostname": "cache", "unprivileged": "1", "features": "nesting=1", "rootfs": "local-lvm:10", "ostemplate": "local:vztmpl/debian.tar.zst", "net0": "name=eth0,bridge=vmbr0,firewall=0,ip=192.168.1.50/24,gw=192.168.1.1"},
 			ausentes: []string{"password"},
+		},
+		// vlan 0 = sin etiquetar: net0 nunca lleva ",tag=0".
+		{
+			nombre: "VM con vlan 0", path: "/api2/json/nodes/pve1/qemu", accion: ports.AccionProxmoxCrearVM,
+			upid:   "UPID:pve1:1:2:3:qmcreate:501:root@pam:",
+			input:  ports.CrearInstanciaProxmoxInput{Tipo: ports.TipoInstanciaQemu, Nodo: "pve1", Nombre: "web", Cores: 2, MemoriaMB: 4096, StorageID: "local-lvm", DiscoGB: 30, TemplateID: "local:iso/debian.iso", Bridge: "vmbr0", VLAN: vlan(0), IPv4Tipo: "dhcp"},
+			campos: map[string]string{"net0": "virtio,bridge=vmbr0,firewall=0"},
+		},
+		{
+			nombre: "VM con vlan 20", path: "/api2/json/nodes/pve1/qemu", accion: ports.AccionProxmoxCrearVM,
+			upid:   "UPID:pve1:1:2:3:qmcreate:501:root@pam:",
+			input:  ports.CrearInstanciaProxmoxInput{Tipo: ports.TipoInstanciaQemu, Nodo: "pve1", Nombre: "web", Cores: 2, MemoriaMB: 4096, StorageID: "local-lvm", DiscoGB: 30, TemplateID: "local:iso/debian.iso", Bridge: "vmbr0", VLAN: vlan(20), IPv4Tipo: "dhcp"},
+			campos: map[string]string{"net0": "virtio,bridge=vmbr0,firewall=0,tag=20"},
+		},
+		{
+			nombre: "LXC con vlan 0", path: "/api2/json/nodes/pve1/lxc", accion: ports.AccionProxmoxCrearLXC,
+			upid:   "UPID:pve1:1:2:3:vzcreate:501:root@pam:",
+			input:  ports.CrearInstanciaProxmoxInput{Tipo: ports.TipoInstanciaLXC, Nodo: "pve1", Nombre: "cache", Cores: 1, MemoriaMB: 1024, StorageID: "local-lvm", DiscoGB: 10, TemplateID: "local:vztmpl/debian.tar.zst", Bridge: "vmbr0", VLAN: vlan(0), IPv4Tipo: "dhcp"},
+			campos: map[string]string{"net0": "name=eth0,bridge=vmbr0,firewall=0,ip=dhcp"},
+		},
+		{
+			nombre: "LXC con vlan 20", path: "/api2/json/nodes/pve1/lxc", accion: ports.AccionProxmoxCrearLXC,
+			upid:   "UPID:pve1:1:2:3:vzcreate:501:root@pam:",
+			input:  ports.CrearInstanciaProxmoxInput{Tipo: ports.TipoInstanciaLXC, Nodo: "pve1", Nombre: "cache", Cores: 1, MemoriaMB: 1024, StorageID: "local-lvm", DiscoGB: 10, TemplateID: "local:vztmpl/debian.tar.zst", Bridge: "vmbr0", VLAN: vlan(20), IPv4Tipo: "dhcp"},
+			campos: map[string]string{"net0": "name=eth0,bridge=vmbr0,firewall=0,ip=dhcp,tag=20"},
 		},
 	}
 	for _, caso := range casos {

@@ -271,7 +271,7 @@ func parametrosCreacion(vmid int, input ports.CrearInstanciaProxmoxInput) url.Va
 		} else {
 			net0 += ",ip=dhcp"
 		}
-		if input.VLAN != nil {
+		if input.VLAN != nil && *input.VLAN > 0 {
 			net0 += ",tag=" + strconv.Itoa(*input.VLAN)
 		}
 		params.Set("net0", net0)
@@ -286,7 +286,7 @@ func parametrosCreacion(vmid int, input ports.CrearInstanciaProxmoxInput) url.Va
 	params.Set("ide2", input.TemplateID+",media=cdrom")
 	params.Set("boot", "order=ide2;scsi0")
 	net0 := fmt.Sprintf("virtio,bridge=%s,firewall=%s", input.Bridge, firewall)
-	if input.VLAN != nil {
+	if input.VLAN != nil && *input.VLAN > 0 { // 0 = sin etiquetar: nunca ",tag=0"
 		net0 += ",tag=" + strconv.Itoa(*input.VLAN)
 	}
 	params.Set("net0", net0)

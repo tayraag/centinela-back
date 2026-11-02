@@ -87,7 +87,7 @@ type CrearInstanciaRedRequest struct {
 	Gateway  string `json:"gateway,omitempty" example:"192.168.1.1"`
 	Mascara  string `json:"mascara,omitempty" example:"24"`
 	Bridge   string `json:"bridge,omitempty" example:"vmbr0"`
-	VLAN     *int   `json:"vlan,omitempty" example:"100"`
+	VLAN     *int   `json:"vlan,omitempty" example:"100" minimum:"0" maximum:"4094" extensions:"x-nullable"` // VLAN de 1 a 4094 (tag en Proxmox). 0, null u omitida = tráfico sin etiquetar.
 	Firewall bool   `json:"firewall,omitempty" example:"true"`
 }
 
@@ -434,8 +434,14 @@ func validarCreacionNormalizada(input ports.CrearInstanciaProxmoxInput, exigirPa
 	if input.Bridge == "" || input.TemplateID == "" {
 		return ports.CrearInstanciaProxmoxInput{}, fmt.Errorf("bridge y template son obligatorios")
 	}
-	if input.VLAN != nil && (*input.VLAN < 1 || *input.VLAN > 4094) {
-		return ports.CrearInstanciaProxmoxInput{}, fmt.Errorf("vlan debe estar entre 1 y 4094")
+	// vlan 0, null u omitida = tráfico nativo sin etiquetar (IEEE 802.1Q): no
+	// se envía tag a Proxmox. Solo una VLAN efectiva (1-4094) lleva tag.
+	if input.VLAN != nil {
+		if *input.VLAN == 0 {
+			input.VLAN = nil
+		} else if *input.VLAN < 1 || *input.VLAN > 4094 {
+			return ports.CrearInstanciaProxmoxInput{}, fmt.Errorf("vlan debe estar entre 1 y 4094")
+		}
 	}
 	if input.IPv4Tipo != "dhcp" && input.IPv4Tipo != "static" {
 		return ports.CrearInstanciaProxmoxInput{}, fmt.Errorf("el modo de red debe ser dhcp o static")

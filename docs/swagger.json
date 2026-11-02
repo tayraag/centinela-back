@@ -3378,7 +3378,11 @@
                     "example": "dhcp"
                 },
                 "vlan": {
+                    "description": "VLAN de 1 a 4094 (tag en Proxmox). 0, null u omitida = tráfico sin etiquetar.",
                     "type": "integer",
+                    "maximum": 4094,
+                    "minimum": 0,
+                    "x-nullable": true,
                     "example": 100
                 }
             }

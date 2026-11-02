@@ -1334,6 +1334,9 @@ El contrato canónico RF-07 es plano. `nodo` es opcional; el backend usa
 el CIDR o se puede agregar `red.mascara` (por defecto `/24`). Si
 `templateOso` llega como nombre de archivo, el backend lo convierte al volumen
 `storageId:iso/...` para VM o `storageId:vztmpl/...` para LXC.
+`red.vlan` es opcional: `0`, `null` o no enviarlo es tráfico sin etiquetar
+(red nativa) y no se le pone tag en Proxmox; una VLAN de `1` a `4094` se aplica
+como tag. Fuera de ese rango (ej. `-1`, `4095`) responde `400 INVALID_REQUEST`.
 
 ```json
 {

@@ -126,8 +126,13 @@ definitions:
         example: dhcp
         type: string
       vlan:
+        description: VLAN de 1 a 4094 (tag en Proxmox). 0, null u omitida = tráfico
+          sin etiquetar.
         example: 100
+        maximum: 4094
+        minimum: 0
         type: integer
+        x-nullable: true
     required:
     - modo
     type: object
