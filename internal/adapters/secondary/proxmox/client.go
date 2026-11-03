@@ -446,6 +446,19 @@ func (c *Client) Reboot(ctx context.Context, node string, vmid int, vmType strin
 	return res.Data, nil
 }
 
+func (c *Client) Resume(ctx context.Context, node string, vmid int, vmType string) (string, error) {
+	path := fmt.Sprintf("/api2/json/nodes/%s/%s/%d/status/resume", node, vmType, vmid)
+	raw, err := c.doRequest(ctx, http.MethodPost, path, nil)
+	if err != nil {
+		return "", err
+	}
+	var res upidResponse
+	if err := json.Unmarshal(raw, &res); err != nil {
+		return "", fmt.Errorf("%w: error leyendo UPID de resume: %v", ports.ErrProxmoxNoDisponible, err)
+	}
+	return res.Data, nil
+}
+
 // EliminarInstancia elimina de forma permanente una VM o contenedor de Proxmox.
 // Proxmox usa DELETE /nodes/{node}/{tipo}/{vmid} con purga profunda para
 // desvincular configuraciones HA y eliminar discos que hayan quedado sin

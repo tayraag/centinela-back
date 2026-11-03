@@ -204,13 +204,20 @@ func (h *InstanceHandler) responderTarea(c *gin.Context, vmid int, accion, upid 
 	c.JSON(http.StatusAccepted, AccionAceptadaResponse{TareaID: tareaID.String()})
 }
 
-// estadosRequeridosPorAccion es la matriz de estados operativos: el estado en
-// el que debe estar la instancia para que la acción tenga sentido.
-var estadosRequeridosPorAccion = map[string]string{
-	"start":    "stopped",
-	"stop":     "running",
-	"shutdown": "running",
-	"reboot":   "running",
+// esEstadoCompatible define las transiciones permitidas.
+func esEstadoCompatible(accion, estadoActual string) bool {
+	switch accion {
+	case "start":
+		return estadoActual == "stopped"
+	case "stop":
+		return estadoActual == "running" || estadoActual == "paused"
+	case "shutdown", "reboot":
+		return estadoActual == "running"
+	case "resume":
+		return estadoActual == "paused"
+	default:
+		return false
+	}
 }
 
 // tieneTareaActiva consulta si el vmid posee alguna tarea en curso (RUNNING)
@@ -246,7 +253,7 @@ func (h *InstanceHandler) validarEstadoParaAccion(c *gin.Context, vmid int, acci
 		mapearErrorProxmox(c, err)
 		return nil, false
 	}
-	if instancia.Estado != estadosRequeridosPorAccion[accion] {
+	if !esEstadoCompatible(accion, instancia.Estado) {
 		SendError(c, http.StatusConflict, "INSTANCE_INVALID_STATE",
 			"La instancia se encuentra en un estado incompatible para la acción solicitada")
 		return nil, false
@@ -873,6 +880,7 @@ var accionesValidas = map[string]bool{
 	"stop":     true,
 	"shutdown": true,
 	"reboot":   true,
+	"resume":   true,
 }
 
 // PausarInstancia documenta el contrato objetivo de la acción Pause. NO OPERATIVO:
@@ -901,19 +909,19 @@ func (h *InstanceHandler) PausarInstancia(c *gin.Context) {
 	SendError(c, http.StatusNotFound, "NOT_FOUND", "La acción pause no está implementada.")
 }
 
-// CambiarEstado ejecuta una acción de ciclo de vida (start/stop/shutdown/reboot) sobre
+// CambiarEstado ejecuta una acción de ciclo de vida (start/stop/shutdown/reboot/resume) sobre
 // una instancia. Complementa los endpoints /start y /stop (que se mantienen
 // por retrocompatibilidad) y agrega soporte para reboot y shutdown.
 //
 // @Summary      Cambiar estado de instancia
-// @Description  OPERATIVO. Ejecuta una acción de ciclo de vida (start, stop, shutdown, reboot) sobre una VM o contenedor. El endpoint genérico complementa a /start y /stop manteniendo retrocompatibilidad. La acción Pause NO está implementada: use POST /instances/{instanceRef}/pause, que hoy responde 404 NOT_FOUND.
+// @Description  OPERATIVO. Ejecuta una acción de ciclo de vida (start, stop, shutdown, reboot, resume) sobre una VM o contenedor. El endpoint genérico complementa a /start y /stop manteniendo retrocompatibilidad. La acción Pause NO está implementada: use POST /instances/{instanceRef}/pause, que hoy responde 404 NOT_FOUND.
 // @Tags         Instancias Proxmox
 // @Produce      json
 // @Security     BearerAuth
 // @Param        instanceRef path string true "Referencia pública de la instancia (inst_...)"
-// @Param        action      path string true "Acción a ejecutar (start | stop | shutdown | reboot). pause NO es válida: responde 400 INVALID_ACTION"
+// @Param        action      path string true "Acción a ejecutar (start | stop | shutdown | reboot | resume). pause NO es válida: responde 400 INVALID_ACTION"
 // @Success      202 {object} AccionAceptadaResponse "Acción aceptada: tareaId público para correlacionar TASK_FINISHED"
-// @Failure      400 {object} ErrorResponse "INVALID_ACTION — acción distinta de start, stop, shutdown o reboot"
+// @Failure      400 {object} ErrorResponse "INVALID_ACTION — acción distinta de start, stop, shutdown, reboot o resume"
 // @Failure      401 {object} ErrorResponse "MISSING_TOKEN | INVALID_TOKEN | TOKEN_REVOKED"
 // @Failure      403 {object} ErrorResponse "WRONG_TOKEN_TYPE | 2FA_REQUIRED | PASSWORD_CHANGE_REQUIRED | NO_ROLE | NO_USER | INVALID_USER_ID | INSTANCE_ACCESS_DENIED | INSTANCE_PROTECTED"
 // @Failure      404 {object} ErrorResponse "RESOURCE_NOT_FOUND — la referencia no corresponde a ninguna instancia (token alterado, inventado o VMID numérico) o la instancia no existe en Proxmox; ambos casos responden exactamente igual"
@@ -932,7 +940,7 @@ func (h *InstanceHandler) CambiarEstado(c *gin.Context) {
 	accion := strings.ToLower(c.Param("action"))
 	if !accionesValidas[accion] {
 		SendError(c, http.StatusBadRequest, "INVALID_ACTION",
-			fmt.Sprintf("Acción '%s' no válida. Opciones: start, stop, shutdown, reboot.", accion))
+			fmt.Sprintf("Acción '%s' no válida. Opciones: start, stop, shutdown, reboot, resume.", accion))
 		return
 	}
 
@@ -959,6 +967,9 @@ func (h *InstanceHandler) CambiarEstado(c *gin.Context) {
 	case "shutdown":
 		upid, err = h.proxmox.Shutdown(c.Request.Context(), instancia.Nodo, vmid, instancia.Tipo)
 		accionAudit = ports.AccionApagarVM
+	case "resume":
+		upid, err = h.proxmox.Resume(c.Request.Context(), instancia.Nodo, vmid, instancia.Tipo)
+		accionAudit = ports.AccionReanudarVM
 	case "reboot":
 		upid, err = h.proxmox.Reboot(c.Request.Context(), instancia.Nodo, vmid, instancia.Tipo)
 		accionAudit = ports.AccionReiniciarVM
@@ -983,7 +994,7 @@ func (h *InstanceHandler) CambiarEstado(c *gin.Context) {
 // Rechaza la operación con 409 si la instancia está encendida.
 //
 // @Summary      Eliminar instancia
-// @Description  OPERATIVO. Solo ADMIN. Elimina permanentemente una VM o contenedor de Proxmox. La instancia debe estar detenida (stopped); si no, responde 409. La operación es asíncrona: responde 202 Accepted con un tareaId público; el UPID permanece privado. El resultado llega en TASK_FINISHED con accion DELETE.
+// @Description  OPERATIVO. Solo ADMIN. Elimina permanentemente una VM o contenedor de Proxmox. La instancia debe estar detenida o pausada (stopped/paused); si no, responde 409. La operación es asíncrona: responde 202 Accepted con un tareaId público; el UPID permanece privado. El resultado llega en TASK_FINISHED con accion DELETE.
 // @Tags         Instancias Proxmox
 // @Produce      json
 // @Security     BearerAuth
@@ -1019,9 +1030,9 @@ func (h *InstanceHandler) EliminarInstancia(c *gin.Context) {
 
 	// Proxmox rechazará el DELETE si la instancia está encendida; prevenimos
 	// con un 409 explícito para dar un mensaje de error claro al frontend.
-	if instancia.Estado != "stopped" {
+	if instancia.Estado != "stopped" && instancia.Estado != "paused" {
 		SendError(c, http.StatusConflict, "INSTANCE_INVALID_STATE",
-			"La instancia debe estar detenida antes de poder eliminarla.")
+			"La instancia debe estar detenida o pausada antes de poder eliminarla.")
 		return
 	}
 

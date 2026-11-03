@@ -1925,7 +1925,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "OPERATIVO. Solo ADMIN. Elimina permanentemente una VM o contenedor de Proxmox. La instancia debe estar detenida (stopped); si no, responde 409. La operación es asíncrona: responde 202 Accepted con un tareaId público; el UPID permanece privado. El resultado llega en TASK_FINISHED con accion DELETE.",
+                "description": "OPERATIVO. Solo ADMIN. Elimina permanentemente una VM o contenedor de Proxmox. La instancia debe estar detenida o pausada (stopped/paused); si no, responde 409. La operación es asíncrona: responde 202 Accepted con un tareaId público; el UPID permanece privado. El resultado llega en TASK_FINISHED con accion DELETE.",
                 "produces": [
                     "application/json"
                 ],
@@ -1968,7 +1968,7 @@ const docTemplate = `{
                         }
                     },
                     "409": {
-                        "description": "INSTANCE_INVALID_STATE — la instancia debe estar detenida | INSTANCE_BUSY — la instancia está ejecutando otra tarea (tarea RUNNING o lock lock:instance:{vmid}:operation); se responde sin contactar a Proxmox",
+                        "description": "INSTANCE_INVALID_STATE — la instancia debe estar detenida o pausada | INSTANCE_BUSY — la instancia está ejecutando otra tarea (tarea RUNNING o lock lock:instance:{vmid}:operation); se responde sin contactar a Proxmox",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -2720,7 +2720,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "OPERATIVO. Ejecuta una acción de ciclo de vida (start, stop, shutdown, reboot) sobre una VM o contenedor. El endpoint genérico complementa a /start y /stop manteniendo retrocompatibilidad. La acción Pause NO está implementada: use POST /instances/{instanceRef}/pause, que hoy responde 404 NOT_FOUND.",
+                "description": "OPERATIVO. Ejecuta una acción de ciclo de vida (start, stop, shutdown, reboot, resume) sobre una VM o contenedor. El endpoint genérico complementa a /start y /stop manteniendo retrocompatibilidad. resume reanuda una instancia pausada; la acción pause no está implementada.",
                 "produces": [
                     "application/json"
                 ],
@@ -2738,7 +2738,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Acción a ejecutar (start | stop | shutdown | reboot). pause NO es válida: responde 400 INVALID_ACTION",
+                        "description": "Acción a ejecutar (start | stop | shutdown | reboot | resume). pause NO es válida: responde 400 INVALID_ACTION",
                         "name": "action",
                         "in": "path",
                         "required": true
@@ -2752,7 +2752,7 @@ const docTemplate = `{
                         }
                     },
                     "400": {
-                        "description": "INVALID_ACTION — acción distinta de start, stop, shutdown o reboot",
+                        "description": "INVALID_ACTION — acción distinta de start, stop, shutdown, reboot o resume",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }

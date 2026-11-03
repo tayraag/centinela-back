@@ -115,7 +115,7 @@ type InstanciaListadaDTO struct {
 // ActiveTaskDTO es la tarea RUNNING de una instancia en el inventario.
 type ActiveTaskDTO struct {
 	TareaID string `json:"tareaId"`
-	Action  string `json:"action"` // START | STOP | SHUTDOWN | REBOOT | DELETE
+	Action  string `json:"action"` // START | STOP | SHUTDOWN | REBOOT | RESUME | DELETE
 	Status  string `json:"status"` // RUNNING
 }
 
@@ -141,12 +141,15 @@ type ProxmoxPort interface {
 	// Shutdown realiza un apagado ordenado de la VM o contenedor. Devuelve el UPID.
 	Shutdown(ctx context.Context, node string, vmid int, vmType string) (string, error)
 
+	// Resume reanuda una instancia pausada y devuelve el UPID.
+	Resume(ctx context.Context, node string, vmid int, vmType string) (string, error)
+
 	// Reboot reinicia la VM o contenedor de forma genérica con los parámetros exigidos.
 	Reboot(ctx context.Context, node string, vmid int, vmType string) (string, error)
 
 	// EliminarInstancia elimina permanentemente una VM o contenedor del cluster.
-	// La instancia DEBE estar detenida antes de llamar a este método; si está
-	// encendida Proxmox responde con error y se retorna ErrInstanciaOcupada.
+	// La instancia debe estar detenida o pausada antes de llamar a este método;
+	// si está encendida Proxmox responde con error y se retorna ErrInstanciaOcupada.
 	// Devuelve el UPID de la tarea de borrado (qmdestroy / vzdestroy).
 	EliminarInstancia(ctx context.Context, node string, vmid int, vmType string) (upid string, err error)
 

@@ -117,6 +117,14 @@ func (m *mockProxmoxPort) Reboot(ctx context.Context, node string, vmid int, vmT
 	return "UPID:test:reboot", nil
 }
 
+func (m *mockProxmoxPort) Resume(ctx context.Context, node string, vmid int, vmType string) (string, error) {
+	m.escrituras++
+	if m.errAccion != nil {
+		return "", m.errAccion
+	}
+	return "UPID:test:resume", nil
+}
+
 func (m *mockProxmoxPort) ObtenerConfig(context.Context, string, string, int, bool) (*ports.ConfigInstanciaDTO, error) {
 	return &ports.ConfigInstanciaDTO{}, nil
 }
@@ -827,6 +835,11 @@ func TestSecuencia_StartSeguidoDeStopResponde409InstanceBusy(t *testing.T) {
 // Matriz de estados: acción incompatible => 409 y NINGUNA orden de escritura a Proxmox.
 func TestAccionesDeEnergia_EstadoIncompatibleEs409SinEscribir(t *testing.T) {
 	casos := []struct{ ruta, estado string }{
+		{adaptersHttp.ConRef("/api/instances/110/status/resume"), "running"},
+		{adaptersHttp.ConRef("/api/instances/110/status/resume"), "stopped"},
+		{adaptersHttp.ConRef("/api/instances/110/status/shutdown"), "paused"},
+		{adaptersHttp.ConRef("/api/instances/110/status/reboot"), "paused"},
+		{adaptersHttp.ConRef("/api/instances/110/status/start"), "paused"},
 		{adaptersHttp.ConRef("/api/instances/110/start"), "running"},
 		{adaptersHttp.ConRef("/api/instances/110/stop"), "stopped"},
 		{adaptersHttp.ConRef("/api/instances/110/status/start"), "running"},
@@ -850,6 +863,9 @@ func TestAccionesDeEnergia_EstadoIncompatibleEs409SinEscribir(t *testing.T) {
 // Acción compatible => 202 únicamente con tareaId público.
 func TestAccionesDeEnergia_EstadoValidEs202(t *testing.T) {
 	casos := []struct{ ruta, estado string }{
+		{adaptersHttp.ConRef("/api/instances/110/status/resume"), "paused"},
+		{adaptersHttp.ConRef("/api/instances/110/status/stop"), "paused"},
+		{adaptersHttp.ConRef("/api/instances/110/stop"), "paused"},
 		{adaptersHttp.ConRef("/api/instances/110/start"), "stopped"},
 		{adaptersHttp.ConRef("/api/instances/110/stop"), "running"},
 		{adaptersHttp.ConRef("/api/instances/110/status/start"), "stopped"},
@@ -1115,6 +1131,7 @@ func TestAuditoriaDeCicloDeVida_UsaVocabularioCanonicoYMetadatos(t *testing.T) {
 		{"genérico start", http.MethodPost, adaptersHttp.ConRef("/api/instances/110/status/start"), "stopped", "INICIAR_VM", "PENDIENTE"},
 		{"genérico stop", http.MethodPost, adaptersHttp.ConRef("/api/instances/110/status/stop"), "running", "DETENER_VM", "PENDIENTE"},
 		{"genérico shutdown", http.MethodPost, adaptersHttp.ConRef("/api/instances/110/status/shutdown"), "running", "APAGAR_VM", "PENDIENTE"},
+		{"resume", http.MethodPost, adaptersHttp.ConRef("/api/instances/110/status/resume"), "paused", "REANUDAR_VM", "PENDIENTE"},
 		{"genérico reboot", http.MethodPost, adaptersHttp.ConRef("/api/instances/110/status/reboot"), "running", "REINICIAR_VM", "PENDIENTE"},
 		{"delete", http.MethodDelete, adaptersHttp.ConRef("/api/instances/110"), "stopped", "ELIMINAR_VM", "PENDIENTE"},
 	}
@@ -1264,5 +1281,13 @@ func TestCrearInstancia_VLANNeutraEsSinEtiquetar(t *testing.T) {
 				t.Errorf("%s, %s: a Proxmox llegó vlan=%v, se esperaba %v", formato, caso.nombre, recibida, caso.tag)
 			}
 		}
+	}
+}
+
+func TestEliminarInstancia_PausadaEs202(t *testing.T) {
+	mock := &mockProxmoxPort{estado: "paused"}
+	status, cuerpo := ejecutarBorrado(mock)
+	if status != http.StatusAccepted || cuerpo["tareaId"] == "" || mock.escrituras != 1 {
+		t.Fatalf("borrado pausado: status=%d cuerpo=%v escrituras=%d", status, cuerpo, mock.escrituras)
 	}
 }

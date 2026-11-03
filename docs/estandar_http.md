@@ -57,10 +57,10 @@ Cuando la API devuelva un error (códigos 400 a 500), el cuerpo de la respuesta 
 | HTTP | errorCode | Cuándo |
 | ---- | --------- | ------ |
 | 403 | `INSTANCE_ACCESS_DENIED` | El OPERATOR no tiene permiso (o nivel suficiente) sobre la instancia. |
-| 400 | `INVALID_ACTION` | La acción de `/status/:action` no es `start`, `stop`, `shutdown` ni `reboot`. |
+| 400 | `INVALID_ACTION` | La acción de `/status/:action` no es `start`, `stop`, `shutdown`, `reboot` ni `resume`. |
 | 403 | `INSTANCE_PROTECTED` | La instancia es infraestructura de El Centinela (VMIDs listados en `PROXMOX_PROTECTED_VMIDS`; vacía = ninguna) y no admite operaciones de energía (`start`, `stop`, `shutdown`, `reboot`). |
 | 409 | `INSTANCE_INVALID_STATE` | `DELETE /api/instances/:instanceRef` sobre una instancia que no está `stopped`. Hay que apagarla antes de borrarla. |
-| 409 | `INSTANCE_INVALID_STATE` | El estado actual es incompatible con la acción: `start` exige `stopped`; `stop`, `shutdown` y `reboot` exigen `running`. Se valida antes de enviar órdenes a Proxmox. |
+| 409 | `INSTANCE_INVALID_STATE` | El estado actual es incompatible con la acción: `start` exige `stopped`; `stop` admite `running` o `paused`; `shutdown` y `reboot` exigen `running`; `resume` exige `paused`. Se valida antes de enviar órdenes a Proxmox. |
 | 404 | `RESOURCE_NOT_FOUND` | La referencia de la ruta (`:instanceRef`, `inst_...`) no corresponde a ninguna instancia: está alterada, es inventada, es de otro servidor o es un VMID numérico; o la instancia no existe en Proxmox. Los dos casos responden exactamente igual, para que el error no sirva para probar referencias. |
 | 409 | `INSTANCE_BUSY` | La instancia está ejecutando otra tarea: hay una tarea `RUNNING` suya, otra operación tiene el lock `lock:instance:{vmid}:operation`, o Proxmox la tiene bloqueada. Lo responde la guarda `RequireInstanceIdle` sin contactar a Proxmox. Reintentar cuando llegue el `TASK_FINISHED` de la tarea anterior. |
 | 409 | `RESOURCE_QUOTA_EXCEEDED` | Lo pedido no entra en el margen del nodo (RAM con 15% de headroom o storage), o la instancia tendría más cores que los hilos lógicos del nodo: al crear una instancia, o al aumentar su CPU/RAM con `PUT /api/instances/:instanceRef/config` (se compara solo el incremento de RAM). Las vCPU admiten sobreasignación (CPU overcommit): no se suman las de las demás instancias. No se escribió nada en Proxmox. |

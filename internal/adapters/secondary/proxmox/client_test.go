@@ -1215,3 +1215,40 @@ func TestClient_VersionPVE(t *testing.T) {
 		t.Fatalf("Sin versión en la respuesta se esperaba ErrProxmoxNoDisponible: %v", err)
 	}
 }
+func TestClient_Resume(t *testing.T) {
+	for _, tipo := range []string{"qemu", "lxc"} {
+		t.Run(tipo, func(t *testing.T) {
+			for _, caso := range []struct {
+				nombre, cuerpo string
+				status         int
+				falla          bool
+			}{
+				{"aceptada", `{"data":"UPID:test:resume"}`, http.StatusOK, false},
+				{"respuesta invalida", `{`, http.StatusOK, true},
+				{"no disponible", `{"data":null}`, http.StatusServiceUnavailable, true},
+			} {
+				t.Run(caso.nombre, func(t *testing.T) {
+					server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						if r.Method != http.MethodPost || r.URL.Path != "/api2/json/nodes/pve1/"+tipo+"/501/status/resume" {
+							t.Errorf("solicitud inesperada: %s %s", r.Method, r.URL.Path)
+						}
+						w.WriteHeader(caso.status)
+						_, _ = w.Write([]byte(caso.cuerpo))
+					}))
+					defer server.Close()
+					client := proxmox.NewClient(server.URL, tokenIDValido, tokenSecretValido, nil)
+					upid, err := client.Resume(context.Background(), "pve1", 501, tipo)
+					if caso.falla {
+						if err == nil {
+							t.Fatal("se esperaba error")
+						}
+						return
+					}
+					if err != nil || upid != "UPID:test:resume" {
+						t.Fatalf("upid=%q error=%v", upid, err)
+					}
+				})
+			}
+		})
+	}
+}

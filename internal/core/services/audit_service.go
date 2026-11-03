@@ -262,7 +262,7 @@ func (s *auditServiceImpl) ExportarJSON(ctx context.Context, orgID uuid.UUID, fi
 func (s *auditServiceImpl) PrepararAuditoriaTarea(t *domain.TareaAsincrona, cierre map[string]any, ahora time.Time) ports.RegistrarAuditoriaInput {
 	acciones := map[string]string{
 		"start": ports.AccionIniciarVM, "stop": ports.AccionDetenerVM,
-		"shutdown": ports.AccionApagarVM, "reboot": ports.AccionReiniciarVM, "delete": ports.AccionEliminarVM,
+		"shutdown": ports.AccionApagarVM, "reboot": ports.AccionReiniciarVM, "resume": ports.AccionReanudarVM, "delete": ports.AccionEliminarVM,
 		ports.AccionTareaSnapshot:                          ports.AccionCrearSnapshot,
 		strings.ToLower(ports.AccionTareaRollbackSnapshot): ports.AccionRevertirSnapshot,
 		strings.ToLower(ports.AccionTareaDeleteSnapshot):   ports.AccionEliminarSnapshot,

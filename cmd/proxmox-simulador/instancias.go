@@ -267,8 +267,8 @@ func (s *Simulador) estadoDetallado(inst *instancia, ahora time.Time) map[string
 
 // accionesPorTipo son las acciones de energía que acepta cada tipo (las de las capturas).
 var accionesPorTipo = map[string]map[string]bool{
-	tipoQemu: {"start": true, "stop": true, "shutdown": true, "reboot": true, "reset": true},
-	tipoLXC:  {"start": true, "stop": true, "shutdown": true, "reboot": true},
+	tipoQemu: {"start": true, "stop": true, "shutdown": true, "reboot": true, "resume": true, "reset": true},
+	tipoLXC:  {"start": true, "stop": true, "shutdown": true, "reboot": true, "resume": true},
 }
 
 func (s *Simulador) accionEstado(w http.ResponseWriter, r *http.Request) {
@@ -326,7 +326,7 @@ func (s *Simulador) aplicarAccion(inst *instancia, accion string) string {
 		}
 		encender()
 	case "stop":
-		if inst.encendida() {
+		if inst.encendida() || inst.Estado == "paused" {
 			inst.Estado, inst.DetenidaEn, inst.PID = "stopped", ahora, 0
 		}
 	case "shutdown":
@@ -337,6 +337,11 @@ func (s *Simulador) aplicarAccion(inst *instancia, accion string) string {
 	case "reboot":
 		if !inst.encendida() {
 			return inst.etiqueta() + " not running"
+		}
+		encender()
+	case "resume":
+		if inst.Estado != "paused" {
+			return inst.etiqueta() + " is not paused"
 		}
 		encender()
 	case "reset":

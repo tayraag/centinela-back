@@ -115,6 +115,7 @@ const (
 	AccionIniciarVM      = "INICIAR_VM"
 	AccionDetenerVM      = "DETENER_VM"
 	AccionReiniciarVM    = "REINICIAR_VM"
+	AccionReanudarVM     = "REANUDAR_VM"
 	AccionEliminarVM     = "ELIMINAR_VM"
 	AccionApagarVM       = "APAGAR_VM"
 	AccionSuspenderVM    = "SUSPENDER_VM"

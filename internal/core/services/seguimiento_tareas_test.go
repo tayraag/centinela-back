@@ -414,3 +414,5 @@ func (p *proxmoxTareas) EliminarSnapshot(context.Context, string, string, int, s
 func (r *tareasEnMemoria) HuboTareaDesde(context.Context, int, time.Time) (bool, error) {
 	return false, nil
 }
+
+func (p *proxmoxTareas) Resume(context.Context, string, int, string) (string, error) { return "", nil }

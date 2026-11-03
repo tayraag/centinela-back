@@ -125,7 +125,7 @@ Todos bajo `/api2/json`, con el formato de Proxmox (`{"data": ...}`).
 | RF-02, 07, 11 | `GET /nodes/{node}/status` | Salud del nodo: CPU, memoria (sube cuando encendés instancias), disco, uptime. `pveversion`, `kversion` y `current-kernel` dependen del perfil de versión. |
 | — | `GET /nodes/{node}/qemu` · `GET /nodes/{node}/lxc` | Listado por tipo. |
 | RF-05, 11 | `GET /nodes/{node}/{tipo}/{vmid}/status/current` | Estado detallado de una instancia. |
-| RF-04 | `POST /nodes/{node}/{tipo}/{vmid}/status/{accion}` | `start`, `stop`, `shutdown`, `reboot` y, solo en VMs, `reset`. Devuelve un UPID. |
+| RF-04 | `POST /nodes/{node}/{tipo}/{vmid}/status/{accion}` | `start`, `stop`, `shutdown`, `reboot`, `resume` y, solo en VMs, `reset`. Devuelve un UPID. `resume` reanuda una instancia pausada. |
 | RF-04, 11 | `GET /nodes/{node}/tasks/{upid}/status` | Estado de una tarea: `running` y después `stopped` con su `exitstatus`. |
 | RNF-04 | `GET /nodes/{node}/tasks` | Tareas de esta sesión del simulador, de la más nueva a la más vieja: `{"data": [...], "total": N}`. Como en Proxmox, por defecto (`source=archive`) solo las terminadas; `source=active` o `all`, `vmid`, `typefilter`, `errors=1`, `start` y `limit` (50). Las terminadas traen `endtime` y `status` (el exitstatus). |
 | RF-05 | `GET /nodes/{node}/{tipo}/{vmid}/rrddata?timeframe=hour` | 60 puntos de métricas. También `day`, `week`, `month` y `year`. |

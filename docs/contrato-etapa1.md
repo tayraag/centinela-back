@@ -373,8 +373,9 @@ La acción es asíncrona: el `202` confirma que Proxmox aceptó la orden, **no**
 la instancia ya cambió de estado. El frontend debe esperar el evento
 `TASK_FINISHED` o releer el estado de la instancia.
 
-`POST /api/instances/:instanceRef/status/:action` acepta `start`, `stop`, `shutdown` y
-`reboot`. Cualquier otra acción responde `400 INVALID_ACTION`.
+`POST /api/instances/:instanceRef/status/:action` acepta `start`, `stop`, `shutdown`,
+`reboot` y `resume`. `resume` reanuda una instancia en estado `paused`; cualquier
+otra acción responde `400 INVALID_ACTION`.
 
 ### Borrado — operativo, solo ADMIN
 
@@ -383,7 +384,7 @@ contenedor. Solo lo puede invocar un `ADMIN`: un `OPERATOR` recibe
 `403 INSUFFICIENT_PERMISSIONS`. Tampoco se pueden borrar las instancias
 protegidas de la infraestructura (`403 INSTANCE_PROTECTED`).
 
-La instancia tiene que estar detenida: si no está `stopped` responde
+La instancia tiene que estar detenida o pausada: si no está `stopped` o `paused` responde
 `409 INSTANCE_INVALID_STATE` sin tocar Proxmox. Si está detenida, Proxmox crea la
 tarea de borrado y el servidor responde `202` con el mismo
 `AccionAceptadaResponse` que las acciones de energía:
@@ -555,7 +556,9 @@ incompatible para la acción solicitada”) y **no** escribe nada en Proxmox:
 | Acción                       | Estado requerido |
 |------------------------------|------------------|
 | `start`                      | `stopped`        |
-| `stop`, `shutdown`, `reboot` | `running`        |
+| `stop`                      | `running` o `paused` |
+| `shutdown`, `reboot`        | `running`        |
+| `resume`                    | `paused`         |
 
 `INSTANCE_INVALID_STATE` se resuelve cambiando de acción (por ejemplo, no se
 enciende una instancia encendida); `INSTANCE_BUSY` se resuelve esperando el
