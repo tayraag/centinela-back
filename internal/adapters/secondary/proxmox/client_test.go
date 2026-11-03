@@ -1252,3 +1252,59 @@ func TestClient_Resume(t *testing.T) {
 		})
 	}
 }
+func TestClient_ListarTareasInstancia(t *testing.T) {
+	desde := time.Unix(1700000000, 0)
+	consultas := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		consultas++
+		q := r.URL.Query()
+		if r.Method != http.MethodGet || r.URL.Path != "/api2/json/nodes/pve2/tasks" || q.Get("vmid") != "100" || q.Get("source") != "all" || q.Get("since") != "1700000000" || q.Get("limit") != "100" {
+			t.Errorf("consulta inesperada: %s %s", r.Method, r.URL)
+		}
+		switch q.Get("start") {
+		case "0":
+			tareas := make([]ports.TareaNodoDTO, 100)
+			for i := range tareas {
+				tareas[i] = ports.TareaNodoDTO{ID: "100", Tipo: "qmstart"}
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": tareas})
+		case "100":
+			_, _ = w.Write([]byte(`{"data":[{"upid":"UPID:pve2:test","id":"100","type":"qmshutdown","starttime":1700000001,"endtime":1700000002,"status":"OK"}]}`))
+		default:
+			t.Errorf("página inesperada: %s", q.Get("start"))
+		}
+	}))
+	defer server.Close()
+	client := proxmox.NewClient(server.URL, tokenIDValido, tokenSecretValido, nil)
+	tareas, err := client.ListarTareasInstancia(context.Background(), "pve2", 100, desde)
+	if err != nil || len(tareas) != 101 || consultas != 2 {
+		t.Fatalf("tareas=%d consultas=%d error=%v", len(tareas), consultas, err)
+	}
+	ultima := tareas[100]
+	if ultima.ID != "100" || ultima.Tipo != "qmshutdown" || ultima.Estado != "OK" || ultima.Inicio != 1700000001 || ultima.Fin != 1700000002 {
+		t.Fatalf("tarea incorrecta: %+v", ultima)
+	}
+}
+
+func TestClient_ListarTareasInstanciaErrores(t *testing.T) {
+	for _, caso := range []struct {
+		nombre, cuerpo string
+		codigo         int
+	}{
+		{"sin permisos", `{"data":null}`, http.StatusForbidden},
+		{"no disponible", `{"data":null}`, http.StatusServiceUnavailable},
+		{"json inválido", `{`, http.StatusOK},
+	} {
+		t.Run(caso.nombre, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(caso.codigo)
+				_, _ = w.Write([]byte(caso.cuerpo))
+			}))
+			defer server.Close()
+			client := proxmox.NewClient(server.URL, tokenIDValido, tokenSecretValido, nil)
+			if _, err := client.ListarTareasInstancia(context.Background(), "pve", 100, time.Now()); err == nil {
+				t.Fatal("se esperaba error")
+			}
+		})
+	}
+}

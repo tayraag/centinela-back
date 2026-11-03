@@ -214,7 +214,8 @@ func main() {
 	// Las alertas CRITICAL se avisan además por correo a los ADMIN (y a los
 	// OPERATOR con FULL_ACCESS sobre la instancia afectada).
 	finAlertas := services.NewEvaluadorAlertas(nodoService, proxmoxClient, tareaRepo, kvStore, eventosService, auditService,
-		userRepo, emailService, nodoNombre, duracionDeEntorno("ALERT_POLL_INTERVAL", 30*time.Second)).Iniciar(ctx)
+		userRepo, emailService, nodoNombre, duracionDeEntorno("ALERT_POLL_INTERVAL", 30*time.Second),
+		strings.EqualFold(strings.TrimSpace(os.Getenv("ALERT_IGNORE_EXTERNAL_SHUTDOWN")), "true")).Iniciar(ctx)
 	wsMetricsHandler := httpHandlers.NewMetricsWSHandler(proxmoxClient, services.NewMetricasVivoService(kvStore, authRepo, instanceRepo, 0),
 		refsInstancia, nodoNombre, middleware.OrigenesPermitidos(), httpHandlers.LimitesWSPorDefecto)
 

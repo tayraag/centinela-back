@@ -56,15 +56,16 @@ const (
 // de las instancias, y emite ALERT_TRIGGERED / ALERT_RESOLVED por el bus de
 // eventos (centinela:events), con su auditoría.
 type EvaluadorAlertas struct {
-	nodo       ports.NodoService
-	proxmox    ports.ProxmoxPort
-	tareas     ports.TareaRepository
-	kv         ports.KeyValueStore
-	eventos    ports.EventosService
-	audit      ports.AuditService
-	nombreNodo string
-	intervalo  time.Duration
-	ahora      func() time.Time
+	nodo                    ports.NodoService
+	proxmox                 ports.ProxmoxPort
+	tareas                  ports.TareaRepository
+	kv                      ports.KeyValueStore
+	eventos                 ports.EventosService
+	audit                   ports.AuditService
+	nombreNodo              string
+	ignorarApagadosExternos bool
+	intervalo               time.Duration
+	ahora                   func() time.Time
 
 	destinatarios ports.DestinatariosAlertas // a quién mandar el correo de una alerta crítica
 	email         ports.EmailService
@@ -72,15 +73,17 @@ type EvaluadorAlertas struct {
 }
 
 // NewEvaluadorAlertas crea el evaluador. intervalo es ALERT_POLL_INTERVAL
-// (30 s si no es positivo).
+// (30 s si no es positivo). La opción final habilita ALERT_IGNORE_EXTERNAL_SHUTDOWN
+// y por defecto es false.
 func NewEvaluadorAlertas(nodo ports.NodoService, proxmox ports.ProxmoxPort, tareas ports.TareaRepository, kv ports.KeyValueStore,
 	eventos ports.EventosService, audit ports.AuditService, destinatarios ports.DestinatariosAlertas, email ports.EmailService,
-	nombreNodo string, intervalo time.Duration) *EvaluadorAlertas {
+	nombreNodo string, intervalo time.Duration, ignorarApagadosExternos ...bool) *EvaluadorAlertas {
 	if intervalo <= 0 {
 		intervalo = 30 * time.Second
 	}
 	return &EvaluadorAlertas{nodo: nodo, proxmox: proxmox, tareas: tareas, kv: kv, eventos: eventos, audit: audit,
-		destinatarios: destinatarios, email: email, nombreNodo: nombreNodo, intervalo: intervalo, ahora: time.Now}
+		ignorarApagadosExternos: len(ignorarApagadosExternos) > 0 && ignorarApagadosExternos[0],
+		destinatarios:           destinatarios, email: email, nombreNodo: nombreNodo, intervalo: intervalo, ahora: time.Now}
 }
 
 // EsperarCorreos espera a que terminen los correos en envío.
@@ -213,6 +216,7 @@ type estadoInstancia struct {
 	Estado string `json:"estado"`
 	Nombre string `json:"nombre"`
 	Tipo   string `json:"tipo"`
+	Nodo   string `json:"nodo"`
 }
 
 // evaluarCaidas detecta instancias que estaban encendidas y ahora no lo están
@@ -230,7 +234,7 @@ func (e *EvaluadorAlertas) evaluarCaidas(ctx context.Context, instancias []ports
 
 	actual := make(map[int]estadoInstancia, len(instancias))
 	for _, inst := range instancias {
-		actual[inst.Vmid] = estadoInstancia{Estado: inst.Estado, Nombre: inst.Nombre, Tipo: inst.Tipo}
+		actual[inst.Vmid] = estadoInstancia{Estado: inst.Estado, Nombre: inst.Nombre, Tipo: inst.Tipo, Nodo: inst.Nodo}
 	}
 	if err := e.kv.Set(ctx, claveEstadoAnterior, actual, ttlEstadoInstancias); err != nil {
 		log.Printf("[ALERTAS] no se pudo guardar el estado de las instancias: %v", err)
@@ -247,6 +251,9 @@ func (e *EvaluadorAlertas) evaluarCaidas(ctx context.Context, instancias []ports
 			continue
 		}
 		if antes, ok := anterior[vmid]; ok && antes.Estado == "running" && !e.explicadaPorCentinela(ctx, vmid) {
+			if ahora.Estado == "stopped" && e.explicadaPorProxmox(ctx, vmid, ahora, m) {
+				continue
+			}
 			e.disparar(ctx, activa, m, TipoAlertaCaida, fmt.Sprintf("La instancia %s se detuvo sin una orden de El Centinela.", ahora.Nombre))
 		}
 	}
@@ -269,6 +276,41 @@ func (e *EvaluadorAlertas) explicadaPorCentinela(ctx context.Context, vmid int) 
 		return true
 	}
 	return hubo
+}
+
+// explicadaPorProxmox concilia únicamente paradas con una tarea externa confirmada.
+// Sin evidencia (incluido un error de API), se conserva la alerta de caída.
+func (e *EvaluadorAlertas) explicadaPorProxmox(ctx context.Context, vmid int, instancia estadoInstancia, m medicion) bool {
+	if !e.ignorarApagadosExternos || instancia.Nodo == "" {
+		return false
+	}
+	ahora := e.ahora()
+	desde := ahora.Add(-ventanaTareasCentinela)
+	tareas, err := e.proxmox.ListarTareasInstancia(ctx, instancia.Nodo, vmid, desde)
+	if err != nil {
+		log.Printf("[ALERTAS] no se pudieron conciliar las tareas externas de %d: %v", vmid, err)
+		return false
+	}
+	for _, tarea := range tareas {
+		if tarea.ID != strconv.Itoa(vmid) || tarea.Inicio < desde.Unix() || tarea.Inicio > ahora.Unix() {
+			continue
+		}
+		switch tarea.Tipo {
+		case "qmstop", "qmshutdown", "vzstop", "vzdump":
+		default:
+			continue
+		}
+		finalizadaOK := tarea.Estado == "OK"
+		enCurso := tarea.Estado == "RUNNING" && tarea.Fin == 0
+		if !finalizadaOK && !enCurso {
+			continue
+		}
+		e.registrarAuditoria(ctx, ports.AccionInstanciaDetenidaExternamente, m,
+			map[string]any{"severidad": ports.SeveridadInfo, "tipoTarea": tarea.Tipo},
+			fmt.Sprintf("La instancia %s se detuvo por una tarea externa de Proxmox (%s).", instancia.Nombre, tarea.Tipo), ahora, nil)
+		return true
+	}
+	return false
 }
 
 // disparar emite la alerta si no estaba activa (SET NX): publica

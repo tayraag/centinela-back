@@ -831,8 +831,8 @@ func TestFidelidad_ListarTareas(t *testing.T) {
 		t.Fatalf("source=active debe traer la tarea en curso: %v", activas)
 	}
 	enCurso := activas[0].(map[string]any)
-	if enCurso["upid"] != upid || enCurso["status"] != nil || enCurso["endtime"] != nil {
-		t.Errorf("Una tarea en curso no tiene status ni endtime: %v", enCurso)
+	if enCurso["upid"] != upid || enCurso["status"] != "RUNNING" || enCurso["endtime"] != nil || enCurso["exitstatus"] != nil {
+		t.Errorf("Una tarea en curso tiene status RUNNING, sin endtime ni exitstatus: %v", enCurso)
 	}
 
 	e.avanzar(3 * time.Second)
@@ -852,7 +852,7 @@ func TestFidelidad_ListarTareas(t *testing.T) {
 			t.Errorf("A la tarea terminada le falta %q: %v", campo, segunda)
 		}
 	}
-	if segunda["status"] != "OK" || segunda["user"] != "centinela-api@pve" || segunda["tokenid"] != "backend-token" || segunda["type"] != "qmstart" {
+	if segunda["exitstatus"] != nil || segunda["status"] != "OK" || segunda["user"] != "centinela-api@pve" || segunda["tokenid"] != "backend-token" || segunda["type"] != "qmstart" {
 		t.Errorf("Tarea terminada: %v", segunda)
 	}
 	if segunda["endtime"].(float64) <= segunda["starttime"].(float64) {

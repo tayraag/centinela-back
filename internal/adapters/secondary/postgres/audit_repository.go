@@ -31,7 +31,7 @@ func NewAuditRepository(db *gorm.DB) ports.AuditRepository {
 
 // Registrar inserta un nuevo registro de auditoría (solo INSERT, nunca UPDATE/DELETE).
 func (r *auditRepositoryImpl) Registrar(ctx context.Context, input ports.RegistrarAuditoriaInput) error {
-	if input.UsuarioID == uuid.Nil && (input.Accion == ports.AccionAlertaDisparada || input.Accion == ports.AccionAlertaResuelta) {
+	if input.UsuarioID == uuid.Nil && (input.Accion == ports.AccionAlertaDisparada || input.Accion == ports.AccionAlertaResuelta || input.Accion == ports.AccionInstanciaDetenidaExternamente) {
 		return r.registrarAlertaSistema(ctx, input)
 	}
 	return r.registrarConAlcance(ctx, input, nil)

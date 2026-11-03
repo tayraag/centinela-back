@@ -264,3 +264,24 @@ Los esquemas y rutas del canal SSE se encuentran completamente documentados y di
 - `GET /api/events`: Stream SSE autenticado por ticket query param, emitiendo `http.SSEEventPayload` con el sobre del evento.
 - Modelos `http.TaskSuccess` y `http.TaskFailed` representando la forma concreta del campo `detalles` para el evento `TASK_FINISHED` (con sus 6 claves garantizadas).
 
+
+### Paradas externas y alertas de caída
+
+`ALERT_IGNORE_EXTERNAL_SHUTDOWN=false` es el valor predeterminado: una parada
+sin una tarea reciente de Centinela genera `instance_down` crítico y correo.
+En despliegues híbridos, `true` habilita una segunda consulta a
+`GET /nodes/{node}/tasks?vmid={vmid}&source=all&since=...` ante una transición
+a `stopped` sin una orden local. Se recorren las páginas de tareas recientes.
+Solo explican la parada las tareas `qmstop`, `qmshutdown`, `vzstop` o `vzdump`
+de la misma instancia, iniciadas en los últimos 10 minutos. Una tarea finalizada
+debe tener `status: "OK"`; una tarea en curso debe tener `status: "RUNNING"`
+y no tener `endtime`. El listado devuelve el resultado en `status`;
+`status: "stopped"` con `exitstatus` corresponde al endpoint individual
+`/nodes/{node}/tasks/{upid}/status`. Las tareas globales sin VMID no explican una parada
+individual.
+
+Una coincidencia suprime la alerta crítica y el correo, y deja auditoría
+`SYSTEM_INSTANCE_STOPPED_EXTERNALLY` con `detalles.severidad=INFO`.
+El token Proxmox necesita `Sys.Audit` en `/nodes/{node}` para ver tareas de
+otros usuarios. Sin evidencia válida o ante errores de Proxmox se mantiene
+la alarma de caída. La opción no suprime desapariciones del inventario.

@@ -296,6 +296,7 @@ func TestAuditoriaAlertasSistemaAisladasPorOrganizacion(t *testing.T) {
 			{Accion: ports.AccionAlertaDisparada, RecursoTipo: ports.RecursoVM, RecursoID: "110", Resultado: ports.ResultadoSuccess, Detalles: map[string]any{"alertId": "vm"}},
 			{Accion: ports.AccionAlertaDisparada, RecursoTipo: ports.RecursoLXC, RecursoID: "110", Resultado: ports.ResultadoSuccess, Detalles: map[string]any{"alertId": "lxc"}},
 			{Accion: ports.AccionAlertaResuelta, RecursoTipo: ports.RecursoVM, RecursoID: "110", Resultado: ports.ResultadoSuccess},
+			{Accion: ports.AccionInstanciaDetenidaExternamente, RecursoTipo: ports.RecursoVM, RecursoID: "110", Resultado: ports.ResultadoSuccess, Detalles: map[string]any{"severidad": ports.SeveridadInfo}},
 			{UsuarioID: actor, Accion: ports.AccionLogin, Resultado: ports.ResultadoExito},
 		} {
 			if err := repo.Registrar(context.Background(), input); err != nil {
@@ -310,7 +311,7 @@ func TestAuditoriaAlertasSistemaAisladasPorOrganizacion(t *testing.T) {
 			return err
 		}
 		for i, org := range orgs {
-			esperadas := []int{5, 4, 3, 0, 0}[i]
+			esperadas := []int{6, 5, 4, 0, 0}[i]
 			pagina, err := repo.Listar(context.Background(), org, ports.FiltrosAuditoria{}, ports.OpcionesAuditoria{Pagina: 1, TamanoPag: 25, Direccion: "desc"})
 			if err != nil {
 				return err

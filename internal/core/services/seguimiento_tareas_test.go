@@ -416,3 +416,7 @@ func (r *tareasEnMemoria) HuboTareaDesde(context.Context, int, time.Time) (bool,
 }
 
 func (p *proxmoxTareas) Resume(context.Context, string, int, string) (string, error) { return "", nil }
+
+func (p *proxmoxTareas) ListarTareasInstancia(context.Context, string, int, time.Time) ([]ports.TareaNodoDTO, error) {
+	return nil, nil
+}

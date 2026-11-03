@@ -1231,3 +1231,31 @@ func (c *Client) ordenSnapshot(ctx context.Context, metodo, node, tipo string, v
 	}
 	return res.Data, nil
 }
+
+// ListarTareasInstancia incluye tareas de otros usuarios si el token tiene Sys.Audit.
+func (c *Client) ListarTareasInstancia(ctx context.Context, node string, vmid int, desde time.Time) ([]ports.TareaNodoDTO, error) {
+	const limite = 100
+	tareas := []ports.TareaNodoDTO{}
+	for inicio := 0; ; inicio += limite {
+		query := url.Values{
+			"vmid": {strconv.Itoa(vmid)}, "source": {"all"},
+			"since": {strconv.FormatInt(desde.Unix(), 10)},
+			"start": {strconv.Itoa(inicio)}, "limit": {strconv.Itoa(limite)},
+		}
+		path := fmt.Sprintf("/api2/json/nodes/%s/tasks?%s", url.PathEscape(node), query.Encode())
+		raw, err := c.doRequest(ctx, http.MethodGet, path, nil)
+		if err != nil {
+			return nil, err
+		}
+		var respuesta struct {
+			Data []ports.TareaNodoDTO `json:"data"`
+		}
+		if err := json.Unmarshal(raw, &respuesta); err != nil {
+			return nil, fmt.Errorf("%w: respuesta de tareas del nodo inválida: %v", ports.ErrProxmoxNoDisponible, err)
+		}
+		tareas = append(tareas, respuesta.Data...)
+		if len(respuesta.Data) < limite {
+			return tareas, nil
+		}
+	}
+}

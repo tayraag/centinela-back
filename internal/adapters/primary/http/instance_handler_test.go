@@ -1291,3 +1291,7 @@ func TestEliminarInstancia_PausadaEs202(t *testing.T) {
 		t.Fatalf("borrado pausado: status=%d cuerpo=%v escrituras=%d", status, cuerpo, mock.escrituras)
 	}
 }
+
+func (m *mockProxmoxPort) ListarTareasInstancia(context.Context, string, int, time.Time) ([]ports.TareaNodoDTO, error) {
+	return nil, nil
+}

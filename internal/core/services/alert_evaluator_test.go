@@ -2,6 +2,7 @@ package services_test
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -40,9 +41,14 @@ func (n *nodoAlertas) fijar(ram, cpu, disk float64) {
 // inventarioAlertas es el inventario que el test cambia entre ciclos.
 type inventarioAlertas struct {
 	proxmoxTareas
-	mu         sync.Mutex
-	instancias []ports.InstanciaProxmoxDTO
-	err        error
+	mu              sync.Mutex
+	instancias      []ports.InstanciaProxmoxDTO
+	err             error
+	tareasExternas  []ports.TareaNodoDTO
+	errorTareas     error
+	consultasTareas int
+	nodoConsultado  string
+	vmidConsultado  int
 }
 
 func (p *inventarioAlertas) ListarInstancias(context.Context) ([]ports.InstanciaProxmoxDTO, error) {
@@ -531,5 +537,98 @@ func TestAlertas_CorreoNoBloqueaYElApagadoLoEspera(t *testing.T) {
 	}
 	if len(e.correo.lista()) != 1 {
 		t.Error("El correo se envió")
+	}
+}
+
+func (p *inventarioAlertas) ListarTareasInstancia(_ context.Context, nodo string, vmid int, _ time.Time) ([]ports.TareaNodoDTO, error) {
+	p.consultasTareas++
+	p.nodoConsultado, p.vmidConsultado = nodo, vmid
+	return p.tareasExternas, p.errorTareas
+}
+
+func TestAlertas_ConciliacionDeParadasExternas(t *testing.T) {
+	ahora := time.Now().Unix()
+	tarea := ports.TareaNodoDTO{ID: "100", Tipo: "qmshutdown", Inicio: ahora - 30, Fin: ahora - 1, Estado: "OK"}
+	type casoConciliacion struct {
+		nombre                         string
+		habilitar, centinela, suprimir bool
+		tarea                          ports.TareaNodoDTO
+		err                            error
+	}
+	casos := []casoConciliacion{
+		{nombre: "qmshutdown exitoso", habilitar: true, suprimir: true, tarea: tarea},
+		{nombre: "deshabilitada por defecto", tarea: tarea},
+		{nombre: "orden de Centinela", habilitar: true, centinela: true, suprimir: true, tarea: tarea},
+		{nombre: "sin tarea", habilitar: true},
+		{nombre: "error de Proxmox", habilitar: true, err: errors.New("sin conexión")},
+	}
+	for _, tipo := range []string{"qmstop", "vzstop", "vzdump"} {
+		otra := tarea
+		otra.Tipo = tipo
+		casos = append(casos, casoConciliacion{nombre: tipo, habilitar: true, suprimir: true, tarea: otra})
+	}
+	for _, cambio := range []struct {
+		nombre    string
+		modificar func(*ports.TareaNodoDTO)
+		suprimir  bool
+	}{
+		{"en curso", func(t *ports.TareaNodoDTO) { t.Estado = "RUNNING"; t.Fin = 0 }, true},
+		{"fallida", func(t *ports.TareaNodoDTO) { t.Estado = "ERROR" }, false},
+		{"sin estado confirmado", func(t *ports.TareaNodoDTO) { t.Estado = "" }, false},
+		{"antigua", func(t *ports.TareaNodoDTO) { t.Inicio = ahora - 601 }, false},
+		{"futura", func(t *ports.TareaNodoDTO) { t.Inicio = ahora + 3600 }, false},
+		{"otra instancia", func(t *ports.TareaNodoDTO) { t.ID = "101" }, false},
+		{"tarea global", func(t *ports.TareaNodoDTO) { t.ID = "" }, false},
+		{"otro tipo", func(t *ports.TareaNodoDTO) { t.Tipo = "qmstart" }, false},
+	} {
+		otra := tarea
+		cambio.modificar(&otra)
+		casos = append(casos, casoConciliacion{nombre: cambio.nombre, habilitar: true, suprimir: cambio.suprimir, tarea: otra})
+	}
+	for _, caso := range casos {
+		t.Run(caso.nombre, func(t *testing.T) {
+			e := nuevoEntornoAlertas()
+			if caso.habilitar {
+				e.eval = services.NewEvaluadorAlertas(e.nodo, e.inv, e.tareas, e.kv, e.bus, e.audit, e.dest, e.correo, "pve", 30*time.Second, true)
+			}
+			e.inv.tareasExternas = []ports.TareaNodoDTO{caso.tarea}
+			e.inv.errorTareas = caso.err
+			e.tareas.conTarea[100] = caso.centinela
+			e.inv.instancias = []ports.InstanciaProxmoxDTO{{Vmid: 100, Nombre: "srv-db", Tipo: "qemu", Nodo: "pve2", Estado: "running"}}
+			e.eval.Evaluar(context.Background())
+			e.inv.instancias[0].Estado = "stopped"
+			e.eval.Evaluar(context.Background())
+			e.eval.EsperarCorreos()
+			eventos := e.bus.tomar()
+			if caso.suprimir {
+				if len(eventos) != 0 || len(e.correo.lista()) != 0 || len(e.dest.vmids) != 0 {
+					t.Fatalf("parada legítima emitió eventos/correos: %+v %+v", eventos, e.correo.lista())
+				}
+				if !caso.centinela {
+					if len(e.audit.registros) != 1 || e.audit.registros[0].Accion != "SYSTEM_INSTANCE_STOPPED_EXTERNALLY" || e.audit.registros[0].Detalles["severidad"] != ports.SeveridadInfo || e.audit.registros[0].InstanciaID != "100" {
+						t.Fatalf("auditoría informativa incorrecta: %+v", e.audit.registros)
+					}
+				}
+			} else {
+				if len(eventos) != 1 || eventos[0].Severidad != ports.SeveridadCritical || eventos[0].Detalles["type"] != services.TipoAlertaCaida || len(e.correo.lista()) != 1 {
+					t.Fatalf("falta alarma crítica o correo: %+v %+v", eventos, e.correo.lista())
+				}
+			}
+			if !caso.habilitar || caso.centinela {
+				if e.inv.consultasTareas != 0 {
+					t.Fatal("consulta secundaria innecesaria")
+				}
+			} else if e.inv.consultasTareas != 1 || e.inv.nodoConsultado != "pve2" || e.inv.vmidConsultado != 100 {
+				t.Fatalf("consulta incorrecta: %+v", e.inv)
+			}
+			e.eval.Evaluar(context.Background())
+			e.eval.EsperarCorreos()
+			if len(e.bus.tomar()) != 0 {
+				t.Fatal("se repitió la alerta")
+			}
+			if caso.suprimir && !caso.centinela && len(e.audit.registros) != 1 {
+				t.Fatal("se repitió la auditoría externa")
+			}
+		})
 	}
 }

@@ -214,7 +214,9 @@ func (s *Simulador) listarTareas(w http.ResponseWriter, r *http.Request) {
 		}
 		if t.Terminada {
 			e["endtime"] = t.Fin.Unix()
-			e["status"] = t.Resultado // en Proxmox, el exitstatus de la tarea
+			e["status"] = t.Resultado
+		} else {
+			e["status"] = "RUNNING"
 		}
 		pagina = append(pagina, e)
 	}

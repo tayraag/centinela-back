@@ -89,10 +89,11 @@ const (
 
 // Acciones del canal de eventos en tiempo real (GET /api/events)
 const (
-	AccionEventosConexion = "EVENTOS_CONEXION" // se abrió un stream (detalles: sesion_id)
-	AccionEventosCierre   = "EVENTOS_CIERRE"   // el backend cortó un stream (detalles: sesion_id, motivo)
-	AccionAlertaDisparada = "ALERT_TRIGGERED"  // el evaluador de umbrales emitió una alerta (sin usuario)
-	AccionAlertaResuelta  = "ALERT_RESOLVED"   // una alerta volvió a la normalidad (sin usuario)
+	AccionEventosConexion               = "EVENTOS_CONEXION" // se abrió un stream (detalles: sesion_id)
+	AccionEventosCierre                 = "EVENTOS_CIERRE"   // el backend cortó un stream (detalles: sesion_id, motivo)
+	AccionInstanciaDetenidaExternamente = "SYSTEM_INSTANCE_STOPPED_EXTERNALLY"
+	AccionAlertaDisparada               = "ALERT_TRIGGERED" // el evaluador de umbrales emitió una alerta (sin usuario)
+	AccionAlertaResuelta                = "ALERT_RESOLVED"  // una alerta volvió a la normalidad (sin usuario)
 )
 
 // Acciones de gestión de usuarios

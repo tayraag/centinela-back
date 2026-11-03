@@ -3,6 +3,7 @@ package ports
 import (
 	"context"
 	"errors"
+	"time"
 
 	"el-centinela/internal/core/domain"
 )
@@ -119,6 +120,16 @@ type ActiveTaskDTO struct {
 	Status  string `json:"status"` // RUNNING
 }
 
+// TareaNodoDTO es una tarea del historial o de las tareas activas de Proxmox.
+type TareaNodoDTO struct {
+	UPID   string `json:"upid"`
+	ID     string `json:"id"` // VMID asociado por Proxmox; vacío para tareas globales.
+	Tipo   string `json:"type"`
+	Inicio int64  `json:"starttime"`
+	Fin    int64  `json:"endtime"`
+	Estado string `json:"status"` // OK, RUNNING o el error de la tarea.
+}
+
 // ProxmoxPort define el contrato hacia la API de Proxmox VE.
 // Lo implementa internal/adapters/secondary/proxmox.
 type ProxmoxPort interface {
@@ -152,6 +163,9 @@ type ProxmoxPort interface {
 	// si está encendida Proxmox responde con error y se retorna ErrInstanciaOcupada.
 	// Devuelve el UPID de la tarea de borrado (qmdestroy / vzdestroy).
 	EliminarInstancia(ctx context.Context, node string, vmid int, vmType string) (upid string, err error)
+
+	// ListarTareasInstancia consulta tareas activas y archivadas del nodo desde la fecha indicada.
+	ListarTareasInstancia(ctx context.Context, node string, vmid int, desde time.Time) ([]TareaNodoDTO, error)
 
 	// EstadoTarea consulta GET /nodes/{node}/tasks/{upid}/status.
 	EstadoTarea(ctx context.Context, upid string) (*EstadoTareaDTO, error)
