@@ -213,9 +213,17 @@ func main() {
 	// Se detiene con ctx (SIGINT/SIGTERM).
 	// Las alertas CRITICAL se avisan además por correo a los ADMIN (y a los
 	// OPERATOR con FULL_ACCESS sobre la instancia afectada).
-	finAlertas := services.NewEvaluadorAlertas(nodoService, proxmoxClient, tareaRepo, kvStore, eventosService, auditService,
-		userRepo, emailService, nodoNombre, duracionDeEntorno("ALERT_POLL_INTERVAL", 30*time.Second),
-		strings.EqualFold(strings.TrimSpace(os.Getenv("ALERT_IGNORE_EXTERNAL_SHUTDOWN")), "true")).Iniciar(ctx)
+	configAlertas, err := configAlertasDeEntorno()
+	if err != nil {
+		log.Fatalf("❌ Configuración de alertas: %v", err)
+	}
+	evaluadorAlertas, err := services.NewEvaluadorAlertas(nodoService, proxmoxClient, tareaRepo, kvStore, eventosService, auditService,
+		userRepo, emailService, nodoNombre, configAlertas,
+		strings.EqualFold(strings.TrimSpace(os.Getenv("ALERT_IGNORE_EXTERNAL_SHUTDOWN")), "true"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	finAlertas := evaluadorAlertas.Iniciar(ctx)
 	wsMetricsHandler := httpHandlers.NewMetricsWSHandler(proxmoxClient, services.NewMetricasVivoService(kvStore, authRepo, instanceRepo, 0),
 		refsInstancia, nodoNombre, middleware.OrigenesPermitidos(), httpHandlers.LimitesWSPorDefecto)
 
@@ -523,6 +531,49 @@ func enteroDeEntorno(nombre string, defecto int) int {
 		log.Fatalf("❌ %s inválida (%q): debe ser un entero mayor a 0", nombre, v)
 	}
 	return n
+}
+
+// configAlertasDeEntorno parte de los valores estándar; una variable vacía
+// conserva su default y un valor inválido impide arrancar con una política rota.
+func configAlertasDeEntorno() (services.ConfigAlertas, error) {
+	c := services.ConfigAlertasPorDefecto()
+	for _, campo := range []struct {
+		nombre string
+		valor  *float64
+	}{
+		{"ALERT_THRESHOLD_HOST_RAM", &c.UmbralHostRAM},
+		{"ALERT_THRESHOLD_HOST_CPU", &c.UmbralHostCPU},
+		{"ALERT_THRESHOLD_HOST_DISK", &c.UmbralHostDisco},
+		{"ALERT_THRESHOLD_VM_RAM", &c.UmbralInstanciaMem},
+		{"ALERT_THRESHOLD_VM_CPU", &c.UmbralInstanciaCPU},
+		{"ALERT_THRESHOLD_RECOVERY", &c.UmbralRecuperacion},
+	} {
+		if texto := strings.TrimSpace(os.Getenv(campo.nombre)); texto != "" {
+			valor, err := strconv.ParseFloat(texto, 64)
+			if err != nil {
+				return c, fmt.Errorf("%s inválida: se esperaba un porcentaje", campo.nombre)
+			}
+			*campo.valor = valor
+		}
+	}
+	if texto := strings.TrimSpace(os.Getenv("ALERT_CYCLES_COUNT")); texto != "" {
+		valor, err := strconv.Atoi(texto)
+		if err != nil {
+			return c, fmt.Errorf("ALERT_CYCLES_COUNT inválida: se esperaba un entero positivo")
+		}
+		c.CiclosParaAlertar = valor
+	}
+	if texto := strings.TrimSpace(os.Getenv("ALERT_POLL_INTERVAL")); texto != "" {
+		valor, err := time.ParseDuration(texto)
+		if err != nil {
+			return c, fmt.Errorf("ALERT_POLL_INTERVAL inválida: se esperaba una duración (ej. 30s, 1m)")
+		}
+		c.Intervalo = valor
+	}
+	if err := c.Validar(); err != nil {
+		return c, err
+	}
+	return c, nil
 }
 
 // duracionDeEntorno lee una variable de entorno de duración, con un default.

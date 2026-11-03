@@ -141,7 +141,9 @@ Si falla, `severidad` es `WARNING` y `detalles` queda, por ejemplo:
 ### Alertas (`ALERT_TRIGGERED` y `ALERT_RESOLVED`)
 
 Las emite el **evaluador de umbrales**, un worker que cada `ALERT_POLL_INTERVAL`
-(30 s por defecto) revisa el host y las instancias:
+(30 s por defecto) revisa el host y las instancias. La tabla muestra los valores
+por defecto; los umbrales se configuran con `ALERT_THRESHOLD_*` (ver
+[SETUP.md](../SETUP.md#umbrales-y-persistencia-de-alertas-rf-11--rnf-07)).
 
 | Recurso   | Métrica              | Se dispara con      | Se resuelve con |
 |-----------|----------------------|---------------------|-----------------|
@@ -153,11 +155,11 @@ Las emite el **evaluador de umbrales**, un worker que cada `ALERT_POLL_INTERVAL`
 | Instancia | Caída (`down`)       | estaba encendida y se apagó o desapareció sin una tarea de Centinela | vuelve a encender |
 
 **Histéresis y deduplicación.** Un valor sobre el umbral tiene que repetirse
-**dos ciclos seguidos** para disparar la alerta: un pico de un solo ciclo no
-emite nada ni se audita. Disparada, la alerta no se repite mientras el valor
-no baje del umbral de recuperación (80%): oscilar entre 84% y 86% no genera
+**`ALERT_CYCLES_COUNT` ciclos seguidos** (2 por defecto) para disparar la alerta.
+Con el valor por defecto, un pico de un solo ciclo no emite nada ni se audita. Disparada, la alerta no se repite mientras el valor
+no baje de `ALERT_THRESHOLD_RECOVERY` (80% por defecto): oscilar entre 84% y 86% no genera
 eventos nuevos. Al bajar de 80% llega `ALERT_RESOLVED`. La caída no necesita
-dos ciclos (un cambio de estado no es un pico) y "sin una tarea de Centinela"
+persistencia (un cambio de estado no es un pico) y "sin una tarea de Centinela"
 significa sin una tarea de esa instancia en curso ni creada en los últimos 10
 minutos (un stop, un rollback o un borrado ordenados desde El Centinela no
 alertan).
@@ -169,7 +171,7 @@ alertan).
   `instance_down`), `metrica`, `valorActual`, `umbralCritico` (el de
   activación), `duracionPersistencia` (solo en la alerta: cuánto duró la
   saturación antes de alertar, por ejemplo `"60s"`), `umbralRecuperacion`
-  (solo en la resolución: 80) y `acknowledged: false`. Los valores y umbrales
+  (solo en la resolución: valor configurado, 80 por defecto) y `acknowledged: false`. Los valores y umbrales
   no van en `instance_down`.
 - Las del host traen `recursoId: null` y solo las reciben los usuarios **ADMIN**;
   las de una instancia traen su referencia pública en `recursoId` y las reciben

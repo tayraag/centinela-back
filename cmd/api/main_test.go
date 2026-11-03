@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"el-centinela/internal/core/services"
 	"encoding/json"
 	"errors"
 	"log"
@@ -10,6 +11,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"el-centinela/internal/adapters/secondary/email"
 	"el-centinela/internal/adapters/secondary/memoria"
@@ -166,5 +168,66 @@ func TestVersionInformaProveedorEmail(t *testing.T) {
 		if w.Code != http.StatusOK || cuerpo["emailProvider"] != caso.esperado || cuerpo["commit"] == "" {
 			t.Errorf("EMAIL_PROVIDER=%q: %d %s, se esperaba emailProvider=%q", caso.provider, w.Code, w.Body.String(), caso.esperado)
 		}
+	}
+}
+
+func limpiarEntornoAlertas(t *testing.T) {
+	t.Helper()
+	for _, nombre := range []string{
+		"ALERT_THRESHOLD_HOST_RAM", "ALERT_THRESHOLD_HOST_CPU", "ALERT_THRESHOLD_HOST_DISK",
+		"ALERT_THRESHOLD_VM_RAM", "ALERT_THRESHOLD_VM_CPU", "ALERT_THRESHOLD_RECOVERY",
+		"ALERT_CYCLES_COUNT", "ALERT_POLL_INTERVAL",
+	} {
+		t.Setenv(nombre, "")
+	}
+}
+
+func TestConfigAlertasDeEntorno_Defaults(t *testing.T) {
+	limpiarEntornoAlertas(t)
+	config, err := configAlertasDeEntorno()
+	if err != nil || config != services.ConfigAlertasPorDefecto() {
+		t.Fatalf("config=%+v error=%v", config, err)
+	}
+}
+
+func TestConfigAlertasDeEntorno_Personalizada(t *testing.T) {
+	limpiarEntornoAlertas(t)
+	for nombre, valor := range map[string]string{
+		"ALERT_THRESHOLD_HOST_RAM": "92.0", "ALERT_THRESHOLD_HOST_CPU": "96",
+		"ALERT_THRESHOLD_HOST_DISK": "97", "ALERT_THRESHOLD_VM_RAM": "98",
+		"ALERT_THRESHOLD_VM_CPU": "99", "ALERT_THRESHOLD_RECOVERY": "75",
+		"ALERT_CYCLES_COUNT": "3", "ALERT_POLL_INTERVAL": "5s",
+	} {
+		t.Setenv(nombre, valor)
+	}
+	config, err := configAlertasDeEntorno()
+	esperada := services.ConfigAlertas{
+		UmbralHostRAM: 92, UmbralHostCPU: 96, UmbralHostDisco: 97,
+		UmbralInstanciaMem: 98, UmbralInstanciaCPU: 99, UmbralRecuperacion: 75,
+		CiclosParaAlertar: 3, VentanaTareas: 10 * time.Minute, Intervalo: 5 * time.Second,
+	}
+	if err != nil || config != esperada {
+		t.Fatalf("config=%+v error=%v", config, err)
+	}
+}
+
+func TestConfigAlertasDeEntorno_RechazaInvalidas(t *testing.T) {
+	for _, caso := range []struct{ nombre, valor string }{
+		{"ALERT_THRESHOLD_HOST_RAM", "texto"}, {"ALERT_THRESHOLD_HOST_RAM", "NaN"},
+		{"ALERT_THRESHOLD_HOST_CPU", "+Inf"}, {"ALERT_THRESHOLD_HOST_DISK", "101"},
+		{"ALERT_THRESHOLD_VM_RAM", "-1"}, {"ALERT_THRESHOLD_VM_CPU", "0"},
+		{"ALERT_THRESHOLD_RECOVERY", "85"}, {"ALERT_THRESHOLD_RECOVERY", "-1"},
+		{"ALERT_THRESHOLD_RECOVERY", "NaN"}, {"ALERT_THRESHOLD_RECOVERY", "+Inf"},
+		{"ALERT_CYCLES_COUNT", "0"}, {"ALERT_CYCLES_COUNT", "-1"},
+		{"ALERT_CYCLES_COUNT", "2.5"}, {"ALERT_CYCLES_COUNT", "9223372036854775807"},
+		{"ALERT_POLL_INTERVAL", "0s"}, {"ALERT_POLL_INTERVAL", "incorrecto"},
+	} {
+		t.Run(caso.nombre+"="+caso.valor, func(t *testing.T) {
+			limpiarEntornoAlertas(t)
+			t.Setenv(caso.nombre, caso.valor)
+			if _, err := configAlertasDeEntorno(); err == nil {
+				t.Fatal("se esperaba un error de configuración")
+			}
+		})
 	}
 }

@@ -162,7 +162,7 @@ type entornoAlertas struct {
 func nuevoEntornoAlertas() *entornoAlertas {
 	e := &entornoAlertas{nodo: &nodoAlertas{}, inv: &inventarioAlertas{}, tareas: &tareasAlertas{conTarea: map[int]bool{}},
 		kv: memoria.Nuevo(), bus: &busAlertas{}, audit: &auditoriaAlertas{}, correo: &correoAlertas{}, dest: &destinatariosAlertas{}}
-	e.eval = services.NewEvaluadorAlertas(e.nodo, e.inv, e.tareas, e.kv, e.bus, e.audit, e.dest, e.correo, "pve", 30*time.Second)
+	e.configurar(services.ConfigAlertasPorDefecto())
 	return e
 }
 
@@ -429,8 +429,10 @@ func TestAlertas_SinInventarioNoInventaCaidas(t *testing.T) {
 func TestAlertas_CicloYTurnoPorReplica(t *testing.T) {
 	e := nuevoEntornoAlertas()
 	e.nodo.fijar(95, 10, 10)
-	otra := services.NewEvaluadorAlertas(e.nodo, e.inv, e.tareas, e.kv, e.bus, e.audit, e.dest, e.correo, "pve", 30*time.Millisecond)
-	propia := services.NewEvaluadorAlertas(e.nodo, e.inv, e.tareas, e.kv, e.bus, e.audit, e.dest, e.correo, "pve", 30*time.Millisecond)
+	config := services.ConfigAlertasPorDefecto()
+	config.Intervalo = 30 * time.Millisecond
+	otra := e.configurar(config)
+	propia := e.configurar(config)
 	ctx, cancelar := context.WithCancel(context.Background())
 	finA, finB := propia.Iniciar(ctx), otra.Iniciar(ctx)
 	time.Sleep(50 * time.Millisecond) // un solo ciclo de 30 ms
@@ -589,7 +591,7 @@ func TestAlertas_ConciliacionDeParadasExternas(t *testing.T) {
 		t.Run(caso.nombre, func(t *testing.T) {
 			e := nuevoEntornoAlertas()
 			if caso.habilitar {
-				e.eval = services.NewEvaluadorAlertas(e.nodo, e.inv, e.tareas, e.kv, e.bus, e.audit, e.dest, e.correo, "pve", 30*time.Second, true)
+				e.configurar(services.ConfigAlertasPorDefecto(), true)
 			}
 			e.inv.tareasExternas = []ports.TareaNodoDTO{caso.tarea}
 			e.inv.errorTareas = caso.err
@@ -630,5 +632,97 @@ func TestAlertas_ConciliacionDeParadasExternas(t *testing.T) {
 				t.Fatal("se repitió la auditoría externa")
 			}
 		})
+	}
+}
+
+// configurar usa el mismo constructor validado que producción.
+func (e *entornoAlertas) configurar(config services.ConfigAlertas, externas ...bool) *services.EvaluadorAlertas {
+	evaluador, err := services.NewEvaluadorAlertas(e.nodo, e.inv, e.tareas, e.kv, e.bus, e.audit, e.dest, e.correo, "pve", config, externas...)
+	if err != nil {
+		panic(err)
+	}
+	e.eval = evaluador
+	return evaluador
+}
+
+func TestAlertas_UmbralesConfigurables(t *testing.T) {
+	for _, caso := range []struct {
+		nombre   string
+		cambiar  func(*services.ConfigAlertas)
+		preparar func(*entornoAlertas)
+	}{
+		{"RAM host", func(c *services.ConfigAlertas) { c.UmbralHostRAM = 92 }, func(e *entornoAlertas) { e.nodo.fijar(88, 0, 0) }},
+		{"CPU host", func(c *services.ConfigAlertas) { c.UmbralHostCPU = 96 }, func(e *entornoAlertas) { e.nodo.fijar(0, 92, 0) }},
+		{"disco host", func(c *services.ConfigAlertas) { c.UmbralHostDisco = 96 }, func(e *entornoAlertas) { e.nodo.fijar(0, 0, 92) }},
+		{"RAM instancia", func(c *services.ConfigAlertas) { c.UmbralInstanciaMem = 99 }, func(e *entornoAlertas) {
+			e.inv.instancias = []ports.InstanciaProxmoxDTO{{Vmid: 100, Estado: "running", Tipo: "qemu", Mem: 97, MaxMem: 100}}
+		}},
+		{"CPU instancia", func(c *services.ConfigAlertas) { c.UmbralInstanciaCPU = 99 }, func(e *entornoAlertas) {
+			e.inv.instancias = []ports.InstanciaProxmoxDTO{{Vmid: 100, Estado: "running", Tipo: "qemu", Cpu: .97}}
+		}},
+	} {
+		t.Run(caso.nombre, func(t *testing.T) {
+			e := nuevoEntornoAlertas()
+			config := services.ConfigAlertasPorDefecto()
+			caso.cambiar(&config)
+			e.configurar(config)
+			caso.preparar(e)
+			for i := 0; i < 4; i++ {
+				e.eval.Evaluar(context.Background())
+			}
+			e.eval.EsperarCorreos()
+			if len(e.bus.tomar()) != 0 || len(e.correo.lista()) != 0 || len(e.audit.registros) != 0 {
+				t.Fatal("el consumo nominal configurado generó alertas o correos")
+			}
+			// El mismo consumo sí supera el umbral estándar.
+			e.configurar(services.ConfigAlertasPorDefecto())
+			for i := 0; i < 2; i++ {
+				e.eval.Evaluar(context.Background())
+			}
+			e.eval.EsperarCorreos()
+			if len(e.bus.tomar()) != 1 || len(e.correo.lista()) != 1 {
+				t.Fatal("el umbral estándar debía alertar")
+			}
+		})
+	}
+}
+
+func TestAlertas_PersistenciaYRecuperacionConfigurables(t *testing.T) {
+	e := nuevoEntornoAlertas()
+	c := services.ConfigAlertasPorDefecto()
+	c.UmbralHostRAM, c.UmbralRecuperacion, c.CiclosParaAlertar, c.Intervalo = 60, 40, 3, 5*time.Second
+	e.configurar(c)
+	e.cicloRAM(65)
+	e.cicloRAM(50) // interrumpir la racha reinicia la persistencia
+	for i := 0; i < 2; i++ {
+		if ev := e.cicloRAM(65); len(ev) != 0 {
+			t.Fatal("alertó antes de completar tres ciclos")
+		}
+	}
+	ev := e.cicloRAM(65)
+	e.eval.EsperarCorreos()
+	if len(ev) != 1 || ev[0].Detalles["umbralCritico"] != 60.0 || ev[0].Detalles["duracionPersistencia"] != "15s" {
+		t.Fatalf("disparo incorrecto: %+v", ev)
+	}
+	if ev := e.cicloRAM(45); len(ev) != 0 {
+		t.Fatal("resolvió antes del umbral de recuperación configurado")
+	}
+	if ev := e.cicloRAM(40); len(ev) != 0 {
+		t.Fatal("resolvió en el umbral, debe estar por debajo")
+	}
+	ev = e.cicloRAM(39)
+	if len(ev) != 1 || ev[0].Tipo != ports.EventoAlertaResuelta || ev[0].Detalles["umbralRecuperacion"] != 40.0 {
+		t.Fatalf("resolución incorrecta: %+v", ev)
+	}
+	if len(e.correo.lista()) != 1 {
+		t.Fatal("la recuperación no debe enviar correos")
+	}
+}
+
+func TestAlertas_ConstructorRechazaConfiguracionInvalida(t *testing.T) {
+	c := services.ConfigAlertasPorDefecto()
+	c.Intervalo = 0
+	if _, err := services.NewEvaluadorAlertas(nil, nil, nil, nil, nil, nil, nil, nil, "pve", c); err == nil {
+		t.Fatal("el constructor debe rechazar el intervalo inválido")
 	}
 }

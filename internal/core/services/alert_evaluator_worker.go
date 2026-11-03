@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"strconv"
 	"sync"
 	"time"
@@ -16,24 +17,65 @@ import (
 	"github.com/google/uuid"
 )
 
-// Umbrales del evaluador de alertas (RF-11), en porcentaje. Histéresis: una
-// alerta se dispara cuando el valor llega al umbral alto durante
-// ciclosParaAlertar ciclos seguidos, y recién se da por resuelta cuando baja
-// de umbralRecuperacion. Entre los dos no cambia nada: oscilar alrededor del
-// umbral alto no repite la alerta.
+// ConfigAlertas define los umbrales porcentuales y la persistencia del evaluador.
+// La alerta se dispara tras CiclosParaAlertar ciclos consecutivos sobre el umbral
+// y se resuelve cuando el consumo baja de UmbralRecuperacion.
+type ConfigAlertas struct {
+	UmbralHostRAM      float64
+	UmbralHostCPU      float64
+	UmbralHostDisco    float64
+	UmbralInstanciaMem float64
+	UmbralInstanciaCPU float64
+	UmbralRecuperacion float64
+	CiclosParaAlertar  int
+	VentanaTareas      time.Duration
+	Intervalo          time.Duration
+}
+
+// ConfigAlertasPorDefecto conserva la política operativa de RF-11.
+func ConfigAlertasPorDefecto() ConfigAlertas {
+	return ConfigAlertas{
+		UmbralHostRAM: 85, UmbralHostCPU: 90, UmbralHostDisco: 90,
+		UmbralInstanciaMem: 95, UmbralInstanciaCPU: 95, UmbralRecuperacion: 80,
+		CiclosParaAlertar: 2, VentanaTareas: 10 * time.Minute, Intervalo: 30 * time.Second,
+	}
+}
+
+// Validar evita configuraciones que impidan alertar o resolver la histéresis.
+func (c ConfigAlertas) Validar() error {
+	for _, umbral := range []struct {
+		nombre string
+		valor  float64
+	}{
+		{"UmbralHostRAM", c.UmbralHostRAM}, {"UmbralHostCPU", c.UmbralHostCPU},
+		{"UmbralHostDisco", c.UmbralHostDisco}, {"UmbralInstanciaMem", c.UmbralInstanciaMem},
+		{"UmbralInstanciaCPU", c.UmbralInstanciaCPU},
+	} {
+		if math.IsNaN(umbral.valor) || math.IsInf(umbral.valor, 0) || umbral.valor <= 0 || umbral.valor > 100 {
+			return fmt.Errorf("%s debe ser un porcentaje finito mayor a 0 y menor o igual a 100", umbral.nombre)
+		}
+		if math.IsNaN(c.UmbralRecuperacion) || math.IsInf(c.UmbralRecuperacion, 0) || c.UmbralRecuperacion < 0 || c.UmbralRecuperacion >= umbral.valor {
+			return fmt.Errorf("UmbralRecuperacion debe ser mayor o igual a 0 y menor que %s", umbral.nombre)
+		}
+	}
+	if c.CiclosParaAlertar <= 0 {
+		return fmt.Errorf("CiclosParaAlertar debe ser mayor a 0")
+	}
+	if c.VentanaTareas <= 0 {
+		return fmt.Errorf("VentanaTareas debe ser mayor a 0")
+	}
+	if c.Intervalo <= 0 || c.Intervalo > time.Duration(math.MaxInt64)/3 {
+		return fmt.Errorf("Intervalo debe ser mayor a 0 y permitir un TTL de tres ciclos")
+	}
+	if int64(c.CiclosParaAlertar) > math.MaxInt64/int64(c.Intervalo) {
+		return fmt.Errorf("la duración de persistencia excede el rango permitido")
+	}
+	return nil
+}
+
 const (
-	umbralHostRAM       = 85.0
-	umbralHostCPU       = 90.0
-	umbralHostDisco     = 90.0
-	umbralInstanciaMem  = 95.0
-	umbralInstanciaCPU  = 95.0
-	umbralRecuperacion  = 80.0
-	ciclosParaAlertar   = 2
 	ttlAlertaActiva     = 24 * time.Hour
 	ttlEstadoInstancias = 24 * time.Hour
-	// ventanaTareasCentinela: una tarea de Centinela creada en este lapso
-	// explica que una instancia se haya apagado (stop, rollback, borrado...).
-	ventanaTareasCentinela = 10 * time.Minute
 )
 
 // Tipos de alerta (detalles.type del evento).
@@ -64,7 +106,7 @@ type EvaluadorAlertas struct {
 	audit                   ports.AuditService
 	nombreNodo              string
 	ignorarApagadosExternos bool
-	intervalo               time.Duration
+	config                  ConfigAlertas
 	ahora                   func() time.Time
 
 	destinatarios ports.DestinatariosAlertas // a quién mandar el correo de una alerta crítica
@@ -72,18 +114,17 @@ type EvaluadorAlertas struct {
 	correos       sync.WaitGroup // correos en envío (el apagado los espera)
 }
 
-// NewEvaluadorAlertas crea el evaluador. intervalo es ALERT_POLL_INTERVAL
-// (30 s si no es positivo). La opción final habilita ALERT_IGNORE_EXTERNAL_SHUTDOWN
-// y por defecto es false.
+// NewEvaluadorAlertas crea el evaluador con una configuración validada.
+// La opción final habilita ALERT_IGNORE_EXTERNAL_SHUTDOWN (false por defecto).
 func NewEvaluadorAlertas(nodo ports.NodoService, proxmox ports.ProxmoxPort, tareas ports.TareaRepository, kv ports.KeyValueStore,
 	eventos ports.EventosService, audit ports.AuditService, destinatarios ports.DestinatariosAlertas, email ports.EmailService,
-	nombreNodo string, intervalo time.Duration, ignorarApagadosExternos ...bool) *EvaluadorAlertas {
-	if intervalo <= 0 {
-		intervalo = 30 * time.Second
+	nombreNodo string, config ConfigAlertas, ignorarApagadosExternos ...bool) (*EvaluadorAlertas, error) {
+	if err := config.Validar(); err != nil {
+		return nil, fmt.Errorf("configuración de alertas inválida: %w", err)
 	}
 	return &EvaluadorAlertas{nodo: nodo, proxmox: proxmox, tareas: tareas, kv: kv, eventos: eventos, audit: audit,
 		ignorarApagadosExternos: len(ignorarApagadosExternos) > 0 && ignorarApagadosExternos[0],
-		destinatarios:           destinatarios, email: email, nombreNodo: nombreNodo, intervalo: intervalo, ahora: time.Now}
+		destinatarios:           destinatarios, email: email, nombreNodo: nombreNodo, config: config, ahora: time.Now}, nil
 }
 
 // EsperarCorreos espera a que terminen los correos en envío.
@@ -97,9 +138,9 @@ func (e *EvaluadorAlertas) Iniciar(ctx context.Context) <-chan struct{} {
 	go func() {
 		defer close(terminado)
 		defer e.correos.Wait()
-		ticker := time.NewTicker(e.intervalo)
+		ticker := time.NewTicker(e.config.Intervalo)
 		defer ticker.Stop()
-		log.Printf("🚨 Evaluador de alertas iniciado (cada %s)", e.intervalo)
+		log.Printf("🚨 Evaluador de alertas iniciado (cada %s)", e.config.Intervalo)
 		for {
 			select {
 			case <-ctx.Done():
@@ -116,7 +157,7 @@ func (e *EvaluadorAlertas) Iniciar(ctx context.Context) <-chan struct{} {
 // réplicas, cada una contaría el mismo ciclo y una sola lectura alcanzaría
 // para disparar la alerta.
 func (e *EvaluadorAlertas) turno(ctx context.Context) {
-	tomado, err := e.kv.SetNX(ctx, claveTurnoAlertas, "1", e.intervalo*9/10)
+	tomado, err := e.kv.SetNX(ctx, claveTurnoAlertas, "1", e.config.Intervalo-e.config.Intervalo/10)
 	if err != nil {
 		log.Printf("[ALERTAS] no se pudo tomar el turno de evaluación: %v", err)
 		return
@@ -145,9 +186,9 @@ func (e *EvaluadorAlertas) Evaluar(ctx context.Context) {
 	} else if !stale {
 		// Una lectura vieja no cuenta como un ciclo nuevo: se evalúa con datos frescos.
 		for _, m := range []medicion{
-			{metrica: "ram", valor: estado.RAM.UsagePercent, umbral: umbralHostRAM},
-			{metrica: "cpu", valor: estado.CPU.UsagePercent, umbral: umbralHostCPU},
-			{metrica: "disk", valor: estado.Storage.UsagePercent, umbral: umbralHostDisco},
+			{metrica: "ram", valor: estado.RAM.UsagePercent, umbral: e.config.UmbralHostRAM},
+			{metrica: "cpu", valor: estado.CPU.UsagePercent, umbral: e.config.UmbralHostCPU},
+			{metrica: "disk", valor: estado.Storage.UsagePercent, umbral: e.config.UmbralHostDisco},
 		} {
 			m.recursoTipo, m.clave, m.recursoID = ports.RecursoHost, "host", e.nombreNodo
 			e.evaluarMedicion(ctx, m)
@@ -168,11 +209,11 @@ func (e *EvaluadorAlertas) Evaluar(ctx context.Context) {
 		}
 		base := medicion{recursoTipo: recursoDeInstancia(inst.Tipo), clave: "instance", recursoID: strconv.Itoa(inst.Vmid), vmid: inst.Vmid, nombre: inst.Nombre}
 		cpu := base
-		cpu.metrica, cpu.valor, cpu.umbral = "cpu", domain.PorcentajeCPU(inst.Cpu), umbralInstanciaCPU
+		cpu.metrica, cpu.valor, cpu.umbral = "cpu", domain.PorcentajeCPU(inst.Cpu), e.config.UmbralInstanciaCPU
 		e.evaluarMedicion(ctx, cpu)
 		if inst.MaxMem > 0 {
 			mem := base
-			mem.metrica, mem.valor, mem.umbral = "mem", redondear(float64(inst.Mem)/float64(inst.MaxMem)*100), umbralInstanciaMem
+			mem.metrica, mem.valor, mem.umbral = "mem", redondear(float64(inst.Mem)/float64(inst.MaxMem)*100), e.config.UmbralInstanciaMem
 			e.evaluarMedicion(ctx, mem)
 		}
 	}
@@ -183,21 +224,21 @@ func (e *EvaluadorAlertas) Evaluar(ctx context.Context) {
 }
 
 // evaluarMedicion aplica la histéresis con deduplicación:
-//   - valor ≥ umbral: suma un ciclo (INCR, vence en 3 intervalos). Con el
-//     primer ciclo no pasa nada (pico transitorio); desde el segundo seguido
-//     se dispara, una sola vez gracias a SET NX sobre la alerta activa.
+//   - valor ≥ umbral: suma un ciclo (INCR, vence en 3 intervalos). Al completar
+//     ConfigAlertas.CiclosParaAlertar ciclos consecutivos se dispara una sola vez
+//     gracias a SET NX sobre la alerta activa.
 //   - valor < umbral: se pierde la racha (los ciclos tienen que ser seguidos).
 //   - valor < umbralRecuperacion: si había alerta activa, se resuelve.
 func (e *EvaluadorAlertas) evaluarMedicion(ctx context.Context, m medicion) {
 	pendiente := fmt.Sprintf(formatoPendiente, m.clave, m.recursoID, m.metrica)
 	activa := fmt.Sprintf(formatoActiva, m.clave, m.recursoID, m.metrica)
 	if m.valor >= m.umbral {
-		ciclos, err := e.kv.Incrementar(ctx, pendiente, 3*e.intervalo)
+		ciclos, err := e.kv.Incrementar(ctx, pendiente, time.Duration(e.config.CiclosParaAlertar)*e.config.Intervalo)
 		if err != nil {
 			log.Printf("[ALERTAS] no se pudo contar %s: %v", pendiente, err)
 			return
 		}
-		if ciclos < ciclosParaAlertar {
+		if ciclos < int64(e.config.CiclosParaAlertar) {
 			return
 		}
 		e.disparar(ctx, activa, m, tipoDeAlerta(m), mensajeSaturacion(m))
@@ -206,7 +247,7 @@ func (e *EvaluadorAlertas) evaluarMedicion(ctx context.Context, m medicion) {
 	if err := e.kv.Del(ctx, pendiente); err != nil {
 		log.Printf("[ALERTAS] no se pudo limpiar %s: %v", pendiente, err)
 	}
-	if m.valor < umbralRecuperacion {
+	if m.valor < e.config.UmbralRecuperacion {
 		e.resolver(ctx, activa, m, tipoDeAlerta(m), mensajeNormalizado(m))
 	}
 }
@@ -270,7 +311,7 @@ func (e *EvaluadorAlertas) evaluarCaidas(ctx context.Context, instancias []ports
 // explicadaPorCentinela: hay una tarea de Centinela en curso o reciente. Ante
 // un error de la base se asume que sí, para no alertar en falso.
 func (e *EvaluadorAlertas) explicadaPorCentinela(ctx context.Context, vmid int) bool {
-	hubo, err := e.tareas.HuboTareaDesde(ctx, vmid, e.ahora().Add(-ventanaTareasCentinela))
+	hubo, err := e.tareas.HuboTareaDesde(ctx, vmid, e.ahora().Add(-e.config.VentanaTareas))
 	if err != nil {
 		log.Printf("[ALERTAS] no se pudo consultar las tareas de %d: %v", vmid, err)
 		return true
@@ -285,7 +326,7 @@ func (e *EvaluadorAlertas) explicadaPorProxmox(ctx context.Context, vmid int, in
 		return false
 	}
 	ahora := e.ahora()
-	desde := ahora.Add(-ventanaTareasCentinela)
+	desde := ahora.Add(-e.config.VentanaTareas)
 	tareas, err := e.proxmox.ListarTareasInstancia(ctx, instancia.Nodo, vmid, desde)
 	if err != nil {
 		log.Printf("[ALERTAS] no se pudieron conciliar las tareas externas de %d: %v", vmid, err)
@@ -330,7 +371,7 @@ func (e *EvaluadorAlertas) disparar(ctx context.Context, activa string, m medici
 	ahora := e.ahora()
 	detalles := detallesAlerta(alertaID.String(), tipo, m)
 	if m.metrica != metricaCaida {
-		detalles["duracionPersistencia"] = fmt.Sprintf("%ds", int((ciclosParaAlertar * e.intervalo).Seconds()))
+		detalles["duracionPersistencia"] = fmt.Sprintf("%ds", int((time.Duration(e.config.CiclosParaAlertar) * e.config.Intervalo).Seconds()))
 	}
 	evento, err := ports.NewRealtimeEvent(ports.EventoAlerta, ports.SeveridadCritical, mensaje)
 	if err == nil {
@@ -379,7 +420,7 @@ func (e *EvaluadorAlertas) resolver(ctx context.Context, activa string, m medici
 	}
 	detalles := detallesAlerta(alertaID, tipo, m)
 	if m.metrica != metricaCaida {
-		detalles["umbralRecuperacion"] = umbralRecuperacion
+		detalles["umbralRecuperacion"] = e.config.UmbralRecuperacion
 	}
 	evento, err := ports.NewRealtimeEvent(ports.EventoAlertaResuelta, ports.SeveridadInfo, mensaje)
 	if err == nil {

@@ -34,8 +34,11 @@ func TestAlertas_IntegracionPubSubYCorreo(t *testing.T) {
 	nodo.fijar(92, 10, 10)
 	replicas := make([]*services.EvaluadorAlertas, 4)
 	for i := range replicas {
-		replicas[i] = services.NewEvaluadorAlertas(nodo, &inventarioAlertas{}, &tareasAlertas{conTarea: map[int]bool{}}, kv, eventos, audit,
-			&destinatariosAlertas{}, correo, "pve", 30*time.Second)
+		replicas[i], err = services.NewEvaluadorAlertas(nodo, &inventarioAlertas{}, &tareasAlertas{conTarea: map[int]bool{}}, kv, eventos, audit,
+			&destinatariosAlertas{}, correo, "pve", services.ConfigAlertasPorDefecto())
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 	replicas[0].Evaluar(context.Background()) // primer ciclo: pico
 

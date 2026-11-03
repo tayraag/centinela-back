@@ -47,6 +47,48 @@ Editar `.env` con valores reales. Los campos obligatorios son:
 
 > **Seguridad**: El `.env` ya está en `.gitignore`. Nunca lo commitees.
 
+### Umbrales y persistencia de alertas (RF-11 / RNF-07)
+
+Las siguientes variables son opcionales. Si se omiten o quedan vacías se usan
+los valores de referencia. Se leen al iniciar la API: reiniciarla para aplicar
+cambios en `.env`.
+
+| Variable | Valor por defecto | Uso |
+| --- | --- | --- |
+| `ALERT_THRESHOLD_HOST_RAM` | `85.0` | RAM del host (%) |
+| `ALERT_THRESHOLD_HOST_CPU` | `90.0` | CPU del host (%) |
+| `ALERT_THRESHOLD_HOST_DISK` | `90.0` | Almacenamiento del host (%) |
+| `ALERT_THRESHOLD_VM_RAM` | `95.0` | RAM de cada VM o LXC (%) |
+| `ALERT_THRESHOLD_VM_CPU` | `95.0` | CPU de cada VM o LXC (%) |
+| `ALERT_THRESHOLD_RECOVERY` | `80.0` | Consumo por debajo del cual se resuelve una alerta (%) |
+| `ALERT_CYCLES_COUNT` | `2` | Ciclos consecutivos en el umbral o por encima para disparar |
+| `ALERT_POLL_INTERVAL` | `30s` | Intervalo entre evaluaciones |
+
+Los umbrales deben ser porcentajes finitos mayores a 0 y menores o iguales a
+100. La recuperación debe ser mayor o igual a 0 y menor que **todos** los
+umbrales de disparo. Los ciclos deben ser un entero positivo y el intervalo
+una duración positiva. Una configuración inválida impide el arranque con un
+mensaje de error; no se ignora silenciosamente.
+
+Ejemplo para un host que opera normalmente al 88% de RAM:
+
+```dotenv
+ALERT_THRESHOLD_HOST_RAM=92.0
+ALERT_THRESHOLD_RECOVERY=80.0
+ALERT_CYCLES_COUNT=3
+ALERT_POLL_INTERVAL=30s
+```
+
+Con ese consumo sostenido no se generan alertas ni correos. Al llegar a 92%
+durante tres ciclos consecutivos se dispara la alerta; solo se resuelve al
+bajar de 80%. Un ciclo por debajo del umbral de disparo reinicia la racha.
+Los eventos informan los umbrales y la persistencia configurados.
+
+El constructor del worker recibe `services.ConfigAlertas`, que también permite
+inyectar `VentanaTareas` (10 minutos por defecto) para conciliar órdenes de
+Centinela y Proxmox. `ALERT_IGNORE_EXTERNAL_SHUTDOWN` conserva su comportamiento
+opcional y su valor por defecto `false`.
+
 ### Correo electrónico
 
 En producción configurá explícitamente `APP_ENV=production` y
