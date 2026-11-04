@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"el-centinela/internal/adapters/secondary/memoria"
 	"el-centinela/internal/core/domain"
 	"el-centinela/internal/core/ports"
 	"el-centinela/internal/core/services"
@@ -23,6 +24,7 @@ type proxmoxTareas struct {
 	exitStatus string
 	fallasRed  int // primeras consultas que fallan por red
 	tipo       string
+	consultas  int
 }
 
 func (p *proxmoxTareas) ObtenerEstadoNodo(context.Context, string) (*ports.NodeStatusDTO, error) {
@@ -36,6 +38,7 @@ func (p *proxmoxTareas) ObtenerInterfaces(context.Context, string, string, int) 
 func (p *proxmoxTareas) EstadoTarea(context.Context, string) (*ports.EstadoTareaDTO, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	p.consultas++
 	if p.fallasRed > 0 {
 		p.fallasRed--
 		return nil, ports.ErrProxmoxNoDisponible
@@ -94,6 +97,33 @@ type tareasEnMemoria struct {
 	}
 }
 
+type lockStoreConFallas struct {
+	*memoria.KVStore
+	mu               sync.Mutex
+	fallasRestantes  int
+	errorDel         error
+	llamadasEliminar int
+}
+
+func (s *lockStoreConFallas) Del(ctx context.Context, keys ...string) error {
+	s.mu.Lock()
+	s.llamadasEliminar++
+	if s.fallasRestantes > 0 {
+		s.fallasRestantes--
+		err := s.errorDel
+		s.mu.Unlock()
+		return err
+	}
+	s.mu.Unlock()
+	return s.KVStore.Del(ctx, keys...)
+}
+
+func (s *lockStoreConFallas) llamadas() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.llamadasEliminar
+}
+
 func (r *tareasEnMemoria) Crear(_ context.Context, t *domain.TareaAsincrona, auditoria ports.RegistrarAuditoriaInput) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -139,8 +169,22 @@ func (r *tareasEnMemoria) ActualizarEstado(ctx context.Context, id uuid.UUID, es
 	r.mu.Unlock()
 	return nil, errors.New("no existe")
 }
-func (r *tareasEnMemoria) BuscarTareasActivasPorVmids(ctx context.Context, vmids []int) (map[int]ports.ActiveTaskDTO, error) {
-	return map[int]ports.ActiveTaskDTO{}, nil
+func (r *tareasEnMemoria) BuscarTareasActivasPorVmids(_ context.Context, vmids []int) (map[int]ports.ActiveTaskDTO, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	buscados := make(map[int]bool, len(vmids))
+	for _, vmid := range vmids {
+		buscados[vmid] = true
+	}
+	activas := make(map[int]ports.ActiveTaskDTO)
+	for _, tarea := range r.tareas {
+		vmid, err := strconv.Atoi(tarea.InstanciaID)
+		if err != nil || !buscados[vmid] || tarea.Estado != ports.TareaRunning {
+			continue
+		}
+		activas[vmid] = ports.ActiveTaskDTO{TareaID: tarea.ID.String(), Action: ports.AccionPublicaTarea(tarea.Accion), Status: ports.TareaRunning}
+	}
+	return activas, nil
 }
 func (r *tareasEnMemoria) ListarEnCurso(context.Context) ([]domain.TareaAsincrona, error) {
 	r.mu.Lock()
@@ -193,6 +237,165 @@ func TestSeguimiento_RegistraCreacionRunningConUPIDYAuditoriaInicial(t *testing.
 	if auditoria.Accion != ports.AccionCrearInstancia || auditoria.Resultado != ports.ResultadoPendiente || auditoria.InstanciaID != "115" || auditoria.InstanciaNombre != "srv-prod-01" || auditoria.Upid != upid {
 		t.Fatalf("auditoría inicial incorrecta: %+v", auditoria)
 	}
+}
+
+func TestSeguimiento_ReconciliaTareaTerminadaAntesDeAbrirLaAPI(t *testing.T) {
+	casos := []struct {
+		nombre             string
+		exitStatus         string
+		estadoEsperado     string
+		resultadoAuditoria string
+	}{
+		{nombre: "completada", exitStatus: "OK", estadoEsperado: ports.TareaCompleted, resultadoAuditoria: ports.ResultadoExito},
+		{nombre: "fallida", exitStatus: "permission denied", estadoEsperado: ports.TareaFailed, resultadoAuditoria: ports.ResultadoFalla},
+	}
+
+	for _, caso := range casos {
+		t.Run(caso.nombre, func(t *testing.T) {
+			tareaID := uuid.New()
+			tarea := &domain.TareaAsincrona{
+				ID: tareaID, UsuarioID: uuid.New(), UpidProxmox: "UPID:pve1:arranque",
+				InstanciaID: "110", Accion: "start", Estado: ports.TareaRunning,
+				FechaCreacion: time.Now().Add(-time.Minute),
+			}
+			audit := &auditoriaGrabadora{}
+			repo := &tareasEnMemoria{tareas: map[uuid.UUID]*domain.TareaAsincrona{tareaID: tarea}, audit: audit}
+			locks := memoria.Nuevo()
+			if err := locks.Set(context.Background(), "lock:instance:110:operation", "residual", time.Minute); err != nil {
+				t.Fatal(err)
+			}
+			px := &proxmoxTareas{exitStatus: caso.exitStatus, tipo: ports.TipoInstanciaQemu}
+			finalizada := make(chan struct{}, 1)
+			pool := services.NewSeguimientoTareas(px, repo, services.NewAuditService(nil), services.ConfigSeguimiento{
+				LockStore: locks,
+				OnTaskFinished: func(context.Context, *domain.TareaAsincrona, string, services.ResultadoTarea) {
+					finalizada <- struct{}{}
+				},
+			})
+
+			if err := pool.RecuperarYReconciliarAlArranque(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+
+			if estado := repo.estado(tareaID); estado != caso.estadoEsperado {
+				t.Fatalf("estado después de reconciliar = %s, se esperaba %s", estado, caso.estadoEsperado)
+			}
+			activas, err := repo.BuscarTareasActivasPorVmids(context.Background(), []int{110})
+			if err != nil || len(activas) != 0 {
+				t.Fatalf("la instancia continúa ocupada después de reconciliar: activas=%v err=%v", activas, err)
+			}
+			if _, err := locks.Get(context.Background(), "lock:instance:110:operation"); !errors.Is(err, ports.ErrClaveNoEncontrada) {
+				t.Fatalf("el lock residual no fue purgado: %v", err)
+			}
+			if cierre := audit.buscar(ports.AccionIniciarVM); cierre == nil || cierre.Resultado != caso.resultadoAuditoria {
+				t.Fatalf("auditoría de cierre incorrecta: %+v", cierre)
+			}
+			select {
+			case <-finalizada:
+			default:
+				t.Fatal("la reconciliación no notificó el cierre")
+			}
+			px.mu.Lock()
+			consultas := px.consultas
+			px.mu.Unlock()
+			if consultas != 1 {
+				t.Fatalf("se esperaban 1 consulta inmediata a Proxmox, hubo %d", consultas)
+			}
+		})
+	}
+}
+
+func TestSeguimiento_ReconciliacionInicialConservaTareaRealmenteActiva(t *testing.T) {
+	tareaID := uuid.New()
+	tarea := &domain.TareaAsincrona{
+		ID: tareaID, UsuarioID: uuid.New(), UpidProxmox: "UPID:pve1:activa",
+		InstanciaID: "110", Accion: "start", Estado: ports.TareaRunning,
+		FechaCreacion: time.Now().Add(-time.Minute),
+	}
+	repo := &tareasEnMemoria{tareas: map[uuid.UUID]*domain.TareaAsincrona{tareaID: tarea}}
+	locks := memoria.Nuevo()
+	if err := locks.Set(context.Background(), "lock:instance:110:operation", "vigente", time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	pool := services.NewSeguimientoTareas(&proxmoxTareas{vueltas: 1}, repo, services.NewAuditService(nil), services.ConfigSeguimiento{LockStore: locks})
+
+	if err := pool.RecuperarYReconciliarAlArranque(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if estado := repo.estado(tareaID); estado != ports.TareaRunning {
+		t.Fatalf("una tarea que Proxmox sigue ejecutando no debe cerrarse: %s", estado)
+	}
+	if _, err := locks.Get(context.Background(), "lock:instance:110:operation"); err != nil {
+		t.Fatalf("el lock de una tarea realmente activa no debe purgarse: %v", err)
+	}
+}
+
+func TestSeguimiento_ReconciliacionInicialExigeLiberarLockResidual(t *testing.T) {
+	nuevaTarea := func() (uuid.UUID, *domain.TareaAsincrona) {
+		id := uuid.New()
+		return id, &domain.TareaAsincrona{
+			ID: id, UsuarioID: uuid.New(), UpidProxmox: "UPID:pve1:lock",
+			InstanciaID: "110", Accion: "start", Estado: ports.TareaRunning,
+			FechaCreacion: time.Now().Add(-time.Minute),
+		}
+	}
+
+	t.Run("reintenta antes de continuar", func(t *testing.T) {
+		id, tarea := nuevaTarea()
+		base := memoria.Nuevo()
+		if err := base.Set(context.Background(), "lock:instance:110:operation", "residual", time.Minute); err != nil {
+			t.Fatal(err)
+		}
+		locks := &lockStoreConFallas{KVStore: base, fallasRestantes: 2, errorDel: errors.New("redis temporalmente inaccesible")}
+		repo := &tareasEnMemoria{tareas: map[uuid.UUID]*domain.TareaAsincrona{id: tarea}}
+		pool := services.NewSeguimientoTareas(&proxmoxTareas{exitStatus: "OK"}, repo, services.NewAuditService(nil), services.ConfigSeguimiento{LockStore: locks})
+
+		if err := pool.RecuperarYReconciliarAlArranque(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if locks.llamadas() != 3 {
+			t.Fatalf("se esperaban tres intentos de DEL, hubo %d", locks.llamadas())
+		}
+		if _, err := base.Get(context.Background(), "lock:instance:110:operation"); !errors.Is(err, ports.ErrClaveNoEncontrada) {
+			t.Fatalf("el lock no fue eliminado después del reintento: %v", err)
+		}
+	})
+
+	t.Run("impide un arranque inseguro", func(t *testing.T) {
+		id, tarea := nuevaTarea()
+		base := memoria.Nuevo()
+		if err := base.Set(context.Background(), "lock:instance:110:operation", "residual", time.Minute); err != nil {
+			t.Fatal(err)
+		}
+		locks := &lockStoreConFallas{KVStore: base, fallasRestantes: 3, errorDel: errors.New("redis no disponible")}
+		repo := &tareasEnMemoria{tareas: map[uuid.UUID]*domain.TareaAsincrona{id: tarea}}
+		pool := services.NewSeguimientoTareas(&proxmoxTareas{exitStatus: "OK"}, repo, services.NewAuditService(nil), services.ConfigSeguimiento{LockStore: locks})
+
+		err := pool.RecuperarYReconciliarAlArranque(context.Background())
+		if !errors.Is(err, services.ErrLockResidualNoLiberado) {
+			t.Fatalf("se esperaba un error crítico de lock residual, se obtuvo %v", err)
+		}
+		if estado := repo.estado(id); estado != ports.TareaCompleted {
+			t.Fatalf("el cierre confirmado en PostgreSQL no debe revertirse: %s", estado)
+		}
+		if _, err := base.Get(context.Background(), "lock:instance:110:operation"); err != nil {
+			t.Fatalf("el escenario de error debía conservar el lock: %v", err)
+		}
+	})
+
+	t.Run("clave inexistente ya está liberada", func(t *testing.T) {
+		id, tarea := nuevaTarea()
+		locks := &lockStoreConFallas{KVStore: memoria.Nuevo(), fallasRestantes: 1, errorDel: ports.ErrClaveNoEncontrada}
+		repo := &tareasEnMemoria{tareas: map[uuid.UUID]*domain.TareaAsincrona{id: tarea}}
+		pool := services.NewSeguimientoTareas(&proxmoxTareas{exitStatus: "OK"}, repo, services.NewAuditService(nil), services.ConfigSeguimiento{LockStore: locks})
+
+		if err := pool.RecuperarYReconciliarAlArranque(context.Background()); err != nil {
+			t.Fatalf("ErrClaveNoEncontrada debe tratarse como éxito: %v", err)
+		}
+		if locks.llamadas() != 1 {
+			t.Fatalf("una clave inexistente no debe reintentarse: %d llamadas", locks.llamadas())
+		}
+	})
 }
 
 // publicadorFalso captura los eventos publicados.

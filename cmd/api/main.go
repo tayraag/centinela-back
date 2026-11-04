@@ -175,6 +175,7 @@ func main() {
 		services.ConfigSeguimiento{
 			Workers:     enteroDeEntorno("UPID_WORKERS", 8),
 			UpidTimeout: duracionDeEntorno("UPID_TIMEOUT", 3*time.Minute),
+			LockStore:   kvStore,
 			OnTaskFinished: func(ctx context.Context, tarea *domain.TareaAsincrona, recursoTipo string, r services.ResultadoTarea) {
 				if tarea.Metadatos != nil {
 					var meta map[string]any
@@ -200,6 +201,12 @@ func main() {
 				}
 			},
 		})
+	if err := seguimientoTareas.RecuperarYReconciliarAlArranque(ctx); err != nil {
+		if errors.Is(err, services.ErrLockResidualNoLiberado) {
+			log.Fatalf("❌ [TAREAS] no es seguro abrir la API con un lock residual: %v", err)
+		}
+		log.Printf("⚠️  [TAREAS] reconciliación inicial incompleta; las tareas pendientes continuarán en segundo plano: %v", err)
+	}
 	seguimientoTareas.Iniciar(ctx)
 	instanceHandler := httpHandlers.NewInstanceHandlerConNodo(proxmoxClient, userRepo, seguimientoTareas, tareaRepo, auditService,
 		services.NewInventarioService(proxmoxClient), refsInstancia, topologia, nodoNombre, aprovisionadorSeguro(kvStore, cuotasService))

@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"strconv"
@@ -24,6 +25,15 @@ const ventanaRecuperacion = 3 * time.Minute
 // timeoutConsulta acota cada consulta a Proxmox. La consulta usa su propio
 // contexto: el apagado de la API no la corta a la mitad.
 const timeoutConsulta = 15 * time.Second
+
+const (
+	intentosLiberarLockAlArranque = 3
+	esperaLiberarLockAlArranque   = 100 * time.Millisecond
+)
+
+// ErrLockResidualNoLiberado impide abrir el listener: la tarea ya fue cerrada
+// en PostgreSQL, pero Redis todavía podría responder INSTANCE_BUSY.
+var ErrLockResidualNoLiberado = errors.New("no se pudo liberar un lock residual al arrancar")
 
 // nombresAccion traduce la acción al texto del mensaje del evento.
 var nombresAccion = map[string]string{"start": "encendido", "stop": "apagado", "shutdown": "apagado ordenado", "reboot": "reinicio", "resume": "reanudación", "delete": "eliminación", ports.AccionTareaSnapshot: "creación del snapshot",
@@ -113,12 +123,13 @@ func nulo(s string) any {
 
 // ConfigSeguimiento configura el pool de seguimiento de tareas.
 type ConfigSeguimiento struct {
-	Workers              int           // consultas simultáneas máximas a Proxmox (UPID_WORKERS, default 8)
-	Buffer               int           // capacidad de la cola (tareasChan, default 100)
-	Intervalo            time.Duration // cada cuánto se vuelve a consultar una tarea (default 1 s)
-	IntervaloReconciliar time.Duration // cada cuánto el reconciliador revisa la base (default 5 s)
-	VentanaRecuperacion  time.Duration // al arrancar, edad máxima para reanudar una tarea (default 3 min)
-	UpidTimeout          time.Duration // límite de seguimiento de tarea asíncrona (UPID_TIMEOUT, default 3m)
+	Workers              int                 // consultas simultáneas máximas a Proxmox (UPID_WORKERS, default 8)
+	Buffer               int                 // capacidad de la cola (tareasChan, default 100)
+	Intervalo            time.Duration       // cada cuánto se vuelve a consultar una tarea (default 1 s)
+	IntervaloReconciliar time.Duration       // cada cuánto el reconciliador revisa la base (default 5 s)
+	VentanaRecuperacion  time.Duration       // al arrancar, edad máxima para reanudar una tarea (default 3 min)
+	UpidTimeout          time.Duration       // límite de seguimiento de tarea asíncrona (UPID_TIMEOUT, default 3m)
+	LockStore            ports.KeyValueStore // almacén del lock lock:instance:{vmid}:operation
 	OnTaskFinished       func(ctx context.Context, tarea *domain.TareaAsincrona, recursoTipo string, r ResultadoTarea)
 }
 
@@ -231,6 +242,114 @@ func (p *PoolSeguimiento) Esperar(ctx context.Context) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+// RecuperarYReconciliarAlArranque consulta inmediatamente en Proxmox todas las
+// tareas que quedaron RUNNING de una ejecución anterior. Espera a que terminen
+// las consultas antes de retornar, para que el listener HTTP no se abra con
+// tareas ya finalizadas que todavía provocarían INSTANCE_BUSY.
+//
+// Las tareas que Proxmox confirma como terminadas se cierran con su auditoría y
+// se elimina el lock residual de la instancia. Las que siguen ejecutándose o no
+// se pudieron consultar permanecen RUNNING y las retoma Iniciar.
+func (p *PoolSeguimiento) RecuperarYReconciliarAlArranque(ctx context.Context) error {
+	pendientes, err := p.tareas.ListarEnCurso(ctx)
+	if err != nil {
+		return fmt.Errorf("listar tareas RUNNING al arrancar: %w", err)
+	}
+	if len(pendientes) == 0 {
+		return nil
+	}
+
+	log.Printf("[TAREAS] reconciliación síncrona al arrancar: %d tarea(s) RUNNING", len(pendientes))
+	turnos := make(chan struct{}, p.cfg.Workers)
+	var wg sync.WaitGroup
+	var muErrores sync.Mutex
+	errores := make([]error, 0)
+
+	for i := range pendientes {
+		tarea := pendientes[i]
+		select {
+		case turnos <- struct{}{}:
+		case <-ctx.Done():
+			muErrores.Lock()
+			errores = append(errores, ctx.Err())
+			muErrores.Unlock()
+			wg.Wait()
+			return errors.Join(errores...)
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer func() { <-turnos }()
+			if err := p.reconciliarTareaAlArranque(ctx, tarea); err != nil {
+				muErrores.Lock()
+				errores = append(errores, err)
+				muErrores.Unlock()
+			}
+		}()
+	}
+	wg.Wait()
+	return errors.Join(errores...)
+}
+
+func (p *PoolSeguimiento) reconciliarTareaAlArranque(ctx context.Context, tarea domain.TareaAsincrona) error {
+	vmid, err := strconv.Atoi(tarea.InstanciaID)
+	if err != nil {
+		return fmt.Errorf("tarea %s con instancia inválida %q: %w", tarea.ID, tarea.InstanciaID, err)
+	}
+
+	consultaCtx, cancel := context.WithTimeout(ctx, timeoutConsulta)
+	resultado, err := p.proxmox.EstadoTarea(consultaCtx, tarea.UpidProxmox)
+	cancel()
+	if err != nil {
+		return fmt.Errorf("consultar tarea %s al arrancar: %w", tarea.ID, err)
+	}
+	if !resultado.Terminada {
+		return nil
+	}
+
+	seguimiento := &TareaSeguimiento{Tarea: tarea, Vmid: vmid}
+	recursoCtx, cancelarRecurso := context.WithTimeout(ctx, timeoutConsulta)
+	p.resolverRecurso(recursoCtx, seguimiento)
+	cancelarRecurso()
+	if err := p.finalizar(seguimiento, clasificarExitStatus(tarea.Accion, resultado.ExitStatus)); err != nil {
+		return fmt.Errorf("cerrar tarea %s al arrancar: %w", tarea.ID, err)
+	}
+
+	if p.cfg.LockStore == nil {
+		return fmt.Errorf("%w para la instancia %d: almacén de locks no configurado", ErrLockResidualNoLiberado, vmid)
+	}
+	if err := p.eliminarLockResidualAlArranque(ctx, vmid); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (p *PoolSeguimiento) eliminarLockResidualAlArranque(ctx context.Context, vmid int) error {
+	clave := fmt.Sprintf(formatoLockInstancia, vmid)
+	var ultimo error
+	for intento := 1; intento <= intentosLiberarLockAlArranque; intento++ {
+		lockCtx, cancelar := context.WithTimeout(ctx, 2*time.Second)
+		ultimo = p.cfg.LockStore.Del(lockCtx, clave)
+		cancelar()
+		if ultimo == nil || errors.Is(ultimo, ports.ErrClaveNoEncontrada) {
+			return nil
+		}
+		if intento == intentosLiberarLockAlArranque {
+			break
+		}
+		temporizador := time.NewTimer(esperaLiberarLockAlArranque)
+		select {
+		case <-temporizador.C:
+		case <-ctx.Done():
+			if !temporizador.Stop() {
+				<-temporizador.C
+			}
+			return fmt.Errorf("%w para la instancia %d: %v", ErrLockResidualNoLiberado, vmid, ctx.Err())
+		}
+	}
+	return fmt.Errorf("%w para la instancia %d después de %d intentos: %v", ErrLockResidualNoLiberado, vmid, intentosLiberarLockAlArranque, ultimo)
 }
 
 // Seguir registra la tarea en tareas_asincronas (RUNNING) y la encola sin
@@ -362,12 +481,12 @@ func (p *PoolSeguimiento) verificarUnaVez(t *TareaSeguimiento) {
 	resultado, err := p.proxmox.EstadoTarea(ctx, t.Tarea.UpidProxmox)
 	switch {
 	case err == nil && resultado.Terminada:
-		p.finalizar(t, clasificarExitStatus(t.Tarea.Accion, resultado.ExitStatus))
+		_ = p.finalizar(t, clasificarExitStatus(t.Tarea.Accion, resultado.ExitStatus))
 	default:
 		if err != nil {
 			log.Printf("[TAREAS] la tarea %s superó %s y Proxmox no respondió: %v", t.Tarea.ID, p.cfg.VentanaRecuperacion, err)
 		}
-		p.finalizar(t, vencida(p.cfg.VentanaRecuperacion))
+		_ = p.finalizar(t, vencida(p.cfg.VentanaRecuperacion))
 	}
 }
 
@@ -412,7 +531,7 @@ func (p *PoolSeguimiento) consultar(t *TareaSeguimiento) {
 	resultado, err := p.proxmox.EstadoTarea(ctx, t.Tarea.UpidProxmox)
 	switch {
 	case err == nil && resultado.Terminada:
-		p.finalizar(t, clasificarExitStatus(t.Tarea.Accion, resultado.ExitStatus))
+		_ = p.finalizar(t, clasificarExitStatus(t.Tarea.Accion, resultado.ExitStatus))
 		return
 	case err != nil:
 		t.intentosFallo++
@@ -422,7 +541,7 @@ func (p *PoolSeguimiento) consultar(t *TareaSeguimiento) {
 	}
 
 	if p.ahora().Sub(t.Tarea.FechaCreacion) > p.cfg.UpidTimeout {
-		p.finalizar(t, vencida(p.cfg.UpidTimeout))
+		_ = p.finalizar(t, vencida(p.cfg.UpidTimeout))
 		return
 	}
 
@@ -446,7 +565,7 @@ func (p *PoolSeguimiento) consultar(t *TareaSeguimiento) {
 }
 
 // finalizar guarda el estado final, audita y publica TASK_FINISHED.
-func (p *PoolSeguimiento) finalizar(t *TareaSeguimiento, r ResultadoTarea) {
+func (p *PoolSeguimiento) finalizar(t *TareaSeguimiento, r ResultadoTarea) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	defer func() {
@@ -460,7 +579,7 @@ func (p *PoolSeguimiento) finalizar(t *TareaSeguimiento, r ResultadoTarea) {
 	afectados, err := p.tareas.ActualizarEstado(ctx, t.Tarea.ID, r.Estado, metadatos, auditoria)
 	if err != nil {
 		log.Printf("[TAREAS] %v", err)
-		return // sigue RUNNING: el reconciliador reintenta el cierre y su auditoría
+		return err // sigue RUNNING: el reconciliador reintenta el cierre y su auditoría
 	}
 	r.UsuariosAfectados = afectados
 
@@ -473,6 +592,7 @@ func (p *PoolSeguimiento) finalizar(t *TareaSeguimiento, r ResultadoTarea) {
 	if p.cfg.OnTaskFinished != nil {
 		p.cfg.OnTaskFinished(ctx, &t.Tarea, t.recursoTipo, r)
 	}
+	return nil
 }
 
 // reconciliador encola las tareas RUNNING de la base que no están en el pool:
