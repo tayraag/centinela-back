@@ -348,15 +348,13 @@ para estas rutas. El borrado usa `DELETE` y responde igual, `202 Accepted`.
 | `:instanceRef/stop`           | POST   | ADMIN/OPERATOR | operativo   | `202`     |
 | `:instanceRef/status/:action` | POST   | ADMIN/OPERATOR | operativo   | `202`     |
 | `:instanceRef`                | DELETE | solo ADMIN     | operativo   | `202`     |
-| `:instanceRef/pause`          | POST   | ADMIN/OPERATOR | planificada | `404`     |
 
 Un OPERATOR necesita `FULL_ACCESS` sobre la instancia para las acciones de
 energía.
 
-**Detalle:** las tres rutas operativas son `POST /api/instances/:instanceRef/start`,
+**Detalle:** las tres rutas de energía son `POST /api/instances/:instanceRef/start`,
 `POST /api/instances/:instanceRef/stop` y `POST /api/instances/:instanceRef/status/:action`;
-las tres responden `202` con `AccionAceptadaResponse`. La cuarta,
-`POST /api/instances/:instanceRef/pause`, hoy responde `404 NOT_FOUND`.
+las tres responden `202` con `AccionAceptadaResponse`.
 
 El cuerpo `202` es el esquema `http.AccionAceptadaResponse`:
 
@@ -398,14 +396,13 @@ El borrado es asíncrono: mientras dura, la instancia aparece en el inventario c
 `accion: "DELETE"`; si fue `COMPLETED`, la instancia ya no figura en
 `GET /api/instances`.
 
-### Pause: diferencia con lo solicitado
+### Acción `pause`
 
 La acción `Pause` **no está implementada**. No existe la ruta
 `POST /api/instances/:instanceRef/pause`, no está en la lista de acciones válidas del
 endpoint genérico y el adaptador de Proxmox no expone una operación de pausa.
-Hoy esa ruta responde `404 NOT_FOUND` y `pause` en el endpoint genérico responde
-`400 INVALID_ACTION`. El contrato queda documentado en Swagger con
-`x-implementation-status: planned`; el frontend no debe ofrecer la acción.
+Por eso Swagger no publica esa ruta. `pause` en el endpoint genérico responde
+`400 INVALID_ACTION` y el frontend no debe ofrecer la acción.
 
 ## Snapshots — operativo (RF-06)
 
@@ -586,7 +583,7 @@ contrato documenta el comportamiento real, no el solicitado.
 | Solicitado                     | Observado                         |
 |--------------------------------|-----------------------------------|
 | Campo `error` de tipo `string` | No existe en el sobre real        |
-| Acción `Pause`                 | No implementada; `404 NOT_FOUND`  |
+| Acción `Pause`                 | No implementada ni documentada como ruta |
 | `TOKEN_MISSING` y afines       | El servidor emite `MISSING_TOKEN` |
 | UPID visible en el frontend   | Se reemplaza por `tareaId` opaco  |
 
@@ -655,7 +652,7 @@ tiene cuatro formas:
 
 **Detalle:** el frame de evento son dos líneas: `id: <evento.id>` y
 `data: <http.SSEEventPayload en JSON>`. El `id` permite deduplicar. El frame de
-corte lleva `data: {"motivo": "..."}` con el esquema `http.SSECierrePayload`.
+corte lleva `data: {"motivo": "..."}`.
 
 El `event: cierre` se emite cuando el backend corta el stream, con estos motivos:
 
@@ -729,12 +726,10 @@ aplican valen `null`, nunca se omiten:
   minutos y Proxmox no la había terminado. `exitstatus` es `null` y `error` lo
   explica.
 
-Sus dos formas concretas son:
-
-- `http.TaskSuccess`: `estado` `COMPLETED`, `exitstatus` `OK`, `motivo` y
-  `error` en `null`. Severidad `INFO`.
-- `http.TaskFailed`: `estado` `FAILED`, `motivo` `PROXMOX_ERROR` o `TIMEOUT` y
-  `error` con el detalle. Severidad `WARNING`.
+Cuando termina bien, `estado` es `COMPLETED`, `exitstatus` es `OK`, `motivo` y
+`error` son `null`, y la severidad es `INFO`. Cuando falla, `estado` es `FAILED`,
+`motivo` vale `PROXMOX_ERROR` o `TIMEOUT`, `error` lleva el detalle y la severidad
+es `WARNING`.
 
 ```json
 {
@@ -763,21 +758,6 @@ Sus dos formas concretas son:
 { "tareaId": "3f2504e0-4f89-11d3-9a0c-0305e82c3304", "accion": "START", "estado": "FAILED", "exitstatus": null, "motivo": "TIMEOUT", "error": "Excedido el límite máximo de ejecución de 3 minutos" }
 ```
 
-### Entrada de solo documentación en Swagger
-
-OpenAPI 2.0 no tiene forma nativa de declarar un stream SSE ni un `oneOf`, y
-`swag` solo emite los esquemas que alcanza desde una anotación de ruta. Por eso
-Swagger incluye la entrada `/events/contrato-sse`, marcada con
-`x-implementation-status: documentation-only`: **no es una ruta invocable**. Es el
-índice `http.SSETiposPayload`, que publica `http.TaskSuccess`,
-`http.TaskFailed` y `http.SSECierrePayload`.
-
-La ruta es deliberadamente distinta de `GET /api/events` porque `swag` sobrescribe
-la operación cuando dos handlers declaran el mismo path y método: duplicar
-`/api/events` borraría la documentación real del stream. El frontend debe consumir
-el stream desde `GET /api/events` y usar `/events/contrato-sse` solo como
-referencia de tipos.
-
 ## Alcance de esta etapa
 
 Esta etapa fija las lecturas de estado e inventario, las acciones aceptadas
@@ -792,7 +772,7 @@ Contrato implementado: `GET /api/admin/audit` y `/api/admin/audit/export`, solo 
 
 El listado devuelve `items,total,page,pagina,limit,totalPages`; los items agregan `usuarioNombre,recursoTipo,recursoId,detalle` a los nombres anteriores. Los detalles son objetos JSON. Exportar transmite mediante cursor SQL sin paginación ni límite fijo de filas. Usa `format=csv|json` (CSV predeterminado) y conserva `formato` como alias. CSV tiene ocho columnas RF-08 y BOM UTF-8; JSON es un array incremental con campos anteriores y aliases RF-08. El nombre del archivo es `auditoria_centinela_YYYYMMDD_HHMM.csv/json`. Un formato inválido devuelve 400. Buffers acotados, Flush periódico, cancelación por contexto y logger sin captura del archivo mantienen la memoria independiente de la cantidad de filas. Sin `desde` se usa el trimestre actual UTC, o el año anterior a `hasta` si ese límite es histórico.
 
-Acciones nuevas: `SNAPSHOT_CREATE`, `SNAPSHOT_ROLLBACK`, `SNAPSHOT_DELETE` y `CONFIG_UPDATED` (antes CONFIG_INSTANCE). `ALERT_TRIGGERED` ya se registra automáticamente. Los códigos de tareas y eventos no cambian. Las alertas nuevas sin usuario se atribuyen mediante `auditoria.organizacion_id` a las organizaciones autorizadas por la política existente de correo. Cada organización recibe su propia fila con destinatarios separados. El listado y la exportación las incluyen con `usuarioId=null` y nombre `[sistema]`; las históricas sin alcance siguen excluidas. La migración de arranque agrega la columna y el índice de organización/fecha.
+Acciones nuevas: `SNAPSHOT_CREATE`, `SNAPSHOT_ROLLBACK`, `SNAPSHOT_DELETE` y `CONFIG_UPDATED` (antes CONFIG_INSTANCE). `ALERT_TRIGGERED` ya se registra automáticamente. Los códigos de tareas y eventos no cambian. Las alertas nuevas sin usuario se atribuyen mediante `auditoria.organizacion_id` a las organizaciones autorizadas por la política existente de correo. Cada organización recibe su propia fila con destinatarios separados. El listado y la exportación también incluyen los eventos globales con `organizacion_id IS NULL`, `usuarioId=null` y nombre `[sistema]`. La migración de arranque agrega la columna y el índice de organización/fecha.
 
 ### Vocabulario cerrado de `accion` y `resultado`
 

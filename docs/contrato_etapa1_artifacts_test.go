@@ -16,11 +16,7 @@ import (
 var definicionesSSE = []string{
 	"http.SSEEventPayload",
 	"http.SSEDetallesEvento",
-	"http.TaskSuccess",
-	"http.TaskFailed",
 	"http.SSETicketResponse",
-	"http.SSECierrePayload",
-	"http.SSETiposPayload",
 }
 
 // TestContratoEtapa1ArtefactosJSONYAML exige que swagger.yaml diga lo mismo que

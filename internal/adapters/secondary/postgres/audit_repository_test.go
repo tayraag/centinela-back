@@ -240,9 +240,9 @@ func TestAuditRepository_ExcluirAcciones(t *testing.T) {
 	}
 }
 
-// Verifica alcance persistido, separación de destinatarios y fail-closed
-// para registros históricos sin actor ni organización.
-func TestAuditoriaAlertasSistemaAisladasPorOrganizacion(t *testing.T) {
+// Verifica alcance persistido, separación de destinatarios y visibilidad de
+// los eventos globales de sistema sin actor ni organización.
+func TestAuditoriaAlertasSistemaIncluyeEventosGlobales(t *testing.T) {
 	db := conectarDBTest(t)
 	err := db.Connection(func(conn *gorm.DB) error {
 		tx := conn.Begin()
@@ -299,7 +299,7 @@ func TestAuditoriaAlertasSistemaAisladasPorOrganizacion(t *testing.T) {
 				return err
 			}
 		}
-		if err := tx.Exec("INSERT INTO auditoria (accion,resultado,fecha_hora) VALUES ('ALERT_TRIGGERED','SUCCESS',now())").Error; err != nil {
+		if err := tx.Exec(`INSERT INTO auditoria (accion,resultado,detalles,fecha_hora) VALUES ('ALERT_TRIGGERED','SUCCESS','{"global":true}',now())`).Error; err != nil {
 			return err
 		}
 		// Cambiar permisos actuales no debe borrar la atribución histórica.
@@ -307,7 +307,7 @@ func TestAuditoriaAlertasSistemaAisladasPorOrganizacion(t *testing.T) {
 			return err
 		}
 		for i, org := range orgs {
-			esperadas := []int{6, 5, 4, 0, 0}[i]
+			esperadas := []int{7, 6, 5, 1, 1}[i]
 			pagina, err := repo.Listar(context.Background(), org, ports.FiltrosAuditoria{}, ports.OpcionesAuditoria{Pagina: 1, TamanoPag: 25, Direccion: "desc"})
 			if err != nil {
 				return err
@@ -322,12 +322,17 @@ func TestAuditoriaAlertasSistemaAisladasPorOrganizacion(t *testing.T) {
 			if len(rows) != esperadas {
 				return fmt.Errorf("exportación org %d: %d", i, len(rows))
 			}
+			globalEncontrada := false
 			for _, row := range rows {
 				if row.UsuarioID != nil {
 					continue
 				}
 				if row.NombreUsuario != "[sistema]" {
 					return fmt.Errorf("actor inventado: %s", row.NombreUsuario)
+				}
+				if bytes.Contains(row.Detalles, []byte(`"global": true`)) || bytes.Contains(row.Detalles, []byte(`"global":true`)) {
+					globalEncontrada = true
+					continue
 				}
 				if row.Accion == ports.AccionAlertaDisparada {
 					var d struct{ Destinatarios []string }
@@ -338,6 +343,9 @@ func TestAuditoriaAlertasSistemaAisladasPorOrganizacion(t *testing.T) {
 						return fmt.Errorf("destinatarios ajenos para org %d: %v", i, d.Destinatarios)
 					}
 				}
+			}
+			if !globalEncontrada {
+				return fmt.Errorf("org %d: no recibió el evento global de sistema", i)
 			}
 			vacia, err := repo.Listar(context.Background(), org, ports.FiltrosAuditoria{Accion: "NO_EXISTE"}, ports.OpcionesAuditoria{Pagina: 1, TamanoPag: 25})
 			if err != nil {

@@ -264,7 +264,7 @@ históricos sin actor ni alcance permanecen excluidos; no se exponen globalmente
 Los esquemas y rutas del canal SSE se encuentran completamente documentados y disponibles en la Swagger UI (`/swagger/index.html`):
 - `POST /api/events/ticket`: Emisión de ticket de un solo uso (30 s) protegido por JWT.
 - `GET /api/events`: Stream SSE autenticado por ticket query param, emitiendo `http.SSEEventPayload` con el sobre del evento.
-- Modelos `http.TaskSuccess` y `http.TaskFailed` representando la forma concreta del campo `detalles` para el evento `TASK_FINISHED` (con sus 6 claves garantizadas).
+- El esquema `http.SSEDetallesEvento` documenta las claves posibles del campo `detalles`; la sección anterior fija las seis claves de `TASK_FINISHED`.
 
 
 ### Paradas externas y alertas de caída

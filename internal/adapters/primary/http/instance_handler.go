@@ -883,38 +883,12 @@ var accionesValidas = map[string]bool{
 	"resume":   true,
 }
 
-// PausarInstancia documenta el contrato objetivo de la acción Pause. NO OPERATIVO:
-// la ruta NO está registrada en el router y hoy responde 404 NOT_FOUND. Se
-// documenta junto a las acciones reales para que el frontend no la confunda con
-// shutdown ni con reboot. Las anotaciones cuelgan de esta función (no del cuerpo
-// de CambiarEstado) porque swag solo genera operaciones desde declaraciones.
-//
-// @Summary      Pausar instancia (planificado)
-// @Description  PLANIFICADO; NO OPERATIVO. Contrato objetivo para pausar una VM o contenedor en Proxmox VE. La ruta no está registrada y actualmente responde 404 NOT_FOUND; pause tampoco es una acción válida en POST /instances/{instanceRef}/status/{action} (responde 400 INVALID_ACTION).
-// @Tags         Instancias Proxmox
-// @Produce      json
-// @Security     BearerAuth
-// @Param        instanceRef path string true "Referencia pública de la instancia (inst_...)"
-// @Success      202 {object} AccionAceptadaResponse "Acción aceptada: tareaId público para correlacionar TASK_FINISHED"
-// @Failure      401 {object} ErrorResponse "MISSING_TOKEN | INVALID_TOKEN | TOKEN_REVOKED"
-// @Failure      403 {object} ErrorResponse "WRONG_TOKEN_TYPE | 2FA_REQUIRED | PASSWORD_CHANGE_REQUIRED | NO_ROLE | NO_USER | INVALID_USER_ID | INSTANCE_ACCESS_DENIED | INSTANCE_PROTECTED"
-// @Failure      404 {object} ErrorResponse "RESOURCE_NOT_FOUND"
-// @Failure      409 {object} ErrorResponse "INSTANCE_BUSY"
-// @Failure      500 {object} ErrorResponse "INTERNAL_ERROR"
-// @Failure      502 {object} ErrorResponse "PROXMOX_UNAVAILABLE"
-// @Failure      504 {object} ErrorResponse "PROXMOX_TIMEOUT"
-// @x-implementation-status "planned"
-// @Router       /instances/{instanceRef}/pause [post]
-func (h *InstanceHandler) PausarInstancia(c *gin.Context) {
-	SendError(c, http.StatusNotFound, "NOT_FOUND", "La acción pause no está implementada.")
-}
-
 // CambiarEstado ejecuta una acción de ciclo de vida (start/stop/shutdown/reboot/resume) sobre
 // una instancia. Complementa los endpoints /start y /stop (que se mantienen
 // por retrocompatibilidad) y agrega soporte para reboot y shutdown.
 //
 // @Summary      Cambiar estado de instancia
-// @Description  OPERATIVO. Ejecuta una acción de ciclo de vida (start, stop, shutdown, reboot, resume) sobre una VM o contenedor. El endpoint genérico complementa a /start y /stop manteniendo retrocompatibilidad. La acción Pause NO está implementada: use POST /instances/{instanceRef}/pause, que hoy responde 404 NOT_FOUND.
+// @Description  OPERATIVO. Ejecuta una acción de ciclo de vida (start, stop, shutdown, reboot, resume) sobre una VM o contenedor. El endpoint genérico complementa a /start y /stop manteniendo retrocompatibilidad. `pause` no es una acción válida y responde 400 INVALID_ACTION.
 // @Tags         Instancias Proxmox
 // @Produce      json
 // @Security     BearerAuth

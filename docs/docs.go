@@ -254,7 +254,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Solo ADMIN; OPERATOR recibe 403. Devuelve eventos de la organización, incluidos ALERT_TRIGGERED/ALERT_RESOLVED sin actor con alcance persistido. El actor de sistema aparece como [sistema], con usuarioId null. Las alertas históricas sin alcance siguen excluidas.\nSin desde se consulta desde el inicio del trimestre actual UTC; si hasta es anterior, se toma un año antes de hasta. hasta con fecha sola incluye todo ese día; RFC3339 conserva el instante exacto. Los filtros inválidos devuelven 400 INVALID_QUERY.\nrecursoId de VM/LXC e instanciaId usan la referencia pública inst_... del inventario, nunca el VMID. Una referencia inválida para VM/LXC devuelve vacío. Se conservan aliases pagina/tamano y los campos anteriores de cada item; page/limit prevalecen sobre sus aliases.",
+                "description": "Solo ADMIN; OPERATOR recibe 403. Devuelve eventos de la organización y todos los eventos globales de sistema (organizacion_id y usuario_id nulos), incluidos ALERT_TRIGGERED/ALERT_RESOLVED. El actor de sistema aparece como [sistema], con usuarioId null.\nSin desde se consulta desde el inicio del trimestre actual UTC; si hasta es anterior, se toma un año antes de hasta. hasta con fecha sola incluye todo ese día; RFC3339 conserva el instante exacto. Los filtros inválidos devuelven 400 INVALID_QUERY.\nrecursoId de VM/LXC e instanciaId usan la referencia pública inst_... del inventario, nunca el VMID. Una referencia inválida para VM/LXC devuelve vacío. Se conservan aliases pagina/tamano y los campos anteriores de cada item; page/limit prevalecen sobre sus aliases.",
                 "produces": [
                     "application/json"
                 ],
@@ -449,7 +449,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Solo ADMIN; OPERATOR recibe 403. Transmite el reporte sin límite fijo de filas con un cursor SQL, buffer de 32 KiB y Flush periódico cada 500 registros; no materializa el dataset ni el archivo completo. La cancelación del cliente cierra el cursor. Mantiene los filtros, el rango temporal y el alcance organizacional del listado; las alertas históricas sin alcance quedan fuera.\nformat=csv (predeterminado) o json; formato es alias y format prevalece. Otro valor devuelve 400 INVALID_QUERY. Archivo auditoria_centinela_YYYYMMDD_HHMM.csv/json. CSV UTF-8 con BOM y columnas id,fecha_hora,usuario_id,accion,recurso_tipo,recurso_id,resultado,detalle. JSON es un array incremental con los campos públicos y sus aliases RF-08. Una falla después de iniciar la descarga interrumpe la conexión; se debe descartar el archivo parcial.",
+                "description": "Solo ADMIN; OPERATOR recibe 403. Transmite el reporte sin límite fijo de filas con un cursor SQL, buffer de 32 KiB y Flush periódico cada 500 registros; no materializa el dataset ni el archivo completo. La cancelación del cliente cierra el cursor. Mantiene los filtros y el rango temporal del listado, e incluye todos los eventos globales de sistema sin organización.\nformat=csv (predeterminado) o json; formato es alias y format prevalece. Otro valor devuelve 400 INVALID_QUERY. Archivo auditoria_centinela_YYYYMMDD_HHMM.csv/json. CSV UTF-8 con BOM y columnas id,fecha_hora,usuario_id,accion,recurso_tipo,recurso_id,resultado,detalle. JSON es un array incremental con los campos públicos y sus aliases RF-08. Una falla después de iniciar la descarga interrumpe la conexión; se debe descartar el archivo parcial.",
                 "produces": [
                     "text/csv",
                     "application/json"
@@ -1731,27 +1731,6 @@ const docTemplate = `{
                 }
             }
         },
-        "/events/contrato-sse": {
-            "get": {
-                "description": "Índice de los esquemas que el stream ` + "`" + `GET /api/events` + "`" + ` puede emitir: ` + "`" + `http.TaskSuccess` + "`" + ` (evento ` + "`" + `TASK_FINISHED` + "`" + ` con ` + "`" + `estado` + "`" + ` ` + "`" + `COMPLETED` + "`" + `), ` + "`" + `http.TaskFailed` + "`" + ` (el mismo evento con ` + "`" + `estado` + "`" + ` ` + "`" + `FAILED` + "`" + `, ` + "`" + `motivo` + "`" + ` PROXMOX_ERROR o TIMEOUT y ` + "`" + `error` + "`" + `) y ` + "`" + `http.SSECierrePayload` + "`" + ` (el cuerpo del frame ` + "`" + `event: cierre` + "`" + `). Este es el ` + "`" + `detalles` + "`" + ` de los eventos, no el sobre completo, que es ` + "`" + `http.SSEEventPayload` + "`" + `. No es una ruta del servidor y no se puede invocar: el stream real y su framing se documentan en ` + "`" + `GET /api/events` + "`" + `.",
-                "produces": [
-                    "text/event-stream"
-                ],
-                "tags": [
-                    "Eventos en tiempo real"
-                ],
-                "summary": "Formas concretas del payload del stream SSE (solo documentación)",
-                "responses": {
-                    "200": {
-                        "description": "índice de las formas concretas del stream",
-                        "schema": {
-                            "$ref": "#/definitions/http.SSETiposPayload"
-                        }
-                    }
-                },
-                "x-implementation-status": "documentation-only"
-            }
-        },
         "/events/ticket": {
             "post": {
                 "security": [
@@ -2269,83 +2248,6 @@ const docTemplate = `{
                 }
             }
         },
-        "/instances/{instanceRef}/pause": {
-            "post": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "PLANIFICADO; NO OPERATIVO. Contrato objetivo para pausar una VM o contenedor en Proxmox VE. La ruta no está registrada y actualmente responde 404 NOT_FOUND; pause tampoco es una acción válida en POST /instances/{instanceRef}/status/{action} (responde 400 INVALID_ACTION).",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Instancias Proxmox"
-                ],
-                "summary": "Pausar instancia (planificado)",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Referencia pública de la instancia (inst_...)",
-                        "name": "instanceRef",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "202": {
-                        "description": "Acción aceptada: tareaId público para correlacionar TASK_FINISHED",
-                        "schema": {
-                            "$ref": "#/definitions/http.AccionAceptadaResponse"
-                        }
-                    },
-                    "401": {
-                        "description": "MISSING_TOKEN | INVALID_TOKEN | TOKEN_REVOKED",
-                        "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
-                        }
-                    },
-                    "403": {
-                        "description": "WRONG_TOKEN_TYPE | 2FA_REQUIRED | PASSWORD_CHANGE_REQUIRED | NO_ROLE | NO_USER | INVALID_USER_ID | INSTANCE_ACCESS_DENIED | INSTANCE_PROTECTED",
-                        "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
-                        }
-                    },
-                    "404": {
-                        "description": "RESOURCE_NOT_FOUND",
-                        "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
-                        }
-                    },
-                    "409": {
-                        "description": "INSTANCE_BUSY",
-                        "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
-                        }
-                    },
-                    "500": {
-                        "description": "INTERNAL_ERROR",
-                        "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
-                        }
-                    },
-                    "502": {
-                        "description": "PROXMOX_UNAVAILABLE",
-                        "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
-                        }
-                    },
-                    "504": {
-                        "description": "PROXMOX_TIMEOUT",
-                        "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
-                        }
-                    }
-                },
-                "x-implementation-status": "planned"
-            }
-        },
         "/instances/{instanceRef}/snapshots": {
             "get": {
                 "security": [
@@ -2796,7 +2698,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "OPERATIVO. Ejecuta una acción de ciclo de vida (start, stop, shutdown, reboot, resume) sobre una VM o contenedor. El endpoint genérico complementa a /start y /stop manteniendo retrocompatibilidad. La acción Pause NO está implementada: use POST /instances/{instanceRef}/pause, que hoy responde 404 NOT_FOUND.",
+                "description": "OPERATIVO. Ejecuta una acción de ciclo de vida (start, stop, shutdown, reboot, resume) sobre una VM o contenedor. El endpoint genérico complementa a /start y /stop manteniendo retrocompatibilidad. ` + "`" + `pause` + "`" + ` no es una acción válida y responde 400 INVALID_ACTION.",
                 "produces": [
                     "application/json"
                 ],
@@ -4092,23 +3994,6 @@ const docTemplate = `{
                 }
             }
         },
-        "http.SSECierrePayload": {
-            "type": "object",
-            "required": [
-                "motivo"
-            ],
-            "properties": {
-                "motivo": {
-                    "type": "string",
-                    "enum": [
-                        "LOGOUT",
-                        "SESSIONS_REVOKED",
-                        "USER_INACTIVE"
-                    ],
-                    "example": "LOGOUT"
-                }
-            }
-        },
         "http.SSEDetallesEvento": {
             "type": "object",
             "properties": {
@@ -4286,25 +4171,6 @@ const docTemplate = `{
                 }
             }
         },
-        "http.SSETiposPayload": {
-            "type": "object",
-            "required": [
-                "cierre",
-                "taskFailed",
-                "taskSuccess"
-            ],
-            "properties": {
-                "cierre": {
-                    "$ref": "#/definitions/http.SSECierrePayload"
-                },
-                "taskFailed": {
-                    "$ref": "#/definitions/http.TaskFailed"
-                },
-                "taskSuccess": {
-                    "$ref": "#/definitions/http.TaskSuccess"
-                }
-            }
-        },
         "http.SnapshotAceptadoResponse": {
             "type": "object",
             "required": [
@@ -4391,117 +4257,6 @@ const docTemplate = `{
                 "type": {
                     "type": "string",
                     "example": "lvmthin"
-                }
-            }
-        },
-        "http.TaskFailed": {
-            "type": "object",
-            "required": [
-                "accion",
-                "error",
-                "estado",
-                "exitstatus",
-                "motivo",
-                "tareaId"
-            ],
-            "properties": {
-                "accion": {
-                    "type": "string",
-                    "enum": [
-                        "START",
-                        "STOP",
-                        "SHUTDOWN",
-                        "REBOOT",
-                        "DELETE",
-                        "CREATE",
-                        "SNAPSHOT",
-                        "ROLLBACK_SNAPSHOT",
-                        "DELETE_SNAPSHOT"
-                    ],
-                    "example": "STOP"
-                },
-                "error": {
-                    "type": "string",
-                    "x-nullable": true,
-                    "example": "CT 201 not running"
-                },
-                "estado": {
-                    "type": "string",
-                    "enum": [
-                        "FAILED"
-                    ],
-                    "example": "FAILED"
-                },
-                "exitstatus": {
-                    "type": "string",
-                    "x-nullable": true,
-                    "example": "CT 201 not running"
-                },
-                "motivo": {
-                    "type": "string",
-                    "enum": [
-                        "PROXMOX_ERROR",
-                        "TIMEOUT"
-                    ],
-                    "example": "PROXMOX_ERROR"
-                },
-                "tareaId": {
-                    "type": "string",
-                    "example": "3f2504e0-4f89-11d3-9a0c-0305e82c3301"
-                }
-            }
-        },
-        "http.TaskSuccess": {
-            "type": "object",
-            "required": [
-                "accion",
-                "error",
-                "estado",
-                "exitstatus",
-                "motivo",
-                "tareaId"
-            ],
-            "properties": {
-                "accion": {
-                    "type": "string",
-                    "enum": [
-                        "START",
-                        "STOP",
-                        "SHUTDOWN",
-                        "REBOOT",
-                        "DELETE",
-                        "CREATE",
-                        "SNAPSHOT",
-                        "ROLLBACK_SNAPSHOT",
-                        "DELETE_SNAPSHOT"
-                    ],
-                    "example": "START"
-                },
-                "error": {
-                    "type": "string",
-                    "x-nullable": true
-                },
-                "estado": {
-                    "type": "string",
-                    "enum": [
-                        "COMPLETED"
-                    ],
-                    "example": "COMPLETED"
-                },
-                "exitstatus": {
-                    "type": "string",
-                    "enum": [
-                        "OK"
-                    ],
-                    "example": "OK"
-                },
-                "motivo": {
-                    "type": "string",
-                    "x-nullable": true
-                },
-                "tareaId": {
-                    "type": "string",
-                    "example": "3f2504e0-4f89-11d3-9a0c-0305e82c3301"
                 }
             }
         },

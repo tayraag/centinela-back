@@ -56,7 +56,7 @@ type PaginaAuditoriaResponse struct {
 // ListarAuditoria devuelve el log de auditoría con filtros, paginación y ordenamiento.
 //
 // @Summary      Listar log de auditoría
-// @Description  Solo ADMIN; OPERATOR recibe 403. Devuelve eventos de la organización, incluidos ALERT_TRIGGERED/ALERT_RESOLVED sin actor con alcance persistido. El actor de sistema aparece como [sistema], con usuarioId null. Las alertas históricas sin alcance siguen excluidas.
+// @Description  Solo ADMIN; OPERATOR recibe 403. Devuelve eventos de la organización y todos los eventos globales de sistema (organizacion_id y usuario_id nulos), incluidos ALERT_TRIGGERED/ALERT_RESOLVED. El actor de sistema aparece como [sistema], con usuarioId null.
 // @Description  Sin desde se consulta desde el inicio del trimestre actual UTC; si hasta es anterior, se toma un año antes de hasta. hasta con fecha sola incluye todo ese día; RFC3339 conserva el instante exacto. Los filtros inválidos devuelven 400 INVALID_QUERY.
 // @Description  recursoId de VM/LXC e instanciaId usan la referencia pública inst_... del inventario, nunca el VMID. Una referencia inválida para VM/LXC devuelve vacío. Se conservan aliases pagina/tamano y los campos anteriores de cada item; page/limit prevalecen sobre sus aliases.
 // @Tags         Auditoría (Admin)
@@ -116,7 +116,7 @@ func (h *AuditHandler) ListarAuditoria(c *gin.Context) {
 // ExportarAuditoria transmite CSV/JSON según format (formato es alias anterior).
 //
 // @Summary      Exportar log de auditoría
-// @Description  Solo ADMIN; OPERATOR recibe 403. Transmite el reporte sin límite fijo de filas con un cursor SQL, buffer de 32 KiB y Flush periódico cada 500 registros; no materializa el dataset ni el archivo completo. La cancelación del cliente cierra el cursor. Mantiene los filtros, el rango temporal y el alcance organizacional del listado; las alertas históricas sin alcance quedan fuera.
+// @Description  Solo ADMIN; OPERATOR recibe 403. Transmite el reporte sin límite fijo de filas con un cursor SQL, buffer de 32 KiB y Flush periódico cada 500 registros; no materializa el dataset ni el archivo completo. La cancelación del cliente cierra el cursor. Mantiene los filtros y el rango temporal del listado, e incluye todos los eventos globales de sistema sin organización.
 // @Description  format=csv (predeterminado) o json; formato es alias y format prevalece. Otro valor devuelve 400 INVALID_QUERY. Archivo auditoria_centinela_YYYYMMDD_HHMM.csv/json. CSV UTF-8 con BOM y columnas id,fecha_hora,usuario_id,accion,recurso_tipo,recurso_id,resultado,detalle. JSON es un array incremental con los campos públicos y sus aliases RF-08. Una falla después de iniciar la descarga interrumpe la conexión; se debe descartar el archivo parcial.
 // @Tags         Auditoría (Admin)
 // @Produce      text/csv

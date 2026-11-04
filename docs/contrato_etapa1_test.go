@@ -256,15 +256,10 @@ func TestContratoEtapa1(t *testing.T) {
 		t.Errorf("DELETE 409 debe documentar INSTANCE_INVALID_STATE: %q", r409)
 	}
 
-	// Pause: contrato objetivo, todavía no registrado.
-	pause := objeto(t, objeto(t, paths, "/instances/{instanceRef}/pause"), "post")
-	if estado := cadena(t, pause, "x-implementation-status"); estado != "planned" {
-		t.Errorf("POST pause debe marcarse planned, obtuvo %q", estado)
+	// Pause no es una ruta del servidor y tampoco debe aparecer en Swagger.
+	if _, existe := paths["/instances/{instanceRef}/pause"]; existe {
+		t.Error("Swagger no debe publicar POST /instances/{instanceRef}/pause: no existe en el router")
 	}
-	if descripcion := cadena(t, pause, "description"); !strings.Contains(descripcion, "NO OPERATIVO") {
-		t.Errorf("POST pause no advierte su estado planificado: %q", descripcion)
-	}
-	verificarRespuesta(t, pause, "202", acceptedDef)
 
 	// ==========================================================
 	// T03 — Stream SSE: payload, ticket de un solo uso y framing
@@ -343,42 +338,6 @@ func TestContratoEtapa1(t *testing.T) {
 	verificarEnum(t, definitions, detallesDef, "estado", "RUNNING", "COMPLETED", "FAILED")
 	verificarEnum(t, definitions, detallesDef, "motivo", "PROXMOX_ERROR", "TIMEOUT")
 
-	// Las dos formas concretas de detalles en TASK_FINISHED. El servidor manda
-	// siempre las seis claves; las que no aplican van en null.
-	camposTarea := []string{"tareaId", "accion", "estado", "exitstatus", "motivo", "error"}
-	acciones := []string{"START", "STOP", "SHUTDOWN", "REBOOT", "DELETE", "CREATE", "SNAPSHOT", "ROLLBACK_SNAPSHOT", "DELETE_SNAPSHOT"}
-
-	const successDef = "http.TaskSuccess"
-	verificarObjetoRequerido(t, definitions, successDef, camposTarea)
-	verificarEnum(t, definitions, successDef, "accion", acciones...)
-	verificarEnum(t, definitions, successDef, "estado", "COMPLETED")
-	verificarEnum(t, definitions, successDef, "exitstatus", "OK")
-	for _, campo := range []string{"motivo", "error"} {
-		if nullable, ok := propiedad(t, definitions, successDef, campo)["x-nullable"].(bool); !ok || !nullable {
-			t.Errorf("%s.%s debe declarar x-nullable: true (siempre null en una tarea exitosa)", successDef, campo)
-		}
-	}
-
-	const failedDef = "http.TaskFailed"
-	verificarObjetoRequerido(t, definitions, failedDef, camposTarea)
-	verificarEnum(t, definitions, failedDef, "accion", acciones...)
-	verificarEnum(t, definitions, failedDef, "estado", "FAILED")
-	verificarEnum(t, definitions, failedDef, "motivo", ports.MotivoProxmoxError, ports.MotivoTimeout)
-	for _, campo := range []string{"exitstatus", "error"} {
-		prop := propiedad(t, definitions, failedDef, campo)
-		if tipo := cadena(t, prop, "type"); tipo != "string" {
-			t.Errorf("%s.%s debe ser string, obtuvo %q", failedDef, campo, tipo)
-		}
-		if nullable, ok := prop["x-nullable"].(bool); !ok || !nullable {
-			t.Errorf("%s.%s debe declarar x-nullable: true", failedDef, campo)
-		}
-	}
-
-	// El corte del backend viaja como evento `cierre` con su propio motivo.
-	const cierreDef = "http.SSECierrePayload"
-	verificarObjetoRequerido(t, definitions, cierreDef, []string{"motivo"})
-	verificarEnum(t, definitions, cierreDef, "motivo", "LOGOUT", "SESSIONS_REVOKED", "USER_INACTIVE")
-
 	// Pedir el ticket sí va autenticado: ahí el Bearer funciona sin problema.
 	ticket := objeto(t, objeto(t, paths, "/events/ticket"), "post")
 	verificarBearer(t, ticket)
@@ -409,25 +368,9 @@ func TestContratoEtapa1(t *testing.T) {
 		t.Error("ports.RealtimeEvent no debe seguir en definitions: el contrato SSE vive en http.*")
 	}
 
-	// Las variantes concretas no tienen respuesta propia en el stream, así
-	// que se publican desde una entrada marcada como solo documentación. No puede
-	// declarar seguridad ni quedar como una ruta invocable.
-	const refRuta = "/events/contrato-sse"
-	referencia := objeto(t, objeto(t, paths, refRuta), "get")
-	if estado := cadena(t, referencia, "x-implementation-status"); estado != "documentation-only" {
-		t.Errorf("%s debe marcarse documentation-only, obtuvo %q", refRuta, estado)
+	if _, existe := paths["/events/contrato-sse"]; existe {
+		t.Error("Swagger no debe publicar /events/contrato-sse: era un stub sin ruta real")
 	}
-	if seguridad, existe := referencia["security"]; existe {
-		t.Errorf("%s no es una ruta real: no debe declarar security, no %#v", refRuta, seguridad)
-	}
-	descripcionReferencia := cadena(t, referencia, "description")
-	if !strings.Contains(descripcionReferencia, "No es una ruta del servidor") {
-		t.Errorf("%s debe aclarar que no es una ruta del servidor: %q", refRuta, descripcionReferencia)
-	}
-	verificarRespuesta(t, referencia, "200", "http.SSETiposPayload")
-
-	// El índice arrastra las tres formas concretas para que swag las emita.
-	verificarObjetoRequerido(t, definitions, "http.SSETiposPayload", []string{"taskSuccess", "taskFailed", "cierre"})
 
 	// ==========================================================
 	// T03 — el contrato documentado tiene que coincidir con el servidor
@@ -496,14 +439,9 @@ func TestContratoEtapa1(t *testing.T) {
 	compararClaves(t, serializar(eventoOk), payloadDef, definitions, "sobre de éxito")
 	compararClaves(t, serializar(eventoFallo), payloadDef, definitions, "sobre de fallo")
 
-	compararClaves(t, serializar(eventoOk)["detalles"], successDef, definitions, "detalles de éxito")
-	compararClaves(t, serializar(eventoFallo)["detalles"], failedDef, definitions, "detalles de fallo")
-
 	// El sobre real no puede tener claves que el contrato no declare.
 	compararTodasLasClaves(t, serializar(eventoOk), payloadDef, definitions, "sobre de éxito")
 	compararTodasLasClaves(t, serializar(eventoFallo), payloadDef, definitions, "sobre de fallo")
-	compararTodasLasClaves(t, serializar(eventoOk)["detalles"], successDef, definitions, "detalles de éxito")
-	compararTodasLasClaves(t, serializar(eventoFallo)["detalles"], failedDef, definitions, "detalles de fallo")
 
 	// Una alerta del HOST (ALERT_TRIGGERED) cumple el mismo sobre, sin recursoId.
 	alerta, err := ports.NewRealtimeEvent(ports.EventoAlerta, ports.SeveridadCritical, "El uso de CPU del host superó el 90%")
@@ -537,7 +475,7 @@ func TestContratoEtapa1(t *testing.T) {
 	for _, fragmento := range []string{
 		// T01 — lecturas.
 		"GET /api/node/status", "node:status:current", "node:status:last_known", "stale",
-		"planificada", "404 NOT_FOUND", "GET /api/instances", "operativa",
+		"GET /api/instances", "operativa",
 		// D1 — el estado del nodo lo lee cualquier usuario autenticado.
 		"ADMIN u OPERATOR",
 		// activeTask es un objeto o null.
@@ -559,8 +497,7 @@ func TestContratoEtapa1(t *testing.T) {
 		"DELETE /api/instances/:instanceRef", "INSTANCE_INVALID_STATE",
 		// T03 — stream SSE, ticket y framing.
 		"GET /api/events", "POST /api/events/ticket", "http.SSEEventPayload",
-		"http.TaskSuccess", "http.TaskFailed", "http.SSEDetallesEvento",
-		"http.SSETicketResponse", "http.SSECierrePayload", "http.SSETiposPayload",
+		"http.SSEDetallesEvento", "http.SSETicketResponse",
 		"EVENTS_TICKET_MISSING", "EVENTS_TICKET_INVALID", "EVENTS_UNAVAILABLE",
 		"TOKEN_REVOKED", "LOGOUT", "SESSIONS_REVOKED", "USER_INACTIVE",
 		"un solo uso", "30 s", "text/event-stream", "TASK_FINISHED",

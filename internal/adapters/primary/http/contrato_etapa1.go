@@ -100,9 +100,8 @@ type ActiveTaskResponse struct {
 //
 // El servidor lo serializa como `map[string]any`, así que su forma depende del
 // `tipo` del evento y ninguno de sus campos puede declararse obligatorio. Se
-// publican `TASK_FINISHED` (formas concretas en TaskSuccess y TaskFailed; el
-// servidor manda siempre las seis claves y `exitstatus`, `motivo` y `error`
-// valen null cuando no aplican) y las alertas `ALERT_TRIGGERED` /
+// publican `TASK_FINISHED` (el servidor manda siempre las seis claves y
+// `exitstatus`, `motivo` y `error` valen null cuando no aplican) y las alertas `ALERT_TRIGGERED` /
 // `ALERT_RESOLVED` (`alertId`, `type`, `metrica`, `valorActual`,
 // `umbralCritico`, `duracionPersistencia` (solo en la alerta),
 // `umbralRecuperacion` (solo en la resolución) y `acknowledged`; los valores y
@@ -145,42 +144,6 @@ type SSEEventPayload struct {
 	Detalles    *SSEDetallesEvento `json:"detalles,omitempty"`
 }
 
-// TaskSuccess es la forma concreta de `detalles` en un `TASK_FINISHED` que
-// terminó en `COMPLETED`: severidad `INFO`, `exitstatus` "OK" y `motivo` y
-// `error` en null. Las seis claves viajan siempre.
-type TaskSuccess struct {
-	TareaID    string  `json:"tareaId" binding:"required" example:"3f2504e0-4f89-11d3-9a0c-0305e82c3301"`
-	Accion     string  `json:"accion" binding:"required" enums:"START,STOP,SHUTDOWN,REBOOT,DELETE,CREATE,SNAPSHOT,ROLLBACK_SNAPSHOT,DELETE_SNAPSHOT" example:"START"`
-	Estado     string  `json:"estado" binding:"required" enums:"COMPLETED" example:"COMPLETED"`
-	ExitStatus string  `json:"exitstatus" binding:"required" enums:"OK" example:"OK"`
-	Motivo     *string `json:"motivo" binding:"required" extensions:"x-nullable"`
-	Error      *string `json:"error" binding:"required" extensions:"x-nullable"`
-}
-
-// TaskFailed es la forma concreta de `detalles` en un `TASK_FINISHED` que
-// terminó en `FAILED`: severidad `WARNING` y las mismas seis claves.
-//
-//   - `motivo` PROXMOX_ERROR: Proxmox terminó la tarea con error; `exitstatus`
-//     y `error` traen su texto.
-//   - `motivo` TIMEOUT: Proxmox no la dio por terminada en 10 minutos (3 si
-//     se recuperó al reiniciar el backend);
-//     `exitstatus` es null y `error` lo explica.
-type TaskFailed struct {
-	TareaID    string  `json:"tareaId" binding:"required" example:"3f2504e0-4f89-11d3-9a0c-0305e82c3301"`
-	Accion     string  `json:"accion" binding:"required" enums:"START,STOP,SHUTDOWN,REBOOT,DELETE,CREATE,SNAPSHOT,ROLLBACK_SNAPSHOT,DELETE_SNAPSHOT" example:"STOP"`
-	Estado     string  `json:"estado" binding:"required" enums:"FAILED" example:"FAILED"`
-	ExitStatus *string `json:"exitstatus" binding:"required" extensions:"x-nullable" example:"CT 201 not running"`
-	Motivo     string  `json:"motivo" binding:"required" enums:"PROXMOX_ERROR,TIMEOUT" example:"PROXMOX_ERROR"`
-	Error      *string `json:"error" binding:"required" extensions:"x-nullable" example:"CT 201 not running"`
-}
-
-// SSECierrePayload es el JSON del frame `event: cierre` con el que el backend
-// avisa que va a cortar el stream. El cliente debe cerrar el `EventSource` y no
-// reconectar con el mismo ticket: ya fue consumido.
-type SSECierrePayload struct {
-	Motivo string `json:"motivo" binding:"required" enums:"LOGOUT,SESSIONS_REVOKED,USER_INACTIVE" example:"LOGOUT"`
-}
-
 // SSETicketResponse es el cuerpo 200 de `POST /api/events/ticket`.
 //
 // El ticket es un UUID de un solo uso, válido 30 s, que se consume con `GETDEL`
@@ -189,47 +152,6 @@ type SSECierrePayload struct {
 type SSETicketResponse struct {
 	Ticket string `json:"ticket" binding:"required" example:"3cb3438a-7dec-4116-b54a-369501674c92"`
 }
-
-// SSETiposPayload indexa, solo a efectos de documentación, las tres formas
-// concretas que un cliente puede recibir del stream `GET /api/events`:
-//
-//   - `taskSuccess`: el `detalles` de un `TASK_FINISHED` que terminó en `COMPLETED`.
-//   - `taskFailed`: el mismo evento terminado en `FAILED`, con `motivo` y `error`.
-//   - `cierre`: el cuerpo del frame `event: cierre`.
-//
-// No es un cuerpo que se pueda recibir: es el índice que permite que swag
-// emita los tres esquemas, que de otro modo no aparecen en Swagger.
-type SSETiposPayload struct {
-	TaskSuccess TaskSuccess      `json:"taskSuccess" binding:"required"`
-	TaskFailed  TaskFailed       `json:"taskFailed" binding:"required"`
-	Cierre      SSECierrePayload `json:"cierre" binding:"required"`
-}
-
-// SSEDetallesTareaFinDocumentacion es el bloque de anotaciones que existe solo
-// para documentación: ninguna ruta del servidor lo sirve.
-//
-// OpenAPI 2.0 no tiene forma nativa de declarar un stream SSE ni un `oneOf`, y
-// swag solo emite los esquemas que puede alcanzar desde una anotación de ruta.
-// Por eso este bloque, sin registrar ningún handler, publica en Swagger las dos
-// formas concretas de `detalles` y el payload del frame de corte, a través del
-// índice `http.SSETiposPayload`.
-//
-// La ruta es deliberadamente distinta de `GET /api/events`: swag sobrescribe la
-// operación cuando dos handlers declaran el mismo path y método, así que
-// duplicar `/api/events` borraría la documentación real del stream. El estado
-// `documentation-only` deja explícito que esta entrada no es invocable.
-//
-// Esta función nunca se llama: no registra rutas ni altera el comportamiento del
-// servidor.
-//
-// @Summary      Formas concretas del payload del stream SSE (solo documentación)
-// @Description  Índice de los esquemas que el stream `GET /api/events` puede emitir: `http.TaskSuccess` (evento `TASK_FINISHED` con `estado` `COMPLETED`), `http.TaskFailed` (el mismo evento con `estado` `FAILED`, `motivo` PROXMOX_ERROR o TIMEOUT y `error`) y `http.SSECierrePayload` (el cuerpo del frame `event: cierre`). Este es el `detalles` de los eventos, no el sobre completo, que es `http.SSEEventPayload`. No es una ruta del servidor y no se puede invocar: el stream real y su framing se documentan en `GET /api/events`.
-// @Tags         Eventos en tiempo real
-// @Produce      text/event-stream
-// @Success      200 {object} SSETiposPayload "índice de las formas concretas del stream"
-// @x-implementation-status "documentation-only"
-// @Router       /events/contrato-sse [get]
-func SSEDetallesTareaFinDocumentacion() {}
 
 // ==========================================
 // RF-07 — Inventario de Almacenamiento y Plantillas

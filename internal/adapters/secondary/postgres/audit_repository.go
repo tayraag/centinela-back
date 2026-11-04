@@ -102,15 +102,14 @@ func (r *auditRepositoryImpl) registrarConAlcance(ctx context.Context, input por
 // ==========================================
 
 // Listar devuelve registros de auditoría paginados con filtros dinámicos.
-// Solo retorna registros de usuarios que pertenecen a la organización indicada.
+// Incluye los eventos globales de sistema (sin organización) y conserva la
+// atribución por organización para los registros que sí tienen actor o alcance.
 func (r *auditRepositoryImpl) Listar(ctx context.Context, orgID uuid.UUID, filtros ports.FiltrosAuditoria, opciones ports.OpcionesAuditoria) (*ports.PaginaAuditoria, error) {
 	query := r.db.WithContext(ctx).
 		Table("auditoria a").
 		Select("a.*, CASE WHEN a.usuario_id IS NULL THEN '[sistema]' ELSE u.nombre_completo END AS nombre_completo").
 		Joins("LEFT JOIN usuarios u ON u.id = a.usuario_id").
-		// El alcance explícito autoriza los eventos de sistema. Los registros
-		// históricos con actor conservan la atribución anterior por usuario.
-		Where("(a.organizacion_id = ? OR (a.organizacion_id IS NULL AND u.organizacion_id = ?))", orgID, orgID)
+		Where("a.organizacion_id = ? OR a.organizacion_id IS NULL OR (u.organizacion_id = ?)", orgID, orgID)
 
 	// Aplicar filtros opcionales
 	query = aplicarFiltros(query, filtros)
@@ -191,9 +190,7 @@ func (r *auditRepositoryImpl) ExportarRegistros(ctx context.Context, orgID uuid.
 		Table("auditoria a").
 		Select("a.*, CASE WHEN a.usuario_id IS NULL THEN '[sistema]' ELSE u.nombre_completo END AS nombre_completo").
 		Joins("LEFT JOIN usuarios u ON u.id = a.usuario_id").
-		// El alcance explícito autoriza los eventos de sistema. Los registros
-		// históricos con actor conservan la atribución anterior por usuario.
-		Where("(a.organizacion_id = ? OR (a.organizacion_id IS NULL AND u.organizacion_id = ?))", orgID, orgID)
+		Where("a.organizacion_id = ? OR a.organizacion_id IS NULL OR (u.organizacion_id = ?)", orgID, orgID)
 
 	query = aplicarFiltros(query, filtros)
 
@@ -342,7 +339,7 @@ func (r *auditRepositoryImpl) AbrirExportacion(ctx context.Context, orgID uuid.U
 	query := r.db.WithContext(ctx).Table("auditoria a").
 		Select("a.*, CASE WHEN a.usuario_id IS NULL THEN '[sistema]' ELSE u.nombre_completo END AS nombre_completo").
 		Joins("LEFT JOIN usuarios u ON u.id = a.usuario_id").
-		Where("(a.organizacion_id = ? OR (a.organizacion_id IS NULL AND u.organizacion_id = ?))", orgID, orgID)
+		Where("a.organizacion_id = ? OR a.organizacion_id IS NULL OR (u.organizacion_id = ?)", orgID, orgID)
 	rows, err := aplicarFiltros(query, filtros).Order("a.fecha_hora DESC, a.id DESC").Rows()
 	if err != nil {
 		return nil, fmt.Errorf("error al abrir cursor de auditoría: %w", err)
