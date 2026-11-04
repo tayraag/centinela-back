@@ -19,7 +19,7 @@ func TestDebeAsignarPermisoCreacion(t *testing.T) {
 		{"LXC con advertencias", ports.AccionProxmoxCrearLXC, ports.TareaCompleted, "WARNINGS: 1", false},
 		{"creación fallida", ports.AccionProxmoxCrearVM, ports.TareaFailed, "unable to create VM", false},
 		{"acción operativa", "start", ports.TareaCompleted, "OK", false},
-		{"completed sin éxito Proxmox", ports.AccionCrearLXC, ports.TareaCompleted, "error", false},
+		{"completed sin éxito Proxmox", ports.AccionTareaCrearLXC, ports.TareaCompleted, "error", false},
 	}
 	for _, caso := range casos {
 		t.Run(caso.nombre, func(t *testing.T) {

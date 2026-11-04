@@ -100,7 +100,7 @@ func (r *TareaRepository) ActualizarEstado(ctx context.Context, id uuid.UUID, es
 				Accion:      ports.AccionInstancePermissionsPurged,
 				InstanciaID: tarea.InstanciaID,
 				RecursoTipo: recursoTipoTarea(tarea),
-				Resultado:   ports.ResultadoSuccess,
+				Resultado:   ports.ResultadoExito,
 				Detalles: map[string]any{
 					"vmid": vmid, "usuariosAfectados": usuariosTexto,
 				},

@@ -85,7 +85,7 @@ func (p *purgerEnMemoria) PurgarPermisosPorVmid(_ context.Context, vmid int, rec
 		UsuarioID:   actor,
 		Accion:      ports.AccionInstancePermissionsPurged,
 		InstanciaID: strconv.Itoa(vmid),
-		Resultado:   "SUCCESS",
+		Resultado:   "EXITO",
 		Detalles:    detalles,
 	})
 
@@ -236,7 +236,7 @@ func TestReciclajeVMID_SecuenciaEstrictaDestruccionYPurga(t *testing.T) {
 	if trazaPurga.InstanciaID != "110" {
 		t.Errorf("InstanciaID esperado '110', obtenido '%s'", trazaPurga.InstanciaID)
 	}
-	if trazaPurga.Resultado != "SUCCESS" {
+	if trazaPurga.Resultado != "EXITO" {
 		t.Errorf("Resultado esperado 'SUCCESS', obtenido '%s'", trazaPurga.Resultado)
 	}
 	afectados, ok := trazaPurga.Detalles["usuariosAfectados"].([]string)

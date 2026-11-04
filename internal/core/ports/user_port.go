@@ -24,7 +24,7 @@ type FiltrosUsuario struct {
 
 // FiltrosActividad define los parámetros para filtrar la actividad de un usuario.
 type FiltrosActividad struct {
-	Accion string // ej. "START", "STOP", ""
+	Accion string // código de AccionesAuditoriaValidas() (ej. "INICIAR_VM"), o "" (todas)
 	Desde  *time.Time
 	Hasta  *time.Time
 }

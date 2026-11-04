@@ -38,6 +38,10 @@ func (r *auditRepositoryImpl) Registrar(ctx context.Context, input ports.Registr
 }
 
 func (r *auditRepositoryImpl) registrarConAlcance(ctx context.Context, input ports.RegistrarAuditoriaInput, orgID *uuid.UUID) error {
+	// Vocabulario cerrado (RF-08): ninguna fila nueva sale del contrato.
+	if !ports.EsAccionAuditoriaValida(input.Accion) || !ports.EsResultadoAuditoriaValido(input.Resultado) {
+		return fmt.Errorf("%w: accion=%q resultado=%q", ports.ErrAuditoriaFueraDeContrato, input.Accion, input.Resultado)
+	}
 	// Serializar detalles adicionales a JSON
 	var detallesPtr *string
 	if len(input.Detalles) > 0 {

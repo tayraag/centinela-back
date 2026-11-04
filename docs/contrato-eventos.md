@@ -189,7 +189,7 @@ sale por SMTP con STARTTLS (puerto 587) o TLS (465). La resolución no manda
 correo.
 
 **Auditoría.** `ALERT_TRIGGERED` y `ALERT_RESOLVED` quedan en la tabla
-`auditoria` con resultado `SUCCESS`, sin usuario, `resource_type` `HOST`,
+`auditoria` con resultado `EXITO`, sin usuario, `resource_type` `HOST`,
 `VM` o `LXC` y `resource_id` el VMID o `host`. En `detalles` van la métrica,
 los valores, el mensaje, el `timestamp` (UTC) y, en la alerta, los
 `destinatarios` del correo. Las alertas nuevas se guardan con alcance

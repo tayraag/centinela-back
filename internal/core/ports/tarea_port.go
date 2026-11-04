@@ -10,13 +10,17 @@ import (
 	"github.com/google/uuid"
 )
 
-// Operaciones de aprovisionamiento que Proxmox incluye en el UPID. Se
-// mantienen separadas de los códigos de auditoría (CREAR_VM/CREAR_LXC), pero
-// ambas formas son aceptadas por TipoRecursoCreacion para que las tareas
-// sobrevivan a reinicios aunque hayan sido registradas por versiones distintas.
+// Operaciones de aprovisionamiento que Proxmox incluye en el UPID, y los
+// códigos de dominio con que versiones anteriores guardaban la tarea
+// (CREAR_VM/CREAR_LXC). TipoRecursoCreacion acepta ambas formas para que las
+// tareas sobrevivan a reinicios aunque hayan sido registradas por versiones
+// distintas. No son acciones de auditoría: la creación se audita como
+// CREATE_INSTANCE (AccionCrearInstancia).
 const (
 	AccionProxmoxCrearVM  = "qmcreate"
 	AccionProxmoxCrearLXC = "vzcreate"
+	AccionTareaCrearVM    = "CREAR_VM"
+	AccionTareaCrearLXC   = "CREAR_LXC"
 )
 
 // TipoRecursoCreacion reconoce una acción de aprovisionamiento y devuelve el
@@ -24,9 +28,9 @@ const (
 // como el nombre de la operación que viene dentro del UPID de Proxmox.
 func TipoRecursoCreacion(accion string) (string, bool) {
 	switch strings.ToLower(strings.TrimSpace(accion)) {
-	case strings.ToLower(AccionCrearVM), AccionProxmoxCrearVM:
+	case strings.ToLower(AccionTareaCrearVM), AccionProxmoxCrearVM:
 		return RecursoVM, true
-	case strings.ToLower(AccionCrearLXC), AccionProxmoxCrearLXC:
+	case strings.ToLower(AccionTareaCrearLXC), AccionProxmoxCrearLXC:
 		return RecursoLXC, true
 	default:
 		return "", false

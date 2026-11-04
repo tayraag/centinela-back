@@ -365,7 +365,7 @@ func (h *UserHandler) ObtenerPermisos(c *gin.Context) {
 // ListarActividad devuelve el historial de acciones auditadas de un usuario.
 //
 // @Summary      Actividad auditada del usuario
-// @Description  Devuelve hasta 100 registros de auditoría del usuario, ordenados del más reciente al más antiguo. Soporta filtros: `?accion=START|STOP|...`, `?desde=2026-01-01`, `?hasta=2026-12-31`.
+// @Description  Devuelve hasta 100 registros de auditoría del usuario, ordenados del más reciente al más antiguo. Soporta filtros: `?accion=` con un código del vocabulario de auditoría (ej. `INICIAR_VM`, `DETENER_VM`, `LOGIN`; tabla en docs/contrato-etapa1.md), `?desde=2026-01-01`, `?hasta=2026-12-31`.
 // @Tags         Usuarios (Admin)
 // @Produce      json
 // @Security     BearerAuth

@@ -220,7 +220,7 @@ func TestAlertas_SaturacionSostenidaAlertaUnaVez(t *testing.T) {
 		alerta.Detalles["umbralCritico"] != 85.0 || alerta.Detalles["duracionPersistencia"] != "60s" || alerta.Detalles["acknowledged"] != false || alerta.Detalles["alertId"] == "" {
 		t.Errorf("Detalles inesperados: %+v", alerta.Detalles)
 	}
-	if len(e.audit.registros) != 1 || e.audit.registros[0].Accion != "ALERT_TRIGGERED" || e.audit.registros[0].Resultado != ports.ResultadoSuccess ||
+	if len(e.audit.registros) != 1 || e.audit.registros[0].Accion != "ALERT_TRIGGERED" || e.audit.registros[0].Resultado != ports.ResultadoExito ||
 		e.audit.registros[0].Detalles["alertId"] != alerta.Detalles["alertId"] {
 		t.Errorf("Debe auditarse una vez como ALERT_TRIGGERED/SUCCESS con el mismo alertId: %+v", e.audit.registros)
 	}
@@ -481,7 +481,7 @@ func TestAlertas_CorreoYAuditoriaDeLaAlerta(t *testing.T) {
 	if len(e.correo.lista()) != 1 {
 		t.Error("La resolución no manda correo")
 	}
-	if len(e.audit.registros) != 2 || e.audit.registros[1].Accion != "ALERT_RESOLVED" || e.audit.registros[1].Resultado != ports.ResultadoSuccess ||
+	if len(e.audit.registros) != 2 || e.audit.registros[1].Accion != "ALERT_RESOLVED" || e.audit.registros[1].Resultado != ports.ResultadoExito ||
 		e.audit.registros[1].Detalles["alertId"] != alerta.Detalles["alertId"] {
 		t.Errorf("La resolución se audita como ALERT_RESOLVED con el mismo alertId: %+v", e.audit.registros)
 	}

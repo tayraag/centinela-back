@@ -74,11 +74,11 @@ func TestAuditHandlerExcluirAccion(t *testing.T) {
 func TestAuditHandlerFiltrosRF08(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	for _, caso := range []struct{ accion, resultado string }{
-		{ports.AccionCrearInstancia, "PENDIENTE"},
-		{ports.AccionCrearInstancia, "SUCCESS"},
-		{ports.AccionCrearInstancia, "FAILED"},
-		{ports.AccionConfigurarInstancia, "SUCCESS"},
-		{ports.AccionConfigurarInstancia, "FAILED"},
+		{ports.AccionCrearInstancia, ports.ResultadoPendiente},
+		{ports.AccionCrearInstancia, ports.ResultadoExito},
+		{ports.AccionCrearInstancia, ports.ResultadoFalla},
+		{ports.AccionConfigurarInstancia, ports.ResultadoExito},
+		{ports.AccionConfigurarInstancia, ports.ResultadoFalla},
 	} {
 		t.Run(caso.accion+"/"+caso.resultado, func(t *testing.T) {
 			service := &auditFiltros{}
@@ -218,7 +218,7 @@ func (c *cursorExportTest) Actual() (ports.AuditoriaDTO, error) {
 			return ports.AuditoriaDTO{}, c.ctx.Err()
 		}
 	}
-	return ports.AuditoriaDTO{ID: uuid.MustParse("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1"), FechaHora: time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC), Accion: "SNAPSHOT_CREATE", RecursoTipo: "VM", RecursoID: "inst_publica", Resultado: "SUCCESS", Detalles: json.RawMessage(`{"snapname":"área,prueba"}`)}, nil
+	return ports.AuditoriaDTO{ID: uuid.MustParse("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1"), FechaHora: time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC), Accion: "SNAPSHOT_CREATE", RecursoTipo: "VM", RecursoID: "inst_publica", Resultado: "EXITO", Detalles: json.RawMessage(`{"snapname":"área,prueba"}`)}, nil
 }
 func (c *cursorExportTest) Err() error {
 	if err := c.ctx.Err(); err != nil {
@@ -386,5 +386,41 @@ func TestAuditExportStreamingSuperaTimeoutGlobal(t *testing.T) {
 	}
 	if len(rows) != 3 {
 		t.Fatal("el timeout global cortó la descarga")
+	}
+}
+
+// DoD RF-08: listado y exportación aceptan solo el vocabulario cerrado; los
+// códigos viejos o desconocidos responden 400 INVALID_QUERY sin consultar.
+func TestRF08VocabularioCerrado(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	invalidas := []string{"accion=START", "accion=STOP_VM", "accion=CREAR_VM", "accion=login", "accion=CONFIG_INSTANCE",
+		"resultado=SUCCESS", "resultado=FAILED", "resultado=PENDING", "resultado=exito"}
+	for _, query := range invalidas {
+		svc := &auditFiltros{}
+		r := gin.New()
+		r.GET("/audit", handlers.NewAuditHandler(svc).ListarAuditoria)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest("GET", "/audit?"+query, nil))
+		if w.Code != 400 || !strings.Contains(w.Body.String(), `"errorCode":"INVALID_QUERY"`) || svc.filtros.Accion != "" || svc.filtros.Resultado != "" {
+			t.Errorf("listado %s: se esperaba 400 INVALID_QUERY sin consultar, vino %d %s", query, w.Code, w.Body)
+		}
+		s := &servicioExportTest{cursor: &cursorExportTest{}}
+		w = httptest.NewRecorder()
+		routerExportTest(s, "ADMIN").ServeHTTP(w, httptest.NewRequest("GET", "/api/admin/audit/export?"+query, nil))
+		if w.Code != 400 || s.abierto {
+			t.Errorf("export %s: se esperaba 400 sin abrir el cursor, vino %d", query, w.Code)
+		}
+	}
+	for _, accion := range ports.AccionesAuditoriaValidas() {
+		for _, resultado := range ports.ResultadosAuditoriaValidos() {
+			svc := &auditFiltros{}
+			r := gin.New()
+			r.GET("/audit", handlers.NewAuditHandler(svc).ListarAuditoria)
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, httptest.NewRequest("GET", "/audit?accion="+accion+"&resultado="+resultado, nil))
+			if w.Code != 200 || svc.filtros.Accion != accion || svc.filtros.Resultado != resultado {
+				t.Errorf("%s/%s: %d %s", accion, resultado, w.Code, w.Body)
+			}
+		}
 	}
 }

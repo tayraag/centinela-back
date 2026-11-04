@@ -82,8 +82,8 @@ func TestConfig_FalloDeAuditoriaNoInformaExitoNormal(t *testing.T) {
 		resultado    string
 		mensaje      string
 	}{
-		{"configuración aplicada", nil, ports.ResultadoSuccess, "La configuración fue aplicada"},
-		{"rechazo de Proxmox", fmt.Errorf("%w: permission denied", ports.ErrProxmoxNoDisponible), ports.ResultadoFailed, "La reconfiguración falló"},
+		{"configuración aplicada", nil, ports.ResultadoExito, "La configuración fue aplicada"},
+		{"rechazo de Proxmox", fmt.Errorf("%w: permission denied", ports.ErrProxmoxNoDisponible), ports.ResultadoFalla, "La reconfiguración falló"},
 	} {
 		t.Run(caso.nombre, func(t *testing.T) {
 			audit := &mockAuditService{errRegistrar: falloDB}
@@ -154,8 +154,8 @@ func TestConfig_AuditaDiferencialEnExitoYRechazo(t *testing.T) {
 		nombre, esperado string
 		err              error
 	}{
-		{"éxito", ports.ResultadoSuccess, nil},
-		{"rechazo Proxmox", ports.ResultadoFailed, fmt.Errorf("%w: permission denied", ports.ErrProxmoxNoDisponible)},
+		{"éxito", ports.ResultadoExito, nil},
+		{"rechazo Proxmox", ports.ResultadoFalla, fmt.Errorf("%w: permission denied", ports.ErrProxmoxNoDisponible)},
 	} {
 		t.Run(caso.nombre, func(t *testing.T) {
 			_, _, audit := pedirConfigConAuditoria(&configuracionFalsa{resultado: resultado, err: caso.err}, `{"cores":4,"ramMb":4096}`)
@@ -193,7 +193,7 @@ func TestConfig_AuditaSuccessCuandoSoloFallaLaVerificacionPosterior(t *testing.T
 		t.Fatalf("respuesta ambigua: status=%d respuesta=%v", status, respuesta)
 	}
 	registro, ok := audit.ultimo()
-	if !ok || registro.Resultado != ports.ResultadoSuccess {
+	if !ok || registro.Resultado != ports.ResultadoExito {
 		t.Fatalf("un PUT aceptado no debe auditarse FAILED: %+v", registro)
 	}
 	if registro.Detalles["requiresReboot"] != nil || registro.Detalles["verificationStatus"] != "FAILED" {

@@ -225,6 +225,16 @@ psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" \
 
 Si la migración detecta filas de esos períodos en `auditoria_default`, aborta sin modificarlas; esas filas deben revisarse y reubicarse antes de reintentar. El índice compuesto también se garantiza al arrancar la API, pero aplicá igualmente la migración antes del despliegue para que los límites de partición queden normalizados a UTC.
 
+`20261104_vocabulario_auditoria.sql` es distinta: **la API la aplica sola al arrancar** (log `📚 Vocabulario de auditoría normalizado`). Traduce los códigos viejos de `auditoria.resultado` (`SUCCESS`/`FAILED`/`PENDING` → `EXITO`/`FALLA`/`PENDIENTE`) y de `auditoria.accion` (`START` → `INICIAR_VM`, etc.) al vocabulario cerrado (tabla en `docs/contrato-etapa1.md`). Es idempotente y no toca la tabla si no queda nada para traducir. Desactiva el trigger de inmutabilidad solo dentro de su propia transacción, así que ninguna otra conexión lo ve apagado. Si el usuario de la base no tiene permiso para eso, la API arranca igual, lo avisa con `⚠️` y se puede correr a mano:
+
+```bash
+psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" \
+  -v ON_ERROR_STOP=1 \
+  -f migrations/20261104_vocabulario_auditoria.sql
+```
+
+A mano, informa con `NOTICE` cuántas filas tradujo y qué acciones quedan sin traducción conocida (por ejemplo, las `TEST_…` que dejaban tests viejos en las bases locales).
+
 ---
 
 ## 4. Instalar dependencias Go

@@ -91,10 +91,10 @@ func (h *InstanceConfigHandler) ActualizarConfig(c *gin.Context) {
 
 	resultado, err := h.servicio.Reconfigurar(c.Request.Context(), vmid, cores, ramMb)
 	if err != nil {
-		resultadoAuditoria := ports.ResultadoFailed
+		resultadoAuditoria := ports.ResultadoFalla
 		aplicada := resultado != nil && resultado.Aplicada
 		if aplicada {
-			resultadoAuditoria = ports.ResultadoSuccess
+			resultadoAuditoria = ports.ResultadoExito
 		}
 		if auditErr := h.auditar(c, vmid, resultadoAuditoria, detallesReconfiguracion(vmid, resultado, cores, ramMb, err)); auditErr != nil {
 			mensaje := "La reconfiguración falló y no pudo persistirse su auditoría. El estado de la instancia debe verificarse antes de reintentar."
@@ -107,7 +107,7 @@ func (h *InstanceConfigHandler) ActualizarConfig(c *gin.Context) {
 		mapearErrorProxmox(c, err)
 		return
 	}
-	if auditErr := h.auditar(c, vmid, ports.ResultadoSuccess, detallesReconfiguracion(vmid, resultado, cores, ramMb, nil)); auditErr != nil {
+	if auditErr := h.auditar(c, vmid, ports.ResultadoExito, detallesReconfiguracion(vmid, resultado, cores, ramMb, nil)); auditErr != nil {
 		SendError(c, http.StatusInternalServerError, "AUDIT_PERSISTENCE_FAILED", "La configuración fue aplicada, pero no pudo confirmarse su auditoría. Verifique el estado de la instancia antes de reintentar.")
 		return
 	}

@@ -163,10 +163,10 @@ func TestAuditService_PrepararAuditoriaTareaCorrelacion(t *testing.T) {
 		for _, caso := range []struct {
 			nombre, exit, motivo, resultado string
 		}{
-			{"exito", "OK", "", "SUCCESS"},
-			{"error", "permission denied", "PROXMOX_ERROR", "FAILED"},
-			{"timeout", "", "TIMEOUT", "FAILED"},
-			{"advertencias", "WARNINGS: 1", "", "SUCCESS"},
+			{"exito", "OK", "", "EXITO"},
+			{"error", "permission denied", "PROXMOX_ERROR", "FALLA"},
+			{"timeout", "", "TIMEOUT", "FALLA"},
+			{"advertencias", "WARNINGS: 1", "", "EXITO"},
 		} {
 			t.Run(accion+"/"+caso.nombre, func(t *testing.T) {
 				meta := `{"instanciaNombre":"db-110","resource_type":"lxc"}`
@@ -213,7 +213,7 @@ func TestAuditService_CreacionConAdvertenciasSigueSiendoFailed(t *testing.T) {
 
 	fin := svc.PrepararAuditoriaTarea(&tarea, map[string]any{"exitstatus": "WARNINGS: 1", "motivo": nil, "error": nil}, tarea.FechaCreacion.Add(3*time.Second))
 
-	if fin.Resultado != ports.ResultadoFailed || fin.Detalles["exitstatus"] != "WARNINGS: 1" {
+	if fin.Resultado != ports.ResultadoFalla || fin.Detalles["exitstatus"] != "WARNINGS: 1" {
 		t.Fatalf("una creación con advertencias no puede considerarse exitosa: %+v", fin)
 	}
 }
@@ -244,7 +244,7 @@ func TestAuditService_CreacionGeneraContratoRF08(t *testing.T) {
 		inicio.Detalles["ramMb"] != float64(4096) || inicio.Detalles["discoGb"] != float64(40) {
 		t.Fatalf("despacho de creación incompleto: %+v", inicio)
 	}
-	if fin.Resultado != ports.ResultadoSuccess || fin.Detalles["exitstatus"] != "OK" || fin.Detalles["duracionSegundos"] != float64(3) {
+	if fin.Resultado != ports.ResultadoExito || fin.Detalles["exitstatus"] != "OK" || fin.Detalles["duracionSegundos"] != float64(3) {
 		t.Fatalf("desenlace de creación incompleto: %+v", fin)
 	}
 }
@@ -276,9 +276,9 @@ func TestRF08SnapshotAccionesCanonicas(t *testing.T) {
 			}
 			esperado := ports.ResultadoPendiente
 			if cierre != nil {
-				esperado = ports.ResultadoSuccess
+				esperado = ports.ResultadoExito
 				if cierre["motivo"] != nil {
-					esperado = ports.ResultadoFailed
+					esperado = ports.ResultadoFalla
 				}
 			}
 			if input.Resultado != esperado || input.Detalles["snapname"] != "pre-deploy" {

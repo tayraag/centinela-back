@@ -277,7 +277,7 @@ func TestPool_AuditaElResultadoFinal(t *testing.T) {
 	e.esperarEventos(t, 1, 3*time.Second)
 
 	reg := e.audit.buscar("APAGAR_VM")
-	if reg == nil || reg.Resultado != ports.ResultadoSuccess || reg.InstanciaID != "110" || reg.Detalles["tareaId"] != id.String() || reg.Upid != upid {
+	if reg == nil || reg.Resultado != ports.ResultadoExito || reg.InstanciaID != "110" || reg.Detalles["tareaId"] != id.String() || reg.Upid != upid {
 		t.Errorf("Auditoría del final de la tarea: %+v", reg)
 	}
 	if _, expuesto := reg.Detalles["upid"]; expuesto {

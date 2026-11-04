@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -55,13 +56,15 @@ func TestAuditRepository_CrearYRecuperarEvento(t *testing.T) {
 		t.Fatalf("Se requiere al menos un usuario en la base de datos para ejecutar el test: %v", err)
 	}
 
-	accionUnica := "TEST_EVENTO_" + uuid.New().String()[:8]
+	// La acción pertenece al vocabulario cerrado; el instancia_id único aísla la
+	// fila (la auditoría es append-only: no se puede limpiar después).
+	instanciaUnica := "test-" + uuid.New().String()[:8]
 
 	// 2. Registrar evento con detalles
 	inputConDetalles := ports.RegistrarAuditoriaInput{
 		UsuarioID:       usuario.ID,
-		Accion:          accionUnica,
-		InstanciaID:     "vm-101",
+		Accion:          ports.AccionIniciarVM,
+		InstanciaID:     instanciaUnica,
 		InstanciaNombre: "Servidor Test",
 		Resultado:       ports.ResultadoExito,
 		Upid:            "UPID:privado:no-exponer",
@@ -75,14 +78,10 @@ func TestAuditRepository_CrearYRecuperarEvento(t *testing.T) {
 		t.Fatalf("Fallo al registrar evento de auditoría: %v", err)
 	}
 
-	// Limpieza al finalizar el test
-	t.Cleanup(func() {
-		db.Exec("DELETE FROM auditoria WHERE accion = ?", accionUnica)
-	})
-
-	// 3. Recuperar el evento listando por organización y filtrando por la acción
+	// 3. Recuperar el evento listando por organización, acción e instancia
 	filtros := ports.FiltrosAuditoria{
-		Accion: accionUnica,
+		Accion:      ports.AccionIniciarVM,
+		InstanciaID: instanciaUnica,
 	}
 	opciones := ports.OpcionesAuditoria{
 		Pagina:     1,
@@ -106,8 +105,8 @@ func TestAuditRepository_CrearYRecuperarEvento(t *testing.T) {
 
 	recuperado := pagina.Items[0]
 
-	if recuperado.Accion != accionUnica {
-		t.Errorf("Accion incorrecta. Esperado: %s, Obtenido: %s", accionUnica, recuperado.Accion)
+	if recuperado.Accion != ports.AccionIniciarVM {
+		t.Errorf("Accion incorrecta. Esperado: %s, Obtenido: %s", ports.AccionIniciarVM, recuperado.Accion)
 	}
 	if recuperado.UsuarioID == nil || *recuperado.UsuarioID != usuario.ID {
 		t.Errorf("UsuarioID incorrecto. Esperado: %s, Obtenido: %v", usuario.ID, recuperado.UsuarioID)
@@ -115,8 +114,8 @@ func TestAuditRepository_CrearYRecuperarEvento(t *testing.T) {
 	if recuperado.NombreUsuario != usuario.NombreCompleto {
 		t.Errorf("NombreUsuario incorrecto. Esperado: %s, Obtenido: %s", usuario.NombreCompleto, recuperado.NombreUsuario)
 	}
-	if recuperado.InstanciaID != "vm-101" {
-		t.Errorf("InstanciaID incorrecto. Esperado: vm-101, Obtenido: %s", recuperado.InstanciaID)
+	if recuperado.InstanciaID != instanciaUnica {
+		t.Errorf("InstanciaID incorrecto. Esperado: %s, Obtenido: %s", instanciaUnica, recuperado.InstanciaID)
 	}
 	if recuperado.InstanciaNombre != "Servidor Test" {
 		t.Errorf("InstanciaNombre incorrecto. Esperado: Servidor Test, Obtenido: %s", recuperado.InstanciaNombre)
@@ -156,25 +155,22 @@ func TestAuditRepository_CrearSinDetalles(t *testing.T) {
 		t.Fatalf("Se requiere al menos un usuario en la base de datos: %v", err)
 	}
 
-	accionSinDetalles := "TEST_LOGIN_" + uuid.New().String()[:8]
+	instanciaUnica := "test-" + uuid.New().String()[:8]
 
 	// Registrar evento SIN detalles (prueba que no falle la sintaxis jsonb)
 	input := ports.RegistrarAuditoriaInput{
-		UsuarioID: usuario.ID,
-		Accion:    accionSinDetalles,
-		Resultado: ports.ResultadoExito,
-		Detalles:  nil,
+		UsuarioID:   usuario.ID,
+		Accion:      ports.AccionLogin,
+		InstanciaID: instanciaUnica,
+		Resultado:   ports.ResultadoExito,
+		Detalles:    nil,
 	}
 
 	if err := repo.Registrar(ctx, input); err != nil {
 		t.Fatalf("Fallo al registrar evento sin detalles (error jsonb regresión): %v", err)
 	}
 
-	t.Cleanup(func() {
-		db.Exec("DELETE FROM auditoria WHERE accion = ?", accionSinDetalles)
-	})
-
-	pagina, err := repo.Listar(ctx, usuario.OrganizacionID, ports.FiltrosAuditoria{Accion: accionSinDetalles}, ports.OpcionesAuditoria{
+	pagina, err := repo.Listar(ctx, usuario.OrganizacionID, ports.FiltrosAuditoria{Accion: ports.AccionLogin, InstanciaID: instanciaUnica}, ports.OpcionesAuditoria{
 		Pagina:     1,
 		TamanoPag:  10,
 		OrdenarPor: "fechaHora",
@@ -292,11 +288,11 @@ func TestAuditoriaAlertasSistemaAisladasPorOrganizacion(t *testing.T) {
 		}
 		repo := postgres.NewAuditRepository(tx)
 		for _, input := range []ports.RegistrarAuditoriaInput{
-			{Accion: ports.AccionAlertaDisparada, RecursoTipo: ports.RecursoHost, RecursoID: "host", Resultado: ports.ResultadoSuccess, Detalles: map[string]any{"alertId": "host", "destinatarios": []string{"foreign@test"}}},
-			{Accion: ports.AccionAlertaDisparada, RecursoTipo: ports.RecursoVM, RecursoID: "110", Resultado: ports.ResultadoSuccess, Detalles: map[string]any{"alertId": "vm"}},
-			{Accion: ports.AccionAlertaDisparada, RecursoTipo: ports.RecursoLXC, RecursoID: "110", Resultado: ports.ResultadoSuccess, Detalles: map[string]any{"alertId": "lxc"}},
-			{Accion: ports.AccionAlertaResuelta, RecursoTipo: ports.RecursoVM, RecursoID: "110", Resultado: ports.ResultadoSuccess},
-			{Accion: ports.AccionInstanciaDetenidaExternamente, RecursoTipo: ports.RecursoVM, RecursoID: "110", Resultado: ports.ResultadoSuccess, Detalles: map[string]any{"severidad": ports.SeveridadInfo}},
+			{Accion: ports.AccionAlertaDisparada, RecursoTipo: ports.RecursoHost, RecursoID: "host", Resultado: ports.ResultadoExito, Detalles: map[string]any{"alertId": "host", "destinatarios": []string{"foreign@test"}}},
+			{Accion: ports.AccionAlertaDisparada, RecursoTipo: ports.RecursoVM, RecursoID: "110", Resultado: ports.ResultadoExito, Detalles: map[string]any{"alertId": "vm"}},
+			{Accion: ports.AccionAlertaDisparada, RecursoTipo: ports.RecursoLXC, RecursoID: "110", Resultado: ports.ResultadoExito, Detalles: map[string]any{"alertId": "lxc"}},
+			{Accion: ports.AccionAlertaResuelta, RecursoTipo: ports.RecursoVM, RecursoID: "110", Resultado: ports.ResultadoExito},
+			{Accion: ports.AccionInstanciaDetenidaExternamente, RecursoTipo: ports.RecursoVM, RecursoID: "110", Resultado: ports.ResultadoExito, Detalles: map[string]any{"severidad": ports.SeveridadInfo}},
 			{UsuarioID: actor, Accion: ports.AccionLogin, Resultado: ports.ResultadoExito},
 		} {
 			if err := repo.Registrar(context.Background(), input); err != nil {
@@ -355,5 +351,31 @@ func TestAuditoriaAlertasSistemaAisladasPorOrganizacion(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+// RF-08: el repositorio no inserta acciones ni resultados fuera del
+// vocabulario cerrado (los códigos viejos incluidos).
+func TestAuditRepository_RechazaFueraDeContrato(t *testing.T) {
+	db := conectarDBTest(t)
+	repo := postgres.NewAuditRepository(db)
+	casos := []ports.RegistrarAuditoriaInput{
+		{Accion: "START", Resultado: ports.ResultadoExito},
+		{Accion: "TEST_" + uuid.New().String()[:8], Resultado: ports.ResultadoExito},
+		{Accion: ports.AccionLogin, Resultado: "SUCCESS"},
+		{Accion: ports.AccionLogin, Resultado: "PENDING"},
+		{Accion: ports.AccionLogin, Resultado: ""},
+		{Accion: "", Resultado: ports.ResultadoExito},
+	}
+	for _, input := range casos {
+		input.InstanciaID = "test-" + uuid.New().String()[:8]
+		if err := repo.Registrar(context.Background(), input); !errors.Is(err, ports.ErrAuditoriaFueraDeContrato) {
+			t.Errorf("%q/%q: se esperaba ErrAuditoriaFueraDeContrato, vino %v", input.Accion, input.Resultado, err)
+		}
+		var filas int64
+		db.Table("auditoria").Where("instancia_id = ?", input.InstanciaID).Count(&filas)
+		if filas != 0 {
+			t.Errorf("%q/%q: no debía insertarse", input.Accion, input.Resultado)
+		}
 	}
 }

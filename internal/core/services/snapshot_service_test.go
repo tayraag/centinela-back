@@ -201,7 +201,7 @@ func TestSnapshots_FallaDeProxmoxSeAudita(t *testing.T) {
 		t.Fatalf("Se esperaba el error de Proxmox sin tarea registrada: %v %+v", err, seg)
 	}
 	registro := audit.buscar(ports.AccionCrearSnapshot)
-	if registro == nil || registro.Resultado != ports.ResultadoFailed || registro.InstanciaID != "110" || registro.Detalles["snapname"] != "snap1" {
+	if registro == nil || registro.Resultado != ports.ResultadoFalla || registro.InstanciaID != "110" || registro.Detalles["snapname"] != "snap1" {
 		t.Errorf("Debe auditarse la falla: %+v", registro)
 	}
 }
@@ -218,7 +218,7 @@ func TestSnapshots_AuditoriaYEventoDeLaTarea(t *testing.T) {
 		t.Errorf("Auditoría inicial: %+v", inicio)
 	}
 	fin := services.NewAuditService(nil).PrepararAuditoriaTarea(tarea, map[string]any{"exitstatus": "OK", "motivo": nil}, time.Now())
-	if fin.Accion != ports.AccionCrearSnapshot || fin.Resultado != ports.ResultadoSuccess {
+	if fin.Accion != ports.AccionCrearSnapshot || fin.Resultado != ports.ResultadoExito {
 		t.Errorf("Auditoría de cierre: %+v", fin)
 	}
 

@@ -270,8 +270,41 @@ const docTemplate = `{
                         "in": "query"
                     },
                     {
+                        "enum": [
+                            "LOGIN",
+                            "LOGIN_FALLA",
+                            "VERIFICAR_2FA",
+                            "2FA_FALLA",
+                            "LOGOUT",
+                            "CREAR_USUARIO",
+                            "ACTUALIZAR_USUARIO",
+                            "ELIMINAR_USUARIO",
+                            "ASIGNAR_PERMISOS",
+                            "RESETEAR_CONTRASENA",
+                            "RESETEAR_TOTP",
+                            "PASSWORD_CHANGED",
+                            "UPDATE_PROFILE_EMAIL_REQUESTED",
+                            "UPDATE_PROFILE_EMAIL_CONFIRMED",
+                            "CREATE_INSTANCE",
+                            "INICIAR_VM",
+                            "DETENER_VM",
+                            "APAGAR_VM",
+                            "REINICIAR_VM",
+                            "REANUDAR_VM",
+                            "ELIMINAR_VM",
+                            "CONFIG_UPDATED",
+                            "SNAPSHOT_CREATE",
+                            "SNAPSHOT_ROLLBACK",
+                            "SNAPSHOT_DELETE",
+                            "INSTANCE_PERMISSIONS_PURGED",
+                            "SYSTEM_INSTANCE_STOPPED_EXTERNALLY",
+                            "ALERT_TRIGGERED",
+                            "ALERT_RESOLVED",
+                            "EVENTOS_CONEXION",
+                            "EVENTOS_CIERRE"
+                        ],
                         "type": "string",
-                        "description": "Filtrar por tipo de acción (ej: LOGIN, SNAPSHOT_CREATE, SNAPSHOT_ROLLBACK, SNAPSHOT_DELETE, ALERT_TRIGGERED, CONFIG_UPDATED)",
+                        "description": "Filtrar por acción (vocabulario cerrado; otro valor responde 400 INVALID_QUERY)",
                         "name": "accion",
                         "in": "query"
                     },
@@ -282,8 +315,13 @@ const docTemplate = `{
                         "in": "query"
                     },
                     {
+                        "enum": [
+                            "EXITO",
+                            "FALLA",
+                            "PENDIENTE"
+                        ],
                         "type": "string",
-                        "description": "Filtrar por resultado: PENDIENTE, SUCCESS, FAILED (infraestructura); EXITO o FALLA (otras acciones)",
+                        "description": "Filtrar por resultado (otro valor responde 400 INVALID_QUERY)",
                         "name": "resultado",
                         "in": "query"
                     },
@@ -428,8 +466,41 @@ const docTemplate = `{
                         "in": "query"
                     },
                     {
+                        "enum": [
+                            "LOGIN",
+                            "LOGIN_FALLA",
+                            "VERIFICAR_2FA",
+                            "2FA_FALLA",
+                            "LOGOUT",
+                            "CREAR_USUARIO",
+                            "ACTUALIZAR_USUARIO",
+                            "ELIMINAR_USUARIO",
+                            "ASIGNAR_PERMISOS",
+                            "RESETEAR_CONTRASENA",
+                            "RESETEAR_TOTP",
+                            "PASSWORD_CHANGED",
+                            "UPDATE_PROFILE_EMAIL_REQUESTED",
+                            "UPDATE_PROFILE_EMAIL_CONFIRMED",
+                            "CREATE_INSTANCE",
+                            "INICIAR_VM",
+                            "DETENER_VM",
+                            "APAGAR_VM",
+                            "REINICIAR_VM",
+                            "REANUDAR_VM",
+                            "ELIMINAR_VM",
+                            "CONFIG_UPDATED",
+                            "SNAPSHOT_CREATE",
+                            "SNAPSHOT_ROLLBACK",
+                            "SNAPSHOT_DELETE",
+                            "INSTANCE_PERMISSIONS_PURGED",
+                            "SYSTEM_INSTANCE_STOPPED_EXTERNALLY",
+                            "ALERT_TRIGGERED",
+                            "ALERT_RESOLVED",
+                            "EVENTOS_CONEXION",
+                            "EVENTOS_CIERRE"
+                        ],
                         "type": "string",
-                        "description": "Filtrar por tipo de acción",
+                        "description": "Filtrar por acción (vocabulario cerrado; otro valor responde 400 INVALID_QUERY)",
                         "name": "accion",
                         "in": "query"
                     },
@@ -440,8 +511,13 @@ const docTemplate = `{
                         "in": "query"
                     },
                     {
+                        "enum": [
+                            "EXITO",
+                            "FALLA",
+                            "PENDIENTE"
+                        ],
                         "type": "string",
-                        "description": "PENDIENTE, SUCCESS, FAILED (infraestructura); EXITO o FALLA (otras acciones)",
+                        "description": "Filtrar por resultado (otro valor responde 400 INVALID_QUERY)",
                         "name": "resultado",
                         "in": "query"
                     },
@@ -978,7 +1054,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Devuelve hasta 100 registros de auditoría del usuario, ordenados del más reciente al más antiguo. Soporta filtros: ` + "`" + `?accion=START|STOP|...` + "`" + `, ` + "`" + `?desde=2026-01-01` + "`" + `, ` + "`" + `?hasta=2026-12-31` + "`" + `.",
+                "description": "Devuelve hasta 100 registros de auditoría del usuario, ordenados del más reciente al más antiguo. Soporta filtros: ` + "`" + `?accion=` + "`" + ` con un código del vocabulario de auditoría (ej. ` + "`" + `INICIAR_VM` + "`" + `, ` + "`" + `DETENER_VM` + "`" + `, ` + "`" + `LOGIN` + "`" + `; tabla en docs/contrato-etapa1.md), ` + "`" + `?desde=2026-01-01` + "`" + `, ` + "`" + `?hasta=2026-12-31` + "`" + `.",
                 "produces": [
                     "application/json"
                 ],
@@ -1968,7 +2044,7 @@ const docTemplate = `{
                         }
                     },
                     "409": {
-                        "description": "INSTANCE_INVALID_STATE — la instancia debe estar detenida o pausada | INSTANCE_BUSY — la instancia está ejecutando otra tarea (tarea RUNNING o lock lock:instance:{vmid}:operation); se responde sin contactar a Proxmox",
+                        "description": "INSTANCE_INVALID_STATE — la instancia debe estar detenida | INSTANCE_BUSY — la instancia está ejecutando otra tarea (tarea RUNNING o lock lock:instance:{vmid}:operation); se responde sin contactar a Proxmox",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -2720,7 +2796,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "OPERATIVO. Ejecuta una acción de ciclo de vida (start, stop, shutdown, reboot, resume) sobre una VM o contenedor. El endpoint genérico complementa a /start y /stop manteniendo retrocompatibilidad. resume reanuda una instancia pausada; la acción pause no está implementada.",
+                "description": "OPERATIVO. Ejecuta una acción de ciclo de vida (start, stop, shutdown, reboot, resume) sobre una VM o contenedor. El endpoint genérico complementa a /start y /stop manteniendo retrocompatibilidad. La acción Pause NO está implementada: use POST /instances/{instanceRef}/pause, que hoy responde 404 NOT_FOUND.",
                 "produces": [
                     "application/json"
                 ],
@@ -3751,7 +3827,40 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "accion": {
-                    "type": "string"
+                    "type": "string",
+                    "enum": [
+                        "LOGIN",
+                        "LOGIN_FALLA",
+                        "VERIFICAR_2FA",
+                        "2FA_FALLA",
+                        "LOGOUT",
+                        "CREAR_USUARIO",
+                        "ACTUALIZAR_USUARIO",
+                        "ELIMINAR_USUARIO",
+                        "ASIGNAR_PERMISOS",
+                        "RESETEAR_CONTRASENA",
+                        "RESETEAR_TOTP",
+                        "PASSWORD_CHANGED",
+                        "UPDATE_PROFILE_EMAIL_REQUESTED",
+                        "UPDATE_PROFILE_EMAIL_CONFIRMED",
+                        "CREATE_INSTANCE",
+                        "INICIAR_VM",
+                        "DETENER_VM",
+                        "APAGAR_VM",
+                        "REINICIAR_VM",
+                        "REANUDAR_VM",
+                        "ELIMINAR_VM",
+                        "CONFIG_UPDATED",
+                        "SNAPSHOT_CREATE",
+                        "SNAPSHOT_ROLLBACK",
+                        "SNAPSHOT_DELETE",
+                        "INSTANCE_PERMISSIONS_PURGED",
+                        "SYSTEM_INSTANCE_STOPPED_EXTERNALLY",
+                        "ALERT_TRIGGERED",
+                        "ALERT_RESOLVED",
+                        "EVENTOS_CONEXION",
+                        "EVENTOS_CIERRE"
+                    ]
                 },
                 "detalle": {
                     "type": "object"
@@ -3788,7 +3897,12 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "resultado": {
-                    "type": "string"
+                    "type": "string",
+                    "enum": [
+                        "EXITO",
+                        "FALLA",
+                        "PENDIENTE"
+                    ]
                 },
                 "usuarioId": {
                     "description": "Puntero: puede ser null si el usuario fue eliminado",

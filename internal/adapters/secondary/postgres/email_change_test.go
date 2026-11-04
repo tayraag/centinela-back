@@ -21,7 +21,7 @@ func TestEmailConfirmacionTransaccion(t *testing.T) {
 	}
 	repo := postgres.NewUserRepository(db)
 	ctx := context.Background()
-	audit := ports.RegistrarAuditoriaInput{UsuarioID: id, Accion: "UPDATE_PROFILE_EMAIL_CONFIRMED", Resultado: "SUCCESS", Detalles: map[string]any{"solicitudId": "test"}}
+	audit := ports.RegistrarAuditoriaInput{UsuarioID: id, Accion: "UPDATE_PROFILE_EMAIL_CONFIRMED", Resultado: "EXITO", Detalles: map[string]any{"solicitudId": "test"}}
 	// Forzar fallo real de INSERT para verificar que el correo se revierte.
 	if err := db.Exec("ALTER TABLE auditoria ADD CONSTRAINT rechazar_confirmacion CHECK (accion <> 'UPDATE_PROFILE_EMAIL_CONFIRMED')").Error; err != nil {
 		t.Fatal(err)

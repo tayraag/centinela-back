@@ -85,8 +85,8 @@ func TestInstanceRepository_PurgarPermisosPorVmid(t *testing.T) {
 		t.Fatalf("No se encontró el registro de auditoría de la purga: %v", err)
 	}
 
-	if traza.Resultado != "SUCCESS" {
-		t.Errorf("Resultado esperado 'SUCCESS', obtenido '%s'", traza.Resultado)
+	if traza.Resultado != "EXITO" {
+		t.Errorf("Resultado esperado 'EXITO', obtenido '%s'", traza.Resultado)
 	}
 	if traza.Detalles == nil {
 		t.Fatal("Detalles de auditoría es nil")

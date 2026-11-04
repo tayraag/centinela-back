@@ -794,4 +794,66 @@ El listado devuelve `items,total,page,pagina,limit,totalPages`; los items agrega
 
 Acciones nuevas: `SNAPSHOT_CREATE`, `SNAPSHOT_ROLLBACK`, `SNAPSHOT_DELETE` y `CONFIG_UPDATED` (antes CONFIG_INSTANCE). `ALERT_TRIGGERED` ya se registra automáticamente. Los códigos de tareas y eventos no cambian. Las alertas nuevas sin usuario se atribuyen mediante `auditoria.organizacion_id` a las organizaciones autorizadas por la política existente de correo. Cada organización recibe su propia fila con destinatarios separados. El listado y la exportación las incluyen con `usuarioId=null` y nombre `[sistema]`; las históricas sin alcance siguen excluidas. La migración de arranque agrega la columna y el índice de organización/fecha.
 
+### Vocabulario cerrado de `accion` y `resultado`
+
+`auditoria.accion` y `auditoria.resultado` solo toman los valores de estas
+tablas (`ports.AccionesAuditoriaValidas()` y `ports.ResultadosAuditoriaValidos()`).
+El backend no inserta otro valor, y en `GET /api/admin/audit` y
+`/api/admin/audit/export` un `accion` o `resultado` fuera de la tabla responde
+`400 INVALID_QUERY`. Swagger publica las mismas listas como `enum`.
+`docs/contrato_etapa1_test.go` falla si el código, el Swagger o esta tabla se
+separan.
+
+| `resultado` | Significado |
+|-------------|-------------|
+| `EXITO` | La operación terminó bien. En tareas de Proxmox: el desenlace con exitstatus `OK`. |
+| `FALLA` | La operación falló. En tareas de Proxmox: error o timeout. |
+| `PENDIENTE` | Una tarea asíncrona aceptada (despacho) o un cambio de email a confirmar. |
+
+| `accion` | Cuándo se registra |
+|----------|--------------------|
+| `LOGIN` | Login correcto (primer factor) |
+| `LOGIN_FALLA` | Login rechazado |
+| `VERIFICAR_2FA` | Segundo factor verificado |
+| `2FA_FALLA` | Código 2FA rechazado |
+| `LOGOUT` | Cierre de sesión |
+| `CREAR_USUARIO` | Alta de usuario |
+| `ACTUALIZAR_USUARIO` | Edición de usuario |
+| `ELIMINAR_USUARIO` | Baja lógica de usuario |
+| `ASIGNAR_PERMISOS` | Reemplazo de permisos sobre instancias |
+| `RESETEAR_CONTRASENA` | Reset administrativo de contraseña |
+| `RESETEAR_TOTP` | Reset administrativo del 2FA |
+| `PASSWORD_CHANGED` | Cambio de la contraseña propia |
+| `UPDATE_PROFILE_EMAIL_REQUESTED` | Pedido de cambio de email (`PENDIENTE`) |
+| `UPDATE_PROFILE_EMAIL_CONFIRMED` | Cambio de email confirmado |
+| `CREATE_INSTANCE` | Creación de VM o LXC (despacho y desenlace) |
+| `INICIAR_VM` | Encendido |
+| `DETENER_VM` | Apagado forzado |
+| `APAGAR_VM` | Apagado ordenado (shutdown) |
+| `REINICIAR_VM` | Reinicio |
+| `REANUDAR_VM` | Reanudación de una instancia pausada |
+| `ELIMINAR_VM` | Eliminación de la instancia |
+| `CONFIG_UPDATED` | Cambio de CPU o RAM |
+| `SNAPSHOT_CREATE` | Creación de snapshot |
+| `SNAPSHOT_ROLLBACK` | Reversión a un snapshot |
+| `SNAPSHOT_DELETE` | Eliminación de snapshot |
+| `INSTANCE_PERMISSIONS_PURGED` | Depuración de permisos por reciclaje de VMID |
+| `SYSTEM_INSTANCE_STOPPED_EXTERNALLY` | Instancia apagada fuera de El Centinela (sistema) |
+| `ALERT_TRIGGERED` | Alerta disparada (sistema) |
+| `ALERT_RESOLVED` | Alerta resuelta (sistema) |
+| `EVENTOS_CONEXION` | Apertura del stream `GET /api/events` |
+| `EVENTOS_CIERRE` | Cierre del stream por el backend |
+
+**Registros históricos.** `migrations/20261104_vocabulario_auditoria.sql`
+traduce los códigos anteriores (`SUCCESS`→`EXITO`, `FAILED`→`FALLA`,
+`PENDING`→`PENDIENTE`; `START`/`START_VM`→`INICIAR_VM`, `STOP`/`STOP_VM`→`DETENER_VM`,
+`SHUTDOWN`→`APAGAR_VM`, `REBOOT`→`REINICIAR_VM`, `RESUME`→`REANUDAR_VM`,
+`DELETE`→`ELIMINAR_VM`, `CONFIG`/`CONFIG_INSTANCE`→`CONFIG_UPDATED`,
+`CREAR_SNAPSHOT`/`SNAPSHOT`→`SNAPSHOT_CREATE`, `ROLLBACK_SNAPSHOT`→`SNAPSHOT_ROLLBACK`,
+`DELETE_SNAPSHOT`→`SNAPSHOT_DELETE`, `CAMBIAR_CONTRASENA`→`PASSWORD_CHANGED`).
+La API la aplica sola al arrancar: es idempotente y no toca la tabla si no
+quedan códigos viejos. Desactiva el trigger de inmutabilidad solo dentro de
+su propia transacción. Los códigos `CREAR_VM`/`CREAR_LXC` siguen existiendo
+como códigos de **tarea** (`tareas_asincronas`), no de auditoría.
+
 Parámetros, ejemplos y recorrido completo de prueba por Swagger en la sección 10 de `Diseño de endpoints para front.md`. La exclusión de particiones y el objetivo de 150 ms se verifican en PostgreSQL; Swagger no acredita esos criterios.

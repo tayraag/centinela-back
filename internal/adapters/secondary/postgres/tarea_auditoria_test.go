@@ -107,7 +107,7 @@ func TestRF08ParticionesCorrelacionFiltrosYCierreConcurrente(t *testing.T) {
 			if pagina.Total != 2 || len(pagina.Items) != 2 {
 				t.Fatalf("se esperaban exactamente dos registros: %+v", pagina)
 			}
-			if pagina.Items[0].Resultado != "PENDIENTE" || pagina.Items[1].Resultado != "SUCCESS" {
+			if pagina.Items[0].Resultado != "PENDIENTE" || pagina.Items[1].Resultado != "EXITO" {
 				t.Fatalf("resultados incorrectos: %+v", pagina.Items)
 			}
 			for _, reg := range pagina.Items {
@@ -121,11 +121,11 @@ func TestRF08ParticionesCorrelacionFiltrosYCierreConcurrente(t *testing.T) {
 				if _, expuesto := detalles["upid"]; expuesto {
 					t.Fatalf("el UPID privado no debe exponerse en detalles: %v", detalles)
 				}
-				if reg.Resultado == "SUCCESS" && detalles["duracionSegundos"].(float64) < 2 {
+				if reg.Resultado == "EXITO" && detalles["duracionSegundos"].(float64) < 2 {
 					t.Fatalf("duración incorrecta: %v", detalles)
 				}
 			}
-			filtrada, err := audit.Listar(ctx, org, ports.FiltrosAuditoria{Accion: codigo, Resultado: "SUCCESS"}, ports.OpcionesAuditoria{Pagina: 1, TamanoPag: 50, Direccion: "asc"})
+			filtrada, err := audit.Listar(ctx, org, ports.FiltrosAuditoria{Accion: codigo, Resultado: "EXITO"}, ports.OpcionesAuditoria{Pagina: 1, TamanoPag: 50, Direccion: "asc"})
 			if err != nil || filtrada.Total != 1 {
 				t.Fatalf("filtro resultado: %+v, %v", filtrada, err)
 			}
@@ -185,7 +185,7 @@ func TestRF08TimeoutPersistido(t *testing.T) {
 		t.Fatal(err)
 	}
 	var fin domain.Auditoria
-	if err := db.Where("resultado = ?", "FAILED").First(&fin).Error; err != nil {
+	if err := db.Where("resultado = ?", "FALLA").First(&fin).Error; err != nil {
 		t.Fatal(err)
 	}
 	var detalles map[string]any
@@ -211,7 +211,7 @@ func TestCreacionExitosaAutoasignaFullAccess(t *testing.T) {
 		accion string
 		vmid   string
 	}{
-		{ports.AccionCrearVM, "210"},
+		{ports.AccionTareaCrearVM, "210"},
 		{ports.AccionProxmoxCrearLXC, "211"},
 	}
 	for _, caso := range casos {
@@ -253,7 +253,7 @@ func TestCreacionGeneraDosAuditoriasCorrelacionadasPorUPID(t *testing.T) {
 	if err := db.Where("accion = ? AND upid = ?", ports.AccionCrearInstancia, tarea.UpidProxmox).Order("fecha_hora ASC").Find(&registros).Error; err != nil {
 		t.Fatal(err)
 	}
-	if len(registros) != 2 || registros[0].Resultado != ports.ResultadoPendiente || registros[1].Resultado != ports.ResultadoSuccess {
+	if len(registros) != 2 || registros[0].Resultado != ports.ResultadoPendiente || registros[1].Resultado != ports.ResultadoExito {
 		t.Fatalf("se esperaban exactamente despacho y desenlace: %+v", registros)
 	}
 }
@@ -359,7 +359,7 @@ func TestDestruccionExitosaPurgaPermisosYAuditaEnElMismoCommit(t *testing.T) {
 	if err := db.Where("accion = ? AND instancia_id = ?", ports.AccionInstancePermissionsPurged, "110").First(&purga).Error; err != nil {
 		t.Fatal(err)
 	}
-	if purga.Resultado != ports.ResultadoSuccess || purga.Detalles == nil {
+	if purga.Resultado != ports.ResultadoExito || purga.Detalles == nil {
 		t.Fatalf("auditoría de purga incompleta: %+v", purga)
 	}
 	var detalles map[string]any

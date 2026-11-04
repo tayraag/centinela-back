@@ -87,7 +87,7 @@ func (r *InstanceRepository) PurgarPermisosPorVmid(ctx context.Context, vmid int
 			UsuarioID:   usuarioID,
 			Accion:      ports.AccionInstancePermissionsPurged,
 			InstanciaID: fmt.Sprintf("%d", vmid),
-			Resultado:   ports.ResultadoSuccess,
+			Resultado:   ports.ResultadoExito,
 			Detalles:    detalles,
 		}); err != nil {
 			return fmt.Errorf("error al registrar auditoría de purga: %w", err)

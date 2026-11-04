@@ -757,3 +757,66 @@ func propiedad(t *testing.T, definitions map[string]any, definicion, campo strin
 	t.Helper()
 	return objeto(t, objeto(t, objeto(t, definitions, definicion), "properties"), campo)
 }
+
+// RF-08: el vocabulario cerrado de auditoría se publica igual que en el
+// backend, en el modelo de respuesta, en los filtros del listado y de la
+// exportación, y en la tabla de docs/contrato-etapa1.md.
+func TestContratoVocabularioAuditoria(t *testing.T) {
+	contenido, err := os.ReadFile("swagger.json")
+	if err != nil {
+		t.Fatalf("leer swagger.json: %v", err)
+	}
+	var swagger map[string]any
+	if err := json.Unmarshal(contenido, &swagger); err != nil {
+		t.Fatalf("decodificar swagger.json: %v", err)
+	}
+	acciones, resultados := ports.AccionesAuditoriaValidas(), ports.ResultadosAuditoriaValidos()
+	definitions := objeto(t, swagger, "definitions")
+	verificarEnum(t, definitions, "http.ItemAuditoriaResponse", "accion", acciones...)
+	verificarEnum(t, definitions, "http.ItemAuditoriaResponse", "resultado", resultados...)
+
+	paths := objeto(t, swagger, "paths")
+	for _, ruta := range []string{"/admin/audit", "/admin/audit/export"} {
+		operacion := objeto(t, objeto(t, paths, ruta), "get")
+		verificarEnumParametro(t, operacion, ruta, "accion", acciones)
+		verificarEnumParametro(t, operacion, ruta, "resultado", resultados)
+	}
+
+	documento, err := os.ReadFile("contrato-etapa1.md")
+	if err != nil {
+		t.Fatalf("leer contrato-etapa1.md: %v", err)
+	}
+	for _, valor := range append(acciones, resultados...) {
+		if !strings.Contains(string(documento), "| `"+valor+"` |") {
+			t.Errorf("contrato-etapa1.md no publica %s en la tabla del vocabulario de auditoría", valor)
+		}
+	}
+	for _, viejo := range []string{"SUCCESS", "PENDING", "START_VM", "CREAR_VM", "SUSPENDER_VM"} {
+		if strings.Contains(string(documento), "| `"+viejo+"` |") {
+			t.Errorf("contrato-etapa1.md publica el código viejo %s como válido", viejo)
+		}
+	}
+}
+
+// verificarEnumParametro comprueba el enum exacto de un parámetro de consulta.
+func verificarEnumParametro(t *testing.T, operacion map[string]any, ruta, nombre string, esperados []string) {
+	t.Helper()
+	parametros, _ := operacion["parameters"].([]any)
+	for _, bruto := range parametros {
+		parametro, ok := bruto.(map[string]any)
+		if !ok || parametro["name"] != nombre {
+			continue
+		}
+		enum, _ := parametro["enum"].([]any)
+		obtenidos := make([]string, 0, len(enum))
+		for _, v := range enum {
+			texto, _ := v.(string)
+			obtenidos = append(obtenidos, texto)
+		}
+		if strings.Join(obtenidos, ",") != strings.Join(esperados, ",") {
+			t.Errorf("%s ?%s declara enum %v, se esperaba %v", ruta, nombre, obtenidos, esperados)
+		}
+		return
+	}
+	t.Errorf("%s no declara el parámetro %s", ruta, nombre)
+}

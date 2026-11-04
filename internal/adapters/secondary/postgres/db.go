@@ -9,6 +9,7 @@ import (
 
 	"el-centinela/internal/core/domain"
 	"el-centinela/internal/infrastructure/crypto"
+	"el-centinela/migrations"
 	"github.com/google/uuid"
 
 	"gorm.io/driver/postgres"
@@ -116,6 +117,8 @@ func InitDB() (*gorm.DB, error) {
 	}
 	log.Println("🔒 Inmutabilidad de auditoría garantizada mediante trigger")
 
+	normalizarVocabularioAuditoria(db)
+
 	// Revocar privilegios destructivos al usuario actual (defensa en profundidad)
 	if err := db.Exec(`REVOKE UPDATE, DELETE, TRUNCATE ON auditoria FROM CURRENT_USER;`).Error; err != nil {
 		log.Printf("⚠️ No se pudieron revocar los privilegios sobre auditoria: %v", err)
@@ -126,6 +129,20 @@ func InitDB() (*gorm.DB, error) {
 	seedAdminPorDefecto(db)
 
 	return db, nil
+}
+
+// normalizarVocabularioAuditoria traduce los códigos viejos de auditoria.accion
+// y auditoria.resultado al vocabulario cerrado (RF-08) con el script
+// migrations/20261104_vocabulario_auditoria.sql. Es idempotente: sin códigos
+// viejos no toca la tabla. Si falla (ej. el usuario de la base no puede
+// desactivar el trigger) la API arranca igual y lo avisa: el script se puede
+// correr a mano (SETUP.md).
+func normalizarVocabularioAuditoria(db *gorm.DB) {
+	if err := db.Exec(migrations.VocabularioAuditoria).Error; err != nil {
+		log.Printf("⚠️  No se pudo normalizar el vocabulario de auditoría (correr migrations/20261104_vocabulario_auditoria.sql a mano): %v", err)
+		return
+	}
+	log.Println("📚 Vocabulario de auditoría normalizado (EXITO/FALLA/PENDIENTE y acciones canónicas)")
 }
 
 // migrarSesionesAUnaFilaPorSesion reemplaza el esquema viejo de sesiones_activas

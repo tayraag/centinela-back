@@ -153,6 +153,7 @@ centinela-back/
 │           ├── password.go      # Hash/verify bcrypt
 │           └── totp.go          # QR TOTP, cifrado AES del secreto
 │
+├── migrations/                  # Scripts SQL de auditoría (SETUP.md); el de vocabulario lo aplica la API al arrancar
 ├── scripts/                     # Scripts de utilidad
 ├── docker-compose.yml
 ├── go.mod                       # Gestor de dependencias

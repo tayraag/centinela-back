@@ -1545,18 +1545,18 @@ no envía la orden a Proxmox y responde **HTTP 503 Service Unavailable**:
 `GET /api/admin/audit` y `GET /api/admin/audit/export` requieren un access token válido y rol **ADMIN**. OPERATOR recibe `403`; sin token válido, `401`.
 
 ```http
-GET /api/admin/audit?desde=2026-10-01&hasta=2026-10-20&accion=SNAPSHOT_CREATE&recursoTipo=VM&recursoId=inst_3Hk9aQ2mXv7LpR4sT1bN8c&resultado=SUCCESS&page=1&limit=25
+GET /api/admin/audit?desde=2026-10-01&hasta=2026-10-20&accion=SNAPSHOT_CREATE&recursoTipo=VM&recursoId=inst_3Hk9aQ2mXv7LpR4sT1bN8c&resultado=EXITO&page=1&limit=25
 ```
 
 | Parámetro | Contrato |
 |---|---|
 | `desde`, `hasta` | RFC3339 con zona o `YYYY-MM-DD`. Fecha sola en UTC; `hasta` incluye el día completo. Con hora se respeta ese instante. `desde > hasta` devuelve 400. |
 | `usuarioId` | UUID del actor. Un UUID inválido devuelve 400. |
-| `accion` | Código exacto de la acción, por ejemplo `SNAPSHOT_CREATE`, `SNAPSHOT_ROLLBACK`, `SNAPSHOT_DELETE`, `CONFIG_UPDATED` o `LOGIN`. No se restringe a un enum cerrado. |
+| `accion` | Código exacto de la acción, del vocabulario cerrado (31 valores, tabla en `docs/contrato-etapa1.md` y `enum` en Swagger), por ejemplo `SNAPSHOT_CREATE`, `CONFIG_UPDATED` o `LOGIN`. Otro valor, incluidos los códigos viejos como `START`, devuelve 400 `INVALID_QUERY`. |
 | `recursoTipo` | `VM`, `LXC`, `HOST`, `USER`. Otro valor devuelve 400. |
 | `recursoId` | Para VM/LXC, referencia pública `inst_...` del inventario, que el servicio traduce al VMID interno. Para HOST/USER, su propio identificador. |
 | `instanciaId` | Filtro anterior por referencia pública; sigue admitido. |
-| `resultado` | `SUCCESS`, `FAILED`, `PENDIENTE`; conserva `EXITO` y `FALLA` históricos. Otro valor devuelve 400. |
+| `resultado` | `EXITO`, `FALLA` o `PENDIENTE` (los mismos para todas las acciones). `SUCCESS`, `FAILED` y `PENDING` ya no existen: los registros viejos se tradujeron y esos valores devuelven 400 `INVALID_QUERY`. |
 | `page`, `limit` | Predeterminados 1 y 25; enteros positivos; `limit > 100` se recorta a 100. |
 | `pagina`, `tamano` | Alias anteriores, con los mismos límites. `page` y `limit` prevalecen si también se envían. |
 | `ordenarPor`, `direccion` | `fechaHora`, `accion` o `resultado`; `asc` o `desc`. Predeterminados `fechaHora desc`, con ID como desempate. |
@@ -1577,7 +1577,7 @@ Sin `desde`, la consulta comienza en el trimestre actual UTC. Si `hasta` es ante
       "accion": "SNAPSHOT_CREATE",
       "recursoTipo": "VM",
       "recursoId": "inst_3Hk9aQ2mXv7LpR4sT1bN8c",
-      "resultado": "SUCCESS",
+      "resultado": "EXITO",
       "detalle": {"snapname": "rf08_prueba", "duracionSegundos": 4}
     }
   ],
@@ -1597,7 +1597,7 @@ Cabeceras: CSV `text/csv; charset=utf-8`, JSON `application/json; charset=utf-8`
 
 Los errores de validación y apertura del cursor se responden antes de iniciar el archivo. Si falla la lectura/escritura después de enviar las cabeceras, se interrumpe la conexión; no se agrega un JSON de error al reporte parcial, que debe descartarse. No hay endpoint para insertar auditoría. Los métodos internos históricos que devuelven bytes/slices mantienen su compatibilidad, pero no participan de esta ruta HTTP.
 
-**Registro automático:** snapshots generan `SNAPSHOT_CREATE`, `SNAPSHOT_ROLLBACK` o `SNAPSHOT_DELETE`, con despacho `PENDIENTE` y desenlace `SUCCESS`/`FAILED`. Cambios de cores/RAM usan `CONFIG_UPDATED`. Los códigos de las tareas/SSE siguen siendo `SNAPSHOT`, `ROLLBACK_SNAPSHOT` y `DELETE_SNAPSHOT`. Los datos sensibles bajo claves reconocidas se sustituyen por `[REDACTED]` antes del INSERT. El historial anterior no se renombra ni se reescribe.
+**Registro automático:** snapshots generan `SNAPSHOT_CREATE`, `SNAPSHOT_ROLLBACK` o `SNAPSHOT_DELETE`, con despacho `PENDIENTE` y desenlace `EXITO`/`FALLA`. Cambios de cores/RAM usan `CONFIG_UPDATED`. Los códigos de las tareas/SSE siguen siendo `SNAPSHOT`, `ROLLBACK_SNAPSHOT` y `DELETE_SNAPSHOT`. Los datos sensibles bajo claves reconocidas se sustituyen por `[REDACTED]` antes del INSERT. El historial anterior no se renombra ni se reescribe.
 
 **Alcance de los eventos de sistema:** `auditoria.organizacion_id` guarda la atribución de las alertas sin usuario. Se usa la política existente de correo: ADMIN activos y, para instancias, operadores activos FULL_ACCESS. Se inserta una fila por organización autorizada, con destinatarios exclusivos de esa organización, en una única transacción. No se inventa un usuario: `usuarioId` es null y el nombre es `[sistema]`. Listado y exportación aceptan el alcance explícito o, para registros anteriores con usuario, su organización mediante el JOIN. Los registros históricos sin usuario ni alcance siguen excluidos; tampoco se hace global un evento nuevo sin audiencia. El alcance histórico no cambia al retirar un permiso actual. La migración idempotente de arranque agrega la columna y el índice `(organizacion_id, fecha_hora DESC)`; hace falta reiniciar la API actualizada para aplicarla.
 
@@ -1609,11 +1609,11 @@ Usar una VM y un LXC de prueba o el simulador documentado en `docs/simulador-pro
 2. Abrir `POST /auth/login`, pulsar **Try it out**, ingresar `{"email":"<correo-admin>","password":"<clave>"}` y pulsar **Execute**. Copiar `jwtTemporal`. Pulsar **Authorize** y, en **BearerPreAuth**, ingresar `Bearer <jwtTemporal>`, confirmar y cerrar. Si `totpVinculado=false`, ejecutar `GET /auth/2fa/qr` y vincular `secretoManual` en un autenticador. Ejecutar `POST /auth/2fa/verify` con `{"codigo":"<seis dígitos actuales>"}`. En **Authorize**, completar **BearerAuth** con `Bearer <accessToken>`. **BearerPreAuth** es exclusivo del flujo 2FA; **BearerAuth** se usa para auditoría e instancias. No reutilizar el mismo período TOTP si ya fue consumido.
 3. Ejecutar `GET /instances` con ADMIN y copiar la `id` pública de una VM y un LXC de prueba. No usar el VMID ni inventar referencias. Obtener el UUID del usuario desde `GET /account/profile` si se probará `usuarioId`.
 4. En `GET /admin/audit`, pulsar **Try it out**, dejar filtros opcionales vacíos y **Execute**. Esperar 200, `items`, `total`, `page=1`, `limit=25`, `totalPages`. Sin fechas solo se consulta el trimestre actual. Usar fechas del día de la prueba para operaciones nuevas; octubre 1–20 no incluirá una operación del 27.
-5. En `POST /instances/{instanceRef}/snapshots`, completar la referencia y `{"snapname":"rf08_prueba","description":"Prueba RF08"}`. **Execute** debe devolver 202 y `tareaId`. Reconsultar auditoría con `accion=SNAPSHOT_CREATE`, `recursoTipo=VM` o `LXC` y `recursoId=<referencia>`. Esperar `PENDIENTE` y luego `SUCCESS` o `FAILED`; el desenlace puede tardar varios segundos. Repetir sobre la otra clase de instancia. Cada prueba necesita un nombre que todavía no exista.
+5. En `POST /instances/{instanceRef}/snapshots`, completar la referencia y `{"snapname":"rf08_prueba","description":"Prueba RF08"}`. **Execute** debe devolver 202 y `tareaId`. Reconsultar auditoría con `accion=SNAPSHOT_CREATE`, `recursoTipo=VM` o `LXC` y `recursoId=<referencia>`. Esperar `PENDIENTE` y luego `EXITO` o `FALLA`; el desenlace puede tardar varios segundos. Repetir sobre la otra clase de instancia. Cada prueba necesita un nombre que todavía no exista.
 6. Cuando finalice la tarea, ejecutar `POST /instances/{instanceRef}/snapshots/{snapname}/rollback` sobre el snapshot creado. Esperar 202 y luego consultar `accion=SNAPSHOT_ROLLBACK`. Esperar el desenlace antes de continuar; durante el seguimiento otra operación puede devolver 409 `INSTANCE_BUSY`.
 7. Ejecutar `DELETE /instances/{instanceRef}/snapshots/{snapname}` y después consultar `accion=SNAPSHOT_DELETE`. Esperar 202 y el desenlace auditado. El endpoint no elimina la VM/LXC.
-8. En `PUT /instances/{instanceRef}/config`, enviar cores/RAM válidos dentro de las cuotas del entorno, por ejemplo `{"cores":2,"ramMb":2048}` si son apropiados para esa instancia. Esperar 200 y revisar `requiresReboot`. Consultar `accion=CONFIG_UPDATED` y `recursoId=<misma referencia>`; revisar valores anteriores/nuevos y resultado. Restaurar los valores originales al terminar. Una cuota excedida puede devolver 409 y generar `FAILED`; una validación HTTP temprana no garantiza una fila de auditoría.
-9. Copiar un `recursoId` devuelto en un item. Volver a consultar con ese valor, tipo, acción, UUID del actor, `resultado=SUCCESS` y fechas de la prueba. Debe encontrar el mismo registro si todos los filtros coinciden. No usar `PENDIENTE` para configuración, que no sigue el ciclo de snapshots.
+8. En `PUT /instances/{instanceRef}/config`, enviar cores/RAM válidos dentro de las cuotas del entorno, por ejemplo `{"cores":2,"ramMb":2048}` si son apropiados para esa instancia. Esperar 200 y revisar `requiresReboot`. Consultar `accion=CONFIG_UPDATED` y `recursoId=<misma referencia>`; revisar valores anteriores/nuevos y resultado. Restaurar los valores originales al terminar. Una cuota excedida puede devolver 409 y generar `FALLA`; una validación HTTP temprana no garantiza una fila de auditoría.
+9. Copiar un `recursoId` devuelto en un item. Volver a consultar con ese valor, tipo, acción, UUID del actor, `resultado=EXITO` y fechas de la prueba. Debe encontrar el mismo registro si todos los filtros coinciden. No usar `PENDIENTE` para configuración, que no sigue el ciclo de snapshots.
 10. Probar `limit=1` y `page=1`, luego `page=2` si hay suficientes eventos. El total debe conservarse sin cambios concurrentes. Probar `limit=101`: la respuesta indica `limit=100`.
 11. Probar por separado `usuarioId=incorrecto`, `desde=ayer` y `desde=2026-10-21` junto con `hasta=2026-10-20`: cada petición enviada devuelve 400 `INVALID_QUERY`. Los enums de `recursoTipo`/`resultado` y los mínimos de paginación pueden ser rechazados por la propia UI antes de enviar; en ese caso no se comprobó un HTTP 400 del backend. Las pruebas automatizadas cubren también esos valores inválidos.
 12. Abrir `GET /admin/audit/export`, copiar los mismos filtros y ejecutar con `format=json` y luego `format=csv`. Revisar el nombre `auditoria_centinela_YYYYMMDD_HHMM` y el Content-Type correspondiente. JSON debe cerrar su array; CSV debe tener BOM UTF-8 y las ocho columnas indicadas arriba. Swagger muestra el cuerpo o el enlace de descarga según el navegador; no necesariamente representa la llegada incremental de bloques. `formato=json` sigue funcionando como alias si se deja `format` sin enviar. Con `format=xml` se obtiene 400. Para cancelar una descarga grande usar Network del navegador o un cliente HTTP; una solicitud posterior debe seguir funcionando sin conexiones retenidas. El uso de memoria y la liberación del pool se comprueban en las pruebas de integración, no por el tiempo que presenta Swagger.

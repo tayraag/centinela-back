@@ -454,7 +454,7 @@ func (e *EvaluadorAlertas) registrarAuditoria(ctx context.Context, accion string
 	}
 	e.audit.Registrar(ctx, ports.RegistrarAuditoriaInput{
 		Accion: accion, InstanciaID: instanciaID, InstanciaNombre: m.nombre,
-		RecursoTipo: m.recursoTipo, RecursoID: recursoID, Resultado: ports.ResultadoSuccess, Detalles: traza,
+		RecursoTipo: m.recursoTipo, RecursoID: recursoID, Resultado: ports.ResultadoExito, Detalles: traza,
 	})
 }
 

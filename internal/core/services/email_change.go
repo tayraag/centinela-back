@@ -70,7 +70,7 @@ func (s *userServiceImpl) solicitarCambioEmail(ctx context.Context, u *domain.Us
 	token := hex.EncodeToString(tokenBytes)
 	cambio := cambioEmail{u.ID, nuevo, u.EmailUsuario, uuid.New(), in.IP}
 	// La auditoría es obligatoria: una solicitud no se habilita sin evidencia persistida.
-	if err := s.auditSvc.RegistrarEstricto(ctx, cambio.auditoria("UPDATE_PROFILE_EMAIL_REQUESTED", "PENDIENTE", in.IP)); err != nil {
+	if err := s.auditSvc.RegistrarEstricto(ctx, cambio.auditoria(ports.AccionSolicitarCambioEmail, ports.ResultadoPendiente, in.IP)); err != nil {
 		return err
 	}
 	// Enviar primero la alerta. Si falla, nunca se habilita el token.
@@ -121,5 +121,5 @@ func (s *userServiceImpl) ConfirmarEmail(ctx context.Context, usuarioID uuid.UUI
 	if consumed != raw {
 		return ports.ErrEmailToken
 	}
-	return s.userRepo.ConfirmarCambioEmail(ctx, usuarioID, c.EmailOriginal, c.NuevoEmail, c.auditoria("UPDATE_PROFILE_EMAIL_CONFIRMED", "SUCCESS", ip))
+	return s.userRepo.ConfirmarCambioEmail(ctx, usuarioID, c.EmailOriginal, c.NuevoEmail, c.auditoria(ports.AccionConfirmarCambioEmail, ports.ResultadoExito, ip))
 }

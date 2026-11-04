@@ -314,9 +314,9 @@ func TestSeguimiento_CreacionNormalizaEventoYConservaContexto(t *testing.T) {
 		tipoProxmox string
 		recursoTipo string
 	}{
-		{"código de dominio VM", ports.AccionCrearVM, ports.TipoInstanciaQemu, ports.RecursoVM},
+		{"código de dominio VM", ports.AccionTareaCrearVM, ports.TipoInstanciaQemu, ports.RecursoVM},
 		{"operación UPID VM", ports.AccionProxmoxCrearVM, ports.TipoInstanciaQemu, ports.RecursoVM},
-		{"código de dominio LXC", ports.AccionCrearLXC, ports.TipoInstanciaLXC, ports.RecursoLXC},
+		{"código de dominio LXC", ports.AccionTareaCrearLXC, ports.TipoInstanciaLXC, ports.RecursoLXC},
 		{"operación UPID LXC", ports.AccionProxmoxCrearLXC, ports.TipoInstanciaLXC, ports.RecursoLXC},
 	}
 	for _, caso := range casos {

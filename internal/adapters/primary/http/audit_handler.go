@@ -63,9 +63,9 @@ type PaginaAuditoriaResponse struct {
 // @Produce      json
 // @Security     BearerAuth
 // @Param        usuarioId   query string  false "Filtrar por UUID de usuario"
-// @Param        accion      query string  false "Filtrar por tipo de acción (ej: LOGIN, SNAPSHOT_CREATE, SNAPSHOT_ROLLBACK, SNAPSHOT_DELETE, ALERT_TRIGGERED, CONFIG_UPDATED)"
+// @Param        accion      query string  false "Filtrar por acción (vocabulario cerrado; otro valor responde 400 INVALID_QUERY)" Enums(LOGIN,LOGIN_FALLA,VERIFICAR_2FA,2FA_FALLA,LOGOUT,CREAR_USUARIO,ACTUALIZAR_USUARIO,ELIMINAR_USUARIO,ASIGNAR_PERMISOS,RESETEAR_CONTRASENA,RESETEAR_TOTP,PASSWORD_CHANGED,UPDATE_PROFILE_EMAIL_REQUESTED,UPDATE_PROFILE_EMAIL_CONFIRMED,CREATE_INSTANCE,INICIAR_VM,DETENER_VM,APAGAR_VM,REINICIAR_VM,REANUDAR_VM,ELIMINAR_VM,CONFIG_UPDATED,SNAPSHOT_CREATE,SNAPSHOT_ROLLBACK,SNAPSHOT_DELETE,INSTANCE_PERMISSIONS_PURGED,SYSTEM_INSTANCE_STOPPED_EXTERNALLY,ALERT_TRIGGERED,ALERT_RESOLVED,EVENTOS_CONEXION,EVENTOS_CIERRE)
 // @Param        instanciaId query string false "Referencia pública inst_... de la instancia"
-// @Param        resultado   query string  false "Filtrar por resultado: PENDIENTE, SUCCESS, FAILED (infraestructura); EXITO o FALLA (otras acciones)"
+// @Param        resultado   query string  false "Filtrar por resultado (otro valor responde 400 INVALID_QUERY)" Enums(EXITO,FALLA,PENDIENTE)
 // @Param        desde       query string  false "Fecha desde (RFC3339 o YYYY-MM-DD)"
 // @Param        hasta       query string  false "Fecha hasta (RFC3339 o YYYY-MM-DD)"
 // @Param        recursoTipo query string false "Tipo del recurso" Enums(VM,LXC,HOST,USER)
@@ -123,9 +123,9 @@ func (h *AuditHandler) ListarAuditoria(c *gin.Context) {
 // @Produce      application/json
 // @Security     BearerAuth
 // @Param        usuarioId   query string  false "Filtrar por UUID de usuario"
-// @Param        accion      query string  false "Filtrar por tipo de acción"
+// @Param        accion      query string  false "Filtrar por acción (vocabulario cerrado; otro valor responde 400 INVALID_QUERY)" Enums(LOGIN,LOGIN_FALLA,VERIFICAR_2FA,2FA_FALLA,LOGOUT,CREAR_USUARIO,ACTUALIZAR_USUARIO,ELIMINAR_USUARIO,ASIGNAR_PERMISOS,RESETEAR_CONTRASENA,RESETEAR_TOTP,PASSWORD_CHANGED,UPDATE_PROFILE_EMAIL_REQUESTED,UPDATE_PROFILE_EMAIL_CONFIRMED,CREATE_INSTANCE,INICIAR_VM,DETENER_VM,APAGAR_VM,REINICIAR_VM,REANUDAR_VM,ELIMINAR_VM,CONFIG_UPDATED,SNAPSHOT_CREATE,SNAPSHOT_ROLLBACK,SNAPSHOT_DELETE,INSTANCE_PERMISSIONS_PURGED,SYSTEM_INSTANCE_STOPPED_EXTERNALLY,ALERT_TRIGGERED,ALERT_RESOLVED,EVENTOS_CONEXION,EVENTOS_CIERRE)
 // @Param        instanciaId query string false "Referencia pública inst_... de instancia"
-// @Param        resultado   query string  false "PENDIENTE, SUCCESS, FAILED (infraestructura); EXITO o FALLA (otras acciones)"
+// @Param        resultado   query string  false "Filtrar por resultado (otro valor responde 400 INVALID_QUERY)" Enums(EXITO,FALLA,PENDIENTE)
 // @Param        desde       query string  false "Fecha desde (RFC3339 o YYYY-MM-DD)"
 // @Param        hasta       query string  false "Fecha hasta (RFC3339 o YYYY-MM-DD)"
 // @Param        recursoTipo query string false "Tipo del recurso" Enums(VM,LXC,HOST,USER)
@@ -406,10 +406,12 @@ func validarConsultaAuditoria(c *gin.Context, f *ports.FiltrosAuditoria, o *port
 	default:
 		return fmt.Errorf("recursoTipo inválido")
 	}
-	switch f.Resultado {
-	case "", "SUCCESS", "FAILED", "PENDIENTE", "EXITO", "FALLA":
-	default:
-		return fmt.Errorf("resultado inválido")
+	// Vocabulario cerrado (RF-08): solo los valores que el backend escribe.
+	if f.Accion != "" && !ports.EsAccionAuditoriaValida(f.Accion) {
+		return fmt.Errorf("accion inválida: debe ser una de %s", strings.Join(ports.AccionesAuditoriaValidas(), ", "))
+	}
+	if f.Resultado != "" && !ports.EsResultadoAuditoriaValido(f.Resultado) {
+		return fmt.Errorf("resultado inválido: debe ser uno de %s", strings.Join(ports.ResultadosAuditoriaValidos(), ", "))
 	}
 	o.TamanoPag = 25
 	for _, campo := range []string{"pagina", "page", "tamano", "limit"} {

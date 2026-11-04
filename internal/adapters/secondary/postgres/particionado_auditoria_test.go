@@ -310,7 +310,7 @@ func TestRF08FiltrosSQLPruning(t *testing.T) {
 	}
 	desde := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
 	hasta := time.Date(2026, 10, 20, 10, 0, 0, 123, time.UTC)
-	for _, f := range []ports.FiltrosAuditoria{{}, {Desde: &desde, Hasta: &hasta, RecursoTipo: "VM", RecursoID: "105", Accion: "SNAPSHOT_CREATE", Resultado: "SUCCESS"}} {
+	for _, f := range []ports.FiltrosAuditoria{{}, {Desde: &desde, Hasta: &hasta, RecursoTipo: "VM", RecursoID: "105", Accion: "SNAPSHOT_CREATE", Resultado: "EXITO"}} {
 		q := aplicarFiltros(db.Table("auditoria a"), f).Find(&[]map[string]any{})
 		sql := q.Statement.SQL.String()
 		if !strings.Contains(sql, "a.fecha_hora >= $") {
@@ -372,7 +372,7 @@ func TestRF08VolumenPaginacionYPruning(t *testing.T) {
 		hasta := time.Date(2026, 10, 21, 0, 0, 0, 0, time.UTC).Add(-time.Microsecond)
 		usuario := uuid.MustParse("00000000-0000-0000-0000-000000000001")
 		org := uuid.MustParse("00000000-0000-0000-0000-000000000002")
-		filtros := ports.FiltrosAuditoria{Desde: &desde, Hasta: &hasta, UsuarioID: &usuario, Accion: ports.AccionCrearSnapshot, RecursoTipo: "VM", RecursoID: "100", Resultado: ports.ResultadoSuccess}
+		filtros := ports.FiltrosAuditoria{Desde: &desde, Hasta: &hasta, UsuarioID: &usuario, Accion: ports.AccionCrearSnapshot, RecursoTipo: "VM", RecursoID: "100", Resultado: ports.ResultadoExito}
 		opciones := ports.OpcionesAuditoria{Pagina: 2, TamanoPag: 25, OrdenarPor: "fechaHora", Direccion: "desc"}
 		repo := NewAuditRepository(tx)
 		// Calentar caches antes de medir; la medición incluye COUNT y SELECT reales.

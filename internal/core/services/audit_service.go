@@ -290,9 +290,9 @@ func (s *auditServiceImpl) PrepararAuditoriaTarea(t *domain.TareaAsincrona, cier
 			detalles["ramMb"] = meta["ramMb"]
 			detalles["discoGb"] = meta["discoGb"]
 		} else {
-			resultado = ports.ResultadoFailed
+			resultado = ports.ResultadoFalla
 			if cierre["exitstatus"] == "OK" && cierre["motivo"] == nil {
-				resultado = ports.ResultadoSuccess
+				resultado = ports.ResultadoExito
 			}
 			detalles["exitstatus"] = cierre["exitstatus"]
 			detalles["duracionSegundos"] = max(0, ahora.Sub(t.FechaCreacion).Seconds())
@@ -318,16 +318,16 @@ func (s *auditServiceImpl) PrepararAuditoriaTarea(t *domain.TareaAsincrona, cier
 	}
 	resultado := ports.ResultadoPendiente
 	if cierre != nil {
-		resultado = ports.ResultadoFailed
+		resultado = ports.ResultadoFalla
 		// Una acción operativa completada con advertencias de Proxmox sigue
 		// siendo exitosa: el motivo sólo se completa cuando la tarea falló.
 		// Las creaciones conservan la regla estricta de exitstatus "OK".
 		if cierre["motivo"] == nil {
-			resultado = ports.ResultadoSuccess
+			resultado = ports.ResultadoExito
 		}
 		detalles["exitstatus"] = cierre["exitstatus"]
 		detalles["motivo"] = cierre["motivo"]
-		if resultado == ports.ResultadoFailed && detalles["motivo"] == nil {
+		if resultado == ports.ResultadoFalla && detalles["motivo"] == nil {
 			detalles["motivo"] = ports.MotivoProxmoxError
 		}
 		detalles["duracionSegundos"] = max(0, ahora.Sub(t.FechaCreacion).Seconds())
