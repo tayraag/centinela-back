@@ -1308,3 +1308,104 @@ func TestClient_ListarTareasInstanciaErrores(t *testing.T) {
 		})
 	}
 }
+
+// TestClient_AprovisionarInstancia_SalteaVMIDsProtegidos reproduce el defecto
+// del 2026-11-04: cluster/nextid devolvió 104, un VMID de
+// PROXMOX_PROTECTED_VMIDS, y el contenedor creado ahí quedó inmortal porque
+// toda ruta destructiva responde 403 INSTANCE_PROTECTED. El aprovisionamiento
+// tiene que avanzar hasta un VMID libre y no protegido.
+func TestClient_AprovisionarInstancia_SalteaVMIDsProtegidos(t *testing.T) {
+	esperado := "PVEAPIToken=" + tokenIDValido + "=" + tokenSecretValido
+	var vmidCreado string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != esperado {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		switch {
+		case r.URL.Path == "/api2/json/cluster/nextid" && r.URL.Query().Get("vmid") == "":
+			_, _ = w.Write([]byte(`{"data":"104"}`))
+		case r.URL.Path == "/api2/json/cluster/nextid" && r.URL.Query().Get("vmid") == "106":
+			_, _ = w.Write([]byte(`{"data":"106"}`))
+		case r.URL.Path == "/api2/json/cluster/nextid":
+			// 105 también está protegido y 105+vmid ocupado: Proxmox responde 400.
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"data":null,"message":"VMID already in use"}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/lxc"):
+			_ = r.ParseForm()
+			vmidCreado = r.Form.Get("vmid")
+			_, _ = w.Write([]byte(`{"data":"UPID:proxmox:0001:0001:0001:vzcreate:106:root@pam:"}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	cliente := proxmox.NewClient(server.URL, tokenIDValido, tokenSecretValido, nil,
+		proxmox.ConVMIDsProtegidos(map[int]bool{100: true, 101: true, 102: true, 103: true, 104: true, 105: true}))
+
+	resultado, err := cliente.AprovisionarInstancia(context.Background(), ports.CrearInstanciaProxmoxInput{
+		Tipo: ports.TipoInstanciaLXC, Nodo: "proxmox", Nombre: "prueba01", Cores: 1, MemoriaMB: 512,
+		StorageID: "local-lvm", DiscoGB: 20, TemplateID: "local:vztmpl/debian-13-standard_13.6-1_amd64.tar.zst",
+		Bridge: "vmbr0", IPv4Tipo: "dhcp",
+	})
+	if err != nil {
+		t.Fatalf("no esperaba error: %v", err)
+	}
+	if resultado.VMID != 106 {
+		t.Fatalf("VMID = %d, quiero 106 porque 104 y 105 son infraestructura protegida", resultado.VMID)
+	}
+	if vmidCreado != "106" {
+		t.Fatalf("vmid enviado a Proxmox = %q, quiero 106", vmidCreado)
+	}
+}
+
+// TestClient_AprovisionarInstancia_SinVMIDLibreFalla cubre el caso opuesto: si
+// no hay ningún VMID libre fuera de los protegidos, la creación no se despacha.
+func TestClient_AprovisionarInstancia_SinVMIDLibreFalla(t *testing.T) {
+	esperado := "PVEAPIToken=" + tokenIDValido + "=" + tokenSecretValido
+	var seIntentoCrear bool
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != esperado {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		if r.Method == http.MethodPost {
+			seIntentoCrear = true
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		if r.URL.Path == "/api2/json/cluster/nextid" {
+			if r.URL.Query().Get("vmid") != "" {
+				// Cualquier VMID concreto está ocupado: no hay hueco libre.
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(`{"data":null,"message":"VMID already in use"}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"data":"104"}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(server.Close)
+
+	cliente := proxmox.NewClient(server.URL, tokenIDValido, tokenSecretValido, nil,
+		proxmox.ConVMIDsProtegidos(map[int]bool{104: true}))
+
+	_, err := cliente.AprovisionarInstancia(context.Background(), ports.CrearInstanciaProxmoxInput{
+		Tipo: ports.TipoInstanciaLXC, Nodo: "proxmox", Nombre: "prueba01", Cores: 1, MemoriaMB: 512,
+		StorageID: "local-lvm", DiscoGB: 20, TemplateID: "local:vztmpl/debian-13-standard_13.6-1_amd64.tar.zst",
+		Bridge: "vmbr0", IPv4Tipo: "dhcp",
+	})
+	if err == nil {
+		t.Fatal("se esperaba error cuando no hay ningún VMID libre")
+	}
+	if !errors.Is(err, ports.ErrCreacionNoDespachada) {
+		t.Fatalf("error = %v, quiero ErrCreacionNoDespachada", err)
+	}
+	if seIntentoCrear {
+		t.Fatal("no se debe despachar la creación sin un VMID libre")
+	}
+}
