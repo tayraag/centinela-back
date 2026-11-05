@@ -75,6 +75,11 @@ type TareaRepository interface {
 	// un cambio de estado que Centinela ordenó (start, stop, rollback...).
 	HuboTareaDesde(ctx context.Context, vmid int, desde time.Time) (bool, error)
 
+	// FueCreadaPorCentinela indica si el VMID tiene una creación propia
+	// confirmada por Proxmox. Es la guarda de pertenencia del borrado: una
+	// instancia que la API no creó no se destruye desde la API.
+	FueCreadaPorCentinela(ctx context.Context, vmid int) (bool, error)
+
 	// ListarEnCurso devuelve todas las tareas en estado RUNNING, de la más vieja a
 	// la más nueva. Lo usa el reconciliador del seguimiento de tareas.
 	ListarEnCurso(ctx context.Context) ([]domain.TareaAsincrona, error)

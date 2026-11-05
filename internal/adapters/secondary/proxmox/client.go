@@ -36,6 +36,21 @@ type Client struct {
 	tokenSecret  string
 	httpClient   *http.Client
 	aprovisionMu sync.Mutex // serializa nextid + create dentro de esta API
+	// vmidsProtegidos son los VMID de infraestructura (PROXMOX_PROTECTED_VMIDS).
+	// La creación nunca los usa: una instancia creada en ese rango no se puede
+	// detener, reconfigurar ni borrar, porque toda ruta destructiva responde
+	// 403 INSTANCE_PROTECTED.
+	vmidsProtegidos map[int]bool
+}
+
+// OpcionCliente ajusta un Client al construirlo. Evita romper a los llamadores
+// existentes cada vez que aparece una dependencia nueva.
+type OpcionCliente func(*Client)
+
+// ConVMIDsProtegidos inyecta el set de PROXMOX_PROTECTED_VMIDS para que el
+// aprovisionamiento no elija un VMID de infraestructura.
+func ConVMIDsProtegidos(protegidos map[int]bool) OpcionCliente {
+	return func(c *Client) { c.vmidsProtegidos = protegidos }
 }
 
 // NewClient crea un cliente de Proxmox VE.
@@ -46,11 +61,11 @@ type Client struct {
 // tokenID/tokenSecret: API Token de servicio (ej. "centinela-api@pve!backend-token").
 // Si falta alguno de los dos, toda operación falla con ErrProxmoxCredenciales
 // sin llegar a llamar a Proxmox.
-func NewClient(baseURL, tokenID, tokenSecret string, tlsCfg *tls.Config) *Client {
+func NewClient(baseURL, tokenID, tokenSecret string, tlsCfg *tls.Config, opciones ...OpcionCliente) *Client {
 	cleanURL := strings.TrimRight(baseURL, "/")
 	cleanURL = strings.TrimSuffix(cleanURL, "/api2/json")
 
-	return &Client{
+	cliente := &Client{
 		baseURL:     cleanURL,
 		tokenID:     tokenID,
 		tokenSecret: tokenSecret,
@@ -59,6 +74,12 @@ func NewClient(baseURL, tokenID, tokenSecret string, tlsCfg *tls.Config) *Client
 			Transport: &http.Transport{TLSClientConfig: tlsCfg},
 		},
 	}
+	for _, opcion := range opciones {
+		if opcion != nil {
+			opcion(cliente)
+		}
+	}
+	return cliente
 }
 
 var _ ports.ProxmoxPort = (*Client)(nil)
@@ -183,19 +204,9 @@ func (c *Client) AprovisionarInstancia(ctx context.Context, input ports.CrearIns
 	c.aprovisionMu.Lock()
 	defer c.aprovisionMu.Unlock()
 
-	raw, err := c.doRequest(ctx, http.MethodGet, "/api2/json/cluster/nextid", nil)
+	vmid, err := c.proximoVMIDLibre(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ports.ErrCreacionNoDespachada, err)
-	}
-	var siguiente struct {
-		Data string `json:"data"`
-	}
-	if err := json.Unmarshal(raw, &siguiente); err != nil {
-		return nil, fmt.Errorf("%w: %w: respuesta de cluster/nextid inválida: %v", ports.ErrCreacionNoDespachada, ports.ErrProxmoxNoDisponible, err)
-	}
-	vmid, err := strconv.Atoi(siguiente.Data)
-	if err != nil || vmid < 100 {
-		return nil, fmt.Errorf("%w: %w: VMID inválido en cluster/nextid: %q", ports.ErrCreacionNoDespachada, ports.ErrProxmoxNoDisponible, siguiente.Data)
+		return nil, err
 	}
 
 	tipo := strings.ToLower(input.Tipo)
@@ -204,7 +215,7 @@ func (c *Client) AprovisionarInstancia(ctx context.Context, input ports.CrearIns
 	}
 	params := parametrosCreacion(vmid, input)
 	path := fmt.Sprintf("/api2/json/nodes/%s/%s", url.PathEscape(input.Nodo), tipo)
-	raw, err = c.doRequest(ctx, http.MethodPost, path, params)
+	raw, err := c.doRequest(ctx, http.MethodPost, path, params)
 	if err != nil {
 		return nil, err
 	}
@@ -217,6 +228,72 @@ func (c *Client) AprovisionarInstancia(ctx context.Context, input ports.CrearIns
 		accion = ports.AccionProxmoxCrearLXC
 	}
 	return &ports.ResultadoAprovisionamiento{VMID: vmid, UPID: creada.Data, Accion: accion}, nil
+}
+
+// proximoVMIDLibre pide a Proxmox el siguiente VMID y se salta los que
+// pertenecen a PROXMOX_PROTECTED_VMIDS. cluster/nextid puede ofrecer un VMID
+// protegido si quedó libre (por ejemplo, el de un contenedor que se borró):
+// crear ahí produce una instancia inmortal, porque no se puede detener,
+// reconfigurar ni borrar. Para avanzar se consulta /cluster/nextid?vmid=<n>,
+// que responde 200 solo cuando ese VMID está disponible.
+func (c *Client) proximoVMIDLibre(ctx context.Context) (int, error) {
+	vmid, err := c.vmidSugerido(ctx)
+	if err != nil {
+		return 0, err
+	}
+	if !c.esVMIDProtegido(vmid) {
+		return vmid, nil
+	}
+
+	// Rango de VMIDs de Proxmox VE: 100 a 999999. Se avanza de a uno con un
+	// tope acotado para no recorrer el rango entero ante una configuración
+	// absurda. Si todas las consultas fallan, el error final lo informa.
+	const maxIntentos = 100
+	for intento := 1; intento <= maxIntentos; intento++ {
+		candidato := vmid + intento
+		if candidato > 999999 {
+			break
+		}
+		if c.esVMIDProtegido(candidato) {
+			continue
+		}
+		if c.vmidLibre(ctx, candidato) {
+			return candidato, nil
+		}
+	}
+	return 0, fmt.Errorf("%w: no se pudo reservar un VMID libre fuera de PROXMOX_PROTECTED_VMIDS", ports.ErrCreacionNoDespachada)
+}
+
+// esVMIDProtegido informa si el VMID pertenece a la infraestructura de El Centinela.
+func (c *Client) esVMIDProtegido(vmid int) bool {
+	return c.vmidsProtegidos[vmid]
+}
+
+// vmidSugerido devuelve el próximo VMID que ofrece Proxmox.
+func (c *Client) vmidSugerido(ctx context.Context) (int, error) {
+	raw, err := c.doRequest(ctx, http.MethodGet, "/api2/json/cluster/nextid", nil)
+	if err != nil {
+		return 0, fmt.Errorf("%w: %w", ports.ErrCreacionNoDespachada, err)
+	}
+	var siguiente struct {
+		Data string `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &siguiente); err != nil {
+		return 0, fmt.Errorf("%w: %w: respuesta de cluster/nextid inválida: %v", ports.ErrCreacionNoDespachada, ports.ErrProxmoxNoDisponible, err)
+	}
+	vmid, err := strconv.Atoi(siguiente.Data)
+	if err != nil || vmid < 100 {
+		return 0, fmt.Errorf("%w: %w: VMID inválido en cluster/nextid: %q", ports.ErrCreacionNoDespachada, ports.ErrProxmoxNoDisponible, siguiente.Data)
+	}
+	return vmid, nil
+}
+
+// vmidLibre confirma contra Proxmox que un VMID concreto no está en uso. Un
+// error de transporte se trata igual que "no disponible": el aprovisionamiento
+// no puede aceptar un VMID que no pudo verificar.
+func (c *Client) vmidLibre(ctx context.Context, vmid int) bool {
+	_, err := c.doRequest(ctx, http.MethodGet, fmt.Sprintf("/api2/json/cluster/nextid?vmid=%d", vmid), nil)
+	return err == nil
 }
 
 // caracteresDeDirectiva son los que cambian el sentido de una directiva de

@@ -202,6 +202,46 @@ func (r *TareaRepository) HuboTareaDesde(ctx context.Context, vmid int, desde ti
 	return cantidad > 0, nil
 }
 
+// debeReconocerCreacion indica si una tarea registrada corresponde a una
+// creación de la API, sin importar el desenlace. No es
+// debeAsignarPermisoCreacion: aquélla decide quién puede tocar la instancia y
+// exige exitstatus OK; ésta decide si la instancia es de la casa. Una creación
+// que Proxmox completó con WARNINGS, o cuyo seguimiento venció, se cierra como
+// FAILED aunque la instancia exista: si no se reconociera, volvería a ser
+// imborrable desde el panel, que es el síntoma que esta guarda evita. Las filas
+// viejas usaban CREAR_VM y CREAR_LXC antes del vocabulario actual.
+func debeReconocerCreacion(tarea domain.TareaAsincrona) bool {
+	switch strings.ToLower(strings.TrimSpace(tarea.Accion)) {
+	case ports.AccionProxmoxCrearVM, ports.AccionProxmoxCrearLXC,
+		strings.ToLower(ports.AccionTareaCrearVM), strings.ToLower(ports.AccionTareaCrearLXC):
+		return tarea.Estado == ports.TareaCompleted || tarea.Estado == ports.TareaFailed
+	default:
+		return false
+	}
+}
+
+// FueCreadaPorCentinela indica si el VMID tiene una creación propia registrada.
+// instancia_id guarda el VMID numérico como texto. Es la guarda de pertenencia
+// del borrado: una instancia que la API no creó no se destruye desde la API.
+func (r *TareaRepository) FueCreadaPorCentinela(ctx context.Context, vmid int) (bool, error) {
+	var tareas []domain.TareaAsincrona
+	err := r.db.WithContext(ctx).
+		Select("accion", "estado").
+		Where("instancia_id = ? AND accion IN ?", strconv.Itoa(vmid),
+			[]string{ports.AccionProxmoxCrearVM, ports.AccionProxmoxCrearLXC,
+				ports.AccionTareaCrearVM, ports.AccionTareaCrearLXC}).
+		Find(&tareas).Error
+	if err != nil {
+		return false, fmt.Errorf("error al verificar la pertenencia de la instancia %d: %w", vmid, err)
+	}
+	for _, tarea := range tareas {
+		if debeReconocerCreacion(tarea) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // ListarEnCurso devuelve las tareas RUNNING, de la más vieja a la más nueva.
 func (r *TareaRepository) ListarEnCurso(ctx context.Context) ([]domain.TareaAsincrona, error) {
 	var tareas []domain.TareaAsincrona

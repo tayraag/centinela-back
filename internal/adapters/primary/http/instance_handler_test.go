@@ -203,6 +203,14 @@ func (s *seguimientoCaptura) Seguir(_ context.Context, usuarioID uuid.UUID, vmid
 
 type mockTareaRepository struct {
 	activas map[int]ports.ActiveTaskDTO
+	// noPropia simula una instancia del cluster que El Centinela no creó.
+	noPropia bool
+}
+
+// FueCreadaPorCentinela devuelve true salvo que el test simule lo contrario:
+// el caso normal de las pruebas es una instancia creada por la app.
+func (m *mockTareaRepository) FueCreadaPorCentinela(context.Context, int) (bool, error) {
+	return !m.noPropia, nil
 }
 
 func (m *mockTareaRepository) Crear(context.Context, *domain.TareaAsincrona, ports.RegistrarAuditoriaInput) error {
@@ -1080,6 +1088,21 @@ func TestEliminarInstancia_ErroresDeProxmox(t *testing.T) {
 		if status != caso.status || cuerpo["errorCode"] != caso.codigo {
 			t.Errorf("%v: se esperaba %d %s, vino %d %v", caso.err, caso.status, caso.codigo, status, cuerpo)
 		}
+	}
+}
+
+// DELETE sólo destruye lo que El Centinela creó: un VMID ajeno responde 403
+// INSTANCE_NOT_OWNED sin consultar ni escribir en Proxmox. El 2026-11-04 la API
+// destruyó un contenedor que la app no había creado.
+func TestEliminarInstancia_AjenaEs403InstanceNotOwnedSinTocarProxmox(t *testing.T) {
+	mock := &mockProxmoxPort{estado: "stopped"}
+	tareas := &mockTareaRepository{noPropia: true}
+	status, cuerpo := ejecutarBorradoConTareas(mock, tareas)
+	if status != http.StatusForbidden || cuerpo["errorCode"] != "INSTANCE_NOT_OWNED" {
+		t.Fatalf("se esperaba 403 INSTANCE_NOT_OWNED, vino %d %v", status, cuerpo)
+	}
+	if mock.lecturas != 0 || mock.escrituras != 0 {
+		t.Fatalf("no debía tocar Proxmox: lecturas %d, escrituras %d", mock.lecturas, mock.escrituras)
 	}
 }
 

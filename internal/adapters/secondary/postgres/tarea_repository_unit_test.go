@@ -55,3 +55,34 @@ func TestDebePurgarPermisosDestruccion(t *testing.T) {
 		})
 	}
 }
+
+// TestDebeReconocerCreacion fija la guarda de pertenencia del borrado. Una
+// creación que Proxmox completó con advertencias, o cuyo seguimiento venció,
+// deja la instancia en el hipervisor: si no se reconociera como propia, el
+// usuario no podría eliminarla nunca desde el panel (el defecto del 2026-11-04).
+func TestDebeReconocerCreacion(t *testing.T) {
+	casos := []struct {
+		nombre   string
+		accion   string
+		estado   string
+		esperado bool
+	}{
+		{"VM creada", ports.AccionProxmoxCrearVM, ports.TareaCompleted, true},
+		{"LXC creada", ports.AccionProxmoxCrearLXC, ports.TareaCompleted, true},
+		{"LXC completada con advertencias", ports.AccionProxmoxCrearLXC, ports.TareaFailed, true},
+		{"VM con advertencias Proxmox", ports.AccionProxmoxCrearVM, ports.TareaCompleted, true},
+		{"legado CREAR_VM", ports.AccionTareaCrearVM, ports.TareaCompleted, true},
+		{"legado CREAR_LXC vencida", ports.AccionTareaCrearLXC, ports.TareaFailed, true},
+		{"acción operativa", "start", ports.TareaCompleted, false},
+		{"destrucción", "vzdestroy", ports.TareaCompleted, false},
+		{"creación todavía en curso", ports.AccionProxmoxCrearVM, ports.TareaRunning, false},
+	}
+	for _, caso := range casos {
+		t.Run(caso.nombre, func(t *testing.T) {
+			tarea := domain.TareaAsincrona{Accion: caso.accion, Estado: caso.estado}
+			if obtenido := debeReconocerCreacion(tarea); obtenido != caso.esperado {
+				t.Fatalf("debeReconocerCreacion(%s, %s) = %v, se esperaba %v", caso.accion, caso.estado, obtenido, caso.esperado)
+			}
+		})
+	}
+}
