@@ -127,20 +127,25 @@ func main() {
 		proxmoxURL = os.Getenv("PROXMOX_BASE_URL")
 	}
 
+	// Los VMID protegidos se leen antes del cliente: el aprovisionamiento los
+	// necesita para no crear una instancia que después nadie va a poder
+	// detener ni borrar.
+	vmidsProtegidos, err := middleware.ParseVmidsProtegidos(os.Getenv("PROXMOX_PROTECTED_VMIDS"))
+	if err != nil {
+		log.Fatalf("❌ PROXMOX_PROTECTED_VMIDS inválida: %v", err)
+	}
+
 	proxmoxClient := proxmox.NewClient(
 		proxmoxURL,
 		os.Getenv("PROXMOX_TOKEN_ID"),
 		os.Getenv("PROXMOX_TOKEN_SECRET"),
 		proxmox.BuildTLSConfig(),
+		proxmox.ConVMIDsProtegidos(vmidsProtegidos),
 	)
 	if !proxmoxClient.TokenConfigurado() {
 		log.Println("⚠️  PROXMOX_TOKEN_ID/PROXMOX_TOKEN_SECRET sin configurar: los endpoints de /api/instances van a responder 502")
 	}
 
-	vmidsProtegidos, err := middleware.ParseVmidsProtegidos(os.Getenv("PROXMOX_PROTECTED_VMIDS"))
-	if err != nil {
-		log.Fatalf("❌ PROXMOX_PROTECTED_VMIDS inválida: %v", err)
-	}
 	informarVmidsProtegidos(vmidsProtegidos)
 
 	versionPVE, err := versionObjetivoPVE(os.Getenv("PROXMOX_TARGET_PVE_VERSION"))
@@ -402,7 +407,7 @@ func main() {
 			instancia.POST("/stop", middleware.RequireInstanceAccess(instanceRepo, ports.NivelAccesoFullAccess), middleware.RejectProtectedInstance(vmidsProtegidos), middleware.RequireInstanceIdle(exclusion), instanceHandler.DetenerInstancia)
 			instancia.POST("/status/:action", middleware.RequireInstanceAccess(instanceRepo, ports.NivelAccesoFullAccess), middleware.RejectProtectedInstance(vmidsProtegidos), middleware.RequireInstanceIdle(exclusion), instanceHandler.CambiarEstado)
 			instancia.PUT("/config", middleware.RequireInstanceAccess(instanceRepo, ports.NivelAccesoFullAccess), middleware.RejectProtectedInstance(vmidsProtegidos), middleware.RequireInstanceIdle(exclusion), configHandler.ActualizarConfig)
-			instancia.DELETE("", middleware.RequireRole("ADMIN"), middleware.RejectProtectedInstance(vmidsProtegidos), middleware.RequireInstanceIdle(exclusion), instanceHandler.EliminarInstancia)
+			instancia.DELETE("", middleware.RequireRole("ADMIN"), middleware.RequireInstanceAccess(instanceRepo, ports.NivelAccesoFullAccess), middleware.RejectProtectedInstance(vmidsProtegidos), middleware.RequireInstanceIdle(exclusion), instanceHandler.EliminarInstancia)
 			// Snapshots (RF-06): listar con READ_ONLY; crear con FULL_ACCESS y la
 			// exclusión mutua. Sin RejectProtectedInstance: un snapshot no apaga ni
 			// cambia la instancia, y conviene tenerlo antes de tocar la infraestructura.

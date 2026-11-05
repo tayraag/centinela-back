@@ -63,6 +63,11 @@ type tareasAlertas struct {
 	conTarea map[int]bool
 }
 
+// FueCreadaPorCentinela: las alertas no dependen de la pertenencia.
+func (t *tareasAlertas) FueCreadaPorCentinela(context.Context, int) (bool, error) {
+	return true, nil
+}
+
 func (t *tareasAlertas) HuboTareaDesde(_ context.Context, vmid int, _ time.Time) (bool, error) {
 	return t.conTarea[vmid], nil
 }

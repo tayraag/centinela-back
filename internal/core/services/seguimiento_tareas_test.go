@@ -614,6 +614,11 @@ func (p *proxmoxTareas) EliminarSnapshot(context.Context, string, string, int, s
 	return "", nil
 }
 
+// FueCreadaPorCentinela: en estas pruebas toda instancia es de la app.
+func (r *tareasEnMemoria) FueCreadaPorCentinela(context.Context, int) (bool, error) {
+	return true, nil
+}
+
 func (r *tareasEnMemoria) HuboTareaDesde(context.Context, int, time.Time) (bool, error) {
 	return false, nil
 }
