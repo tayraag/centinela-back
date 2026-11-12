@@ -2519,9 +2519,11 @@ paths:
   /instances/{instanceRef}:
     delete:
       description: 'OPERATIVO. Solo ADMIN. Elimina permanentemente una VM o contenedor
-        de Proxmox. La instancia debe estar detenida o pausada (stopped/paused); si
-        no, responde 409. La operación es asíncrona: responde 202 Accepted con un
-        tareaId público; el UPID permanece privado. El resultado llega en TASK_FINISHED
+        de Proxmox, la haya creado o no El Centinela (también instancias previas a
+        la instalación o migradas). Las instancias de PROXMOX_PROTECTED_VMIDS responden
+        403 INSTANCE_PROTECTED. La instancia debe estar detenida o pausada (stopped/paused);
+        si no, responde 409. La operación es asíncrona: responde 202 Accepted con
+        un tareaId público; el UPID permanece privado. El resultado llega en TASK_FINISHED
         con accion DELETE.'
       parameters:
       - description: Referencia pública de la instancia (inst_...)
@@ -2543,7 +2545,8 @@ paths:
         "403":
           description: WRONG_TOKEN_TYPE | 2FA_REQUIRED | PASSWORD_CHANGE_REQUIRED
             | NO_ROLE | INVALID_ROLE | INSUFFICIENT_PERMISSIONS | INSTANCE_PROTECTED
-            — solo ADMIN puede eliminar instancias
+            — la instancia está en PROXMOX_PROTECTED_VMIDS (infraestructura de El
+            Centinela)
           schema:
             $ref: '#/definitions/http.ErrorResponse'
         "404":

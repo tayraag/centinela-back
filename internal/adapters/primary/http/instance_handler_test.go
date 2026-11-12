@@ -203,14 +203,6 @@ func (s *seguimientoCaptura) Seguir(_ context.Context, usuarioID uuid.UUID, vmid
 
 type mockTareaRepository struct {
 	activas map[int]ports.ActiveTaskDTO
-	// noPropia simula una instancia del cluster que El Centinela no creó.
-	noPropia bool
-}
-
-// FueCreadaPorCentinela devuelve true salvo que el test simule lo contrario:
-// el caso normal de las pruebas es una instancia creada por la app.
-func (m *mockTareaRepository) FueCreadaPorCentinela(context.Context, int) (bool, error) {
-	return !m.noPropia, nil
 }
 
 func (m *mockTareaRepository) Crear(context.Context, *domain.TareaAsincrona, ports.RegistrarAuditoriaInput) error {
@@ -1091,18 +1083,52 @@ func TestEliminarInstancia_ErroresDeProxmox(t *testing.T) {
 	}
 }
 
-// DELETE sólo destruye lo que El Centinela creó: un VMID ajeno responde 403
-// INSTANCE_NOT_OWNED sin consultar ni escribir en Proxmox. El 2026-11-04 la API
-// destruyó un contenedor que la app no había creado.
-func TestEliminarInstancia_AjenaEs403InstanceNotOwnedSinTocarProxmox(t *testing.T) {
-	mock := &mockProxmoxPort{estado: "stopped"}
-	tareas := &mockTareaRepository{noPropia: true}
-	status, cuerpo := ejecutarBorradoConTareas(mock, tareas)
-	if status != http.StatusForbidden || cuerpo["errorCode"] != "INSTANCE_NOT_OWNED" {
-		t.Fatalf("se esperaba 403 INSTANCE_NOT_OWNED, vino %d %v", status, cuerpo)
+// RF-07: DELETE no exige que El Centinela haya creado la instancia. Una VM o
+// LXC detenida o pausada sin tarea de creación registrada (previa a la
+// instalación, migrada o con el historial depurado) se borra: 202 con tareaId.
+func TestEliminarInstancia_SinCreacionRegistradaSeBorra(t *testing.T) {
+	for _, estado := range []string{"stopped", "paused"} {
+		mock := &mockProxmoxPort{estado: estado}
+		status, cuerpo := ejecutarBorradoConTareas(mock, &mockTareaRepository{})
+		if status != http.StatusAccepted || cuerpo["tareaId"] == "" || cuerpo["errorCode"] == "INSTANCE_NOT_OWNED" {
+			t.Errorf("%s: se esperaba 202 con tareaId, vino %d %v", estado, status, cuerpo)
+		}
+		if mock.escrituras != 1 {
+			t.Errorf("%s: la orden de borrado debía llegar a Proxmox (escrituras=%d)", estado, mock.escrituras)
+		}
 	}
-	if mock.lecturas != 0 || mock.escrituras != 0 {
-		t.Fatalf("no debía tocar Proxmox: lecturas %d, escrituras %d", mock.lecturas, mock.escrituras)
+}
+
+// La protección de la infraestructura sigue en PROXMOX_PROTECTED_VMIDS: con la
+// misma cadena de middlewares que cmd/api/main.go, un VMID protegido responde
+// 403 INSTANCE_PROTECTED sin tocar Proxmox, y uno que no lo está se borra.
+func TestEliminarInstancia_ProtegidaSigueSiendo403InstanceProtected(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, caso := range []struct {
+		protegidos map[int]bool
+		status     int
+		codigo     string
+	}{
+		{map[int]bool{110: true}, http.StatusForbidden, "INSTANCE_PROTECTED"},
+		{map[int]bool{200: true}, http.StatusAccepted, ""},
+		{map[int]bool{}, http.StatusAccepted, ""},
+	} {
+		mock := &mockProxmoxPort{estado: "stopped"}
+		handler := adaptersHttp.NewInstanceHandler(mock, &mockUserRepository{}, seguimientoNulo{}, &mockTareaRepository{}, &mockAuditService{}, inventarioNulo{}, adaptersHttp.RefsPrueba, adaptersHttp.TopologiaPrueba)
+		router := gin.New()
+		router.DELETE("/api/instances/:vmid", adaptersHttp.ResolverPrueba, func(c *gin.Context) {
+			c.Set(string(middleware.ContextKeyUserID), uuid.New().String())
+		}, middleware.RejectProtectedInstance(caso.protegidos), handler.EliminarInstancia)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, httptest.NewRequest(http.MethodDelete, adaptersHttp.ConRef("/api/instances/110"), nil))
+		var cuerpo map[string]string
+		_ = json.Unmarshal(w.Body.Bytes(), &cuerpo)
+		if w.Code != caso.status || cuerpo["errorCode"] != caso.codigo {
+			t.Errorf("protegidos=%v: se esperaba %d %q, vino %d %v", caso.protegidos, caso.status, caso.codigo, w.Code, cuerpo)
+		}
+		if caso.codigo == "INSTANCE_PROTECTED" && (mock.lecturas != 0 || mock.escrituras != 0) {
+			t.Errorf("una instancia protegida no debe tocar Proxmox: lecturas %d, escrituras %d", mock.lecturas, mock.escrituras)
+		}
 	}
 }
 

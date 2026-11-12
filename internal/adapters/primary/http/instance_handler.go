@@ -963,19 +963,21 @@ func (h *InstanceHandler) CambiarEstado(c *gin.Context) {
 // DELETE /api/instances/:instanceRef
 // ==========================================
 
-// EliminarInstancia elimina permanentemente una instancia de Proxmox.
-// Solo puede ser invocado por ADMIN (el middleware RequireRole lo garantiza).
-// Rechaza la operación con 409 si la instancia está encendida.
+// EliminarInstancia elimina permanentemente una instancia de Proxmox, la haya
+// creado o no El Centinela. Solo puede ser invocado por ADMIN (RequireRole). La
+// infraestructura propia se protege con PROXMOX_PROTECTED_VMIDS
+// (RejectProtectedInstance, 403 INSTANCE_PROTECTED). Rechaza la operación con
+// 409 si la instancia está encendida.
 //
 // @Summary      Eliminar instancia
-// @Description  OPERATIVO. Solo ADMIN. Elimina permanentemente una VM o contenedor de Proxmox. La instancia debe estar detenida o pausada (stopped/paused); si no, responde 409. La operación es asíncrona: responde 202 Accepted con un tareaId público; el UPID permanece privado. El resultado llega en TASK_FINISHED con accion DELETE.
+// @Description  OPERATIVO. Solo ADMIN. Elimina permanentemente una VM o contenedor de Proxmox, la haya creado o no El Centinela (también instancias previas a la instalación o migradas). Las instancias de PROXMOX_PROTECTED_VMIDS responden 403 INSTANCE_PROTECTED. La instancia debe estar detenida o pausada (stopped/paused); si no, responde 409. La operación es asíncrona: responde 202 Accepted con un tareaId público; el UPID permanece privado. El resultado llega en TASK_FINISHED con accion DELETE.
 // @Tags         Instancias Proxmox
 // @Produce      json
 // @Security     BearerAuth
 // @Param        instanceRef path string true "Referencia pública de la instancia (inst_...)"
 // @Success      202 {object} AccionAceptadaResponse "Borrado aceptado: tareaId público para correlacionar TASK_FINISHED"
 // @Failure      401 {object} ErrorResponse "MISSING_TOKEN | INVALID_TOKEN | TOKEN_REVOKED"
-// @Failure      403 {object} ErrorResponse "WRONG_TOKEN_TYPE | 2FA_REQUIRED | PASSWORD_CHANGE_REQUIRED | NO_ROLE | INVALID_ROLE | INSUFFICIENT_PERMISSIONS | INSTANCE_PROTECTED | INSTANCE_NOT_OWNED — sólo se eliminan instancias creadas por El Centinela"
+// @Failure      403 {object} ErrorResponse "WRONG_TOKEN_TYPE | 2FA_REQUIRED | PASSWORD_CHANGE_REQUIRED | NO_ROLE | INVALID_ROLE | INSUFFICIENT_PERMISSIONS | INSTANCE_PROTECTED — la instancia está en PROXMOX_PROTECTED_VMIDS (infraestructura de El Centinela)"
 // @Failure      404 {object} ErrorResponse "RESOURCE_NOT_FOUND — la referencia no corresponde a ninguna instancia (token alterado, inventado o VMID numérico) o la instancia no existe en Proxmox; ambos casos responden exactamente igual"
 // @Failure      409 {object} ErrorResponse "INSTANCE_INVALID_STATE — la instancia debe estar detenida | INSTANCE_BUSY — la instancia está ejecutando otra tarea (tarea RUNNING o lock lock:instance:{vmid}:operation); se responde sin contactar a Proxmox"
 // @Failure      500 {object} ErrorResponse "INTERNAL_ERROR — error interno | PROXMOX_ERROR — error de Proxmox no clasificado; el mensaje es siempre el texto canónico y el detalle queda en el log | TASK_TRACKING_UNAVAILABLE — Proxmox aceptó el borrado pero no se pudo persistir su seguimiento"
@@ -992,21 +994,6 @@ func (h *InstanceHandler) EliminarInstancia(c *gin.Context) {
 	if h.tieneTareaActiva(c, vmid) {
 		SendError(c, http.StatusConflict, "INSTANCE_BUSY",
 			"La instancia se encuentra ejecutando otra tarea. Aguarde a que finalice.")
-		return
-	}
-
-	// Guarda de pertenencia: sólo se destruyen instancias creadas por El
-	// Centinela. Un VMID ajeno —de otro equipo o de una prueba manual— se
-	// elimina desde Proxmox, nunca desde la API.
-	propia, err := h.tareas.FueCreadaPorCentinela(c.Request.Context(), vmid)
-	if err != nil {
-		SendError(c, http.StatusInternalServerError, "INTERNAL_ERROR",
-			"No se pudo verificar que la instancia haya sido creada por El Centinela.")
-		return
-	}
-	if !propia {
-		SendError(c, http.StatusForbidden, "INSTANCE_NOT_OWNED",
-			"Sólo se pueden eliminar instancias creadas por El Centinela.")
 		return
 	}
 

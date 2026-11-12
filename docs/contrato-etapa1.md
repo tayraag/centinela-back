@@ -379,17 +379,15 @@ otra acción responde `400 INVALID_ACTION`.
 
 `DELETE /api/instances/:instanceRef` elimina de forma permanente una VM o un
 contenedor. Solo lo puede invocar un `ADMIN`: un `OPERATOR` recibe
-`403 INSUFFICIENT_PERMISSIONS`. Tampoco se pueden borrar las instancias
-protegidas de la infraestructura (`403 INSTANCE_PROTECTED`).
+`403 INSUFFICIENT_PERMISSIONS`.
 
-Sólo se eliminan las instancias que creó la API. La pertenencia se decide por
-la tarea de creación registrada para ese VMID (`qmcreate`, `vzcreate` o los
-códigos históricos `CREAR_VM`/`CREAR_LXC`), en estado `COMPLETED` o `FAILED`:
-una creación que Proxmox completó con advertencias, o cuyo seguimiento venció,
-sigue siendo propia. Un VMID que la API no creó responde
-`403 INSTANCE_NOT_OWNED` sin contactar a Proxmox; se borra desde Proxmox VE.
-La guarda corre antes de cualquier llamada al hipervisor, igual que la de
-instancias protegidas.
+Se puede borrar cualquier instancia del hipervisor, la haya creado o no El
+Centinela: también las que existían antes de instalarlo, las migradas de otro
+cluster o aquellas cuyas tareas se depuraron de la base. No se consulta
+`tareas_asincronas`. La única protección contra el borrado es la lista
+`PROXMOX_PROTECTED_VMIDS`: esas instancias (la infraestructura de El Centinela)
+responden `403 INSTANCE_PROTECTED` sin contactar a Proxmox. Por eso esa lista
+tiene que estar completa en cada servidor.
 
 La instancia tiene que estar detenida o pausada: si no está `stopped` o `paused` responde
 `409 INSTANCE_INVALID_STATE` sin tocar Proxmox. Si está detenida, Proxmox crea la
@@ -542,7 +540,7 @@ envía nada a Proxmox.
 **Códigos adicionales que emite el servidor para el mismo estado:**
 
 - `401`: `MISSING_TOKEN`, `INVALID_TOKEN`, `TOKEN_REVOKED`.
-- `403`: `INSTANCE_ACCESS_DENIED`, `INSTANCE_PROTECTED`, `INSTANCE_NOT_OWNED`, `WRONG_TOKEN_TYPE`,
+- `403`: `INSTANCE_ACCESS_DENIED`, `INSTANCE_PROTECTED`, `WRONG_TOKEN_TYPE`,
   `2FA_REQUIRED`, `PASSWORD_CHANGE_REQUIRED`, `NO_ROLE`, `NO_USER`,
   `INVALID_USER_ID`.
 - `400` en `status/{action}` agrega `INVALID_ACTION`.
